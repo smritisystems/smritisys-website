@@ -275,6 +275,72 @@ CREATE TABLE IF NOT EXISTS accounting_ledger_entries (
   FOREIGN KEY (account_id) REFERENCES accounting_accounts(id)
 );
 
+CREATE TABLE IF NOT EXISTS accounting_contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  contact_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  gst_number TEXT,
+  opening_balance REAL NOT NULL DEFAULT 0,
+  status TEXT DEFAULT 'active',
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  receipt_number TEXT NOT NULL,
+  contact_id INTEGER,
+  invoice_reference TEXT,
+  receipt_date TEXT NOT NULL,
+  amount REAL NOT NULL,
+  payment_mode TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'received',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(customer_id, receipt_number),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES accounting_contacts(id)
+);
+
+CREATE TABLE IF NOT EXISTS accounting_supplier_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  payment_number TEXT NOT NULL,
+  contact_id INTEGER,
+  bill_reference TEXT,
+  payment_date TEXT NOT NULL,
+  amount REAL NOT NULL,
+  payment_mode TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'paid',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(customer_id, payment_number),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES accounting_contacts(id)
+);
+
+CREATE TABLE IF NOT EXISTS accounting_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  note_number TEXT NOT NULL,
+  note_type TEXT NOT NULL,
+  party_type TEXT NOT NULL,
+  contact_id INTEGER,
+  document_reference TEXT,
+  note_date TEXT NOT NULL,
+  amount REAL NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT DEFAULT 'issued',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(customer_id, note_number),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES accounting_contacts(id)
+);
+
 CREATE TABLE IF NOT EXISTS demo_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -313,3 +379,7 @@ CREATE INDEX IF NOT EXISTS idx_accounting_accounts_customer ON accounting_accoun
 CREATE INDEX IF NOT EXISTS idx_accounting_invoices_customer ON accounting_invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_accounting_purchases_customer ON accounting_purchases(customer_id);
 CREATE INDEX IF NOT EXISTS idx_accounting_ledger_customer ON accounting_ledger_entries(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_contacts_customer ON accounting_contacts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_receipts_customer ON accounting_receipts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_payments_customer ON accounting_supplier_payments(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_notes_customer ON accounting_notes(customer_id);

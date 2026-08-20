@@ -205,6 +205,68 @@ async function handleAccounting(request, env, resource) {
     }
   }
 
+  if (resource === "contacts") {
+    if (request.method === "GET") {
+      const { results } = await env.DB.prepare(
+        `SELECT id, contact_type, name, email, phone, gst_number, opening_balance, status
+         FROM accounting_contacts WHERE customer_id = ? ORDER BY name`
+      ).bind(customerId).all();
+      return json({ ok: true, contacts: results });
+    }
+    const body = await request.json();
+    if (!body.name || !["customer", "supplier"].includes(body.contact_type)) {
+      return json({ ok: false, error: "Name and contact type are required" }, 400);
+    }
+    await env.DB.prepare(
+      `INSERT INTO accounting_contacts
+       (customer_id, contact_type, name, email, phone, gst_number, opening_balance)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(customerId, body.contact_type, body.name, body.email || null, body.phone || null, body.gst_number || null, Number(body.opening_balance) || 0).run();
+    return json({ ok: true, message: `${body.contact_type === "customer" ? "Customer" : "Supplier"} created` }, 201);
+  }
+
+  const simpleDocuments = {
+    receipts: { table: "accounting_receipts", number: "receipt_number", contact: "contact_id", reference: "invoice_reference", date: "receipt_date" },
+    payments: { table: "accounting_supplier_payments", number: "payment_number", contact: "contact_id", reference: "bill_reference", date: "payment_date" },
+    notes: { table: "accounting_notes", number: "note_number", contact: "contact_id", reference: "document_reference", date: "note_date" },
+  };
+  if (simpleDocuments[resource]) {
+    const config = simpleDocuments[resource];
+    if (request.method === "GET") {
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM ${config.table} WHERE customer_id = ? ORDER BY ${config.date} DESC, id DESC`
+      ).bind(customerId).all();
+      return json({ ok: true, [resource]: results });
+    }
+    const body = await request.json();
+    const required = resource === "notes"
+      ? [config.number, "note_type", "party_type", config.date, "amount", "reason"]
+      : [config.number, config.date, "amount", "payment_mode"];
+    if (required.some((field) => !body[field])) {
+      return json({ ok: false, error: "Complete the required document fields" }, 400);
+    }
+    if (resource === "notes" && (!["debit", "credit"].includes(body.note_type) || !["customer", "supplier"].includes(body.party_type))) {
+      return json({ ok: false, error: "Invalid note or party type" }, 400);
+    }
+    try {
+      const columns = ["customer_id", config.number, config.contact, config.reference, config.date, "amount"];
+      const values = [customerId, body[config.number], body[config.contact] || null, body[config.reference] || null, body[config.date], Number(body.amount) || 0];
+      if (resource === "notes") {
+        columns.push("note_type", "party_type", "reason");
+        values.push(body.note_type, body.party_type, body.reason);
+      } else {
+        columns.push("payment_mode", "notes");
+        values.push(body.payment_mode, body.notes || null);
+      }
+      const placeholders = columns.map(() => "?").join(", ");
+      await env.DB.prepare(`INSERT INTO ${config.table} (${columns.join(", ")}) VALUES (${placeholders})`).bind(...values).run();
+      return json({ ok: true, message: `${resource === "receipts" ? "Receipt" : resource === "payments" ? "Supplier payment" : "Note"} saved` }, 201);
+    } catch (error) {
+      if (String(error).includes("UNIQUE")) return json({ ok: false, error: "Document number already exists" }, 409);
+      throw error;
+    }
+  }
+
   if (resource === "invoices" || resource === "purchases") {
     if (request.method === "GET") {
       const table = resource === "invoices" ? "accounting_invoices" : "accounting_purchases";
@@ -485,8 +547,12 @@ export async function onRequest(context) {
     if (path === "profile" && ["GET", "PUT"].includes(request.method)) return await handleProfile(request, env);
     if (path === "tickets" && ["GET", "POST"].includes(request.method)) return await handleTickets(request, env);
     if (path === "accounting/accounts" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "accounts");
+    if (path === "accounting/contacts" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "contacts");
     if (path === "accounting/invoices" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "invoices");
     if (path === "accounting/purchases" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "purchases");
+    if (path === "accounting/receipts" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "receipts");
+    if (path === "accounting/payments" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "payments");
+    if (path === "accounting/notes" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "notes");
     if (path === "accounting/ledger" && request.method === "GET") return await handleAccounting(request, env, "ledger");
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
     if (path === "admin/users" && request.method === "GET") return await handleAdminUsers(request, env);

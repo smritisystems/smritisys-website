@@ -76,10 +76,14 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | POST | `/api/tickets` | Create support ticket (Bearer token) |
 | GET | `/api/accounting/accounts` | List company accounts (Bearer token) |
 | POST | `/api/accounting/accounts` | Create an account type (Bearer token) |
+| GET/POST | `/api/accounting/contacts` | List or create customers and suppliers (Bearer token) |
 | GET | `/api/accounting/invoices` | List sales invoices (Bearer token) |
 | POST | `/api/accounting/invoices` | Create a simple invoice with one or more items (Bearer token) |
 | GET | `/api/accounting/purchases` | List purchase bills (Bearer token) |
 | POST | `/api/accounting/purchases` | Record a purchase with one or more items (Bearer token) |
+| GET/POST | `/api/accounting/receipts` | List or record customer receipts (Bearer token) |
+| GET/POST | `/api/accounting/payments` | List or record supplier payments (Bearer token) |
+| GET/POST | `/api/accounting/notes` | List or create debit/credit notes (Bearer token) |
 | GET | `/api/accounting/ledger` | List double-entry ledger postings (Bearer token) |
 | GET | `/api/demos` | List demos (staff token only) |
 | GET | `/api/admin/users` | List staff users (super admin token only) |

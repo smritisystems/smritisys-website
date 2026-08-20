@@ -93,10 +93,34 @@ async function loadTickets() {
 }
 
 async function loadAccounting() {
+  mountAccountingTools();
   const data = await api('accounting/ledger');
   $('#ledgerList').innerHTML = data.ledger.length
     ? data.ledger.map((entry) => `<article class="ticket"><div><h3>${escapeHtml(entry.account_code || entry.code)} · ${escapeHtml(entry.name)}</h3><p>${escapeHtml(entry.description)} · ${escapeHtml(entry.entry_date)}</p></div><span class="status">Dr ${Number(entry.debit).toFixed(2)} / Cr ${Number(entry.credit).toFixed(2)}</span></article>`).join('')
     : '<p class="muted">No ledger entries yet. Create an invoice or record a purchase to begin.</p>';
+}
+
+function mountAccountingTools() {
+  if ($('#accountingTools')) return;
+  const accountingView = $('[data-section="accounting"]');
+  accountingView.insertAdjacentHTML('beforeend', `<div id="accountingTools" class="grid modules"><form id="contactForm" class="card module"><span class="eyebrow">Contacts</span><h3>Add customer or supplier</h3><label>Name</label><input name="name" required /><label>Type</label><select name="contact_type"><option value="customer">Customer</option><option value="supplier">Supplier</option></select><label>Email</label><input name="email" type="email" /><label>Phone</label><input name="phone" /><button class="primary" type="submit">Save contact</button></form><form id="receiptForm" class="card module"><span class="eyebrow">Money in</span><h3>Receive customer payment</h3><label>Receipt number</label><input name="receipt_number" placeholder="REC-001" required /><label>Invoice reference</label><input name="invoice_reference" /><label>Date</label><input name="receipt_date" type="date" required /><label>Amount</label><input name="amount" type="number" min="0" step="0.01" required /><label>Payment mode</label><select name="payment_mode"><option>Cash</option><option>Bank transfer</option><option>UPI</option><option>Card</option><option>Cheque</option></select><button class="primary" type="submit">Save receipt</button></form><form id="paymentForm" class="card module"><span class="eyebrow">Money out</span><h3>Pay supplier</h3><label>Payment number</label><input name="payment_number" placeholder="PAY-001" required /><label>Bill reference</label><input name="bill_reference" /><label>Date</label><input name="payment_date" type="date" required /><label>Amount</label><input name="amount" type="number" min="0" step="0.01" required /><label>Payment mode</label><select name="payment_mode"><option>Bank transfer</option><option>Cash</option><option>UPI</option><option>Card</option><option>Cheque</option></select><button class="primary" type="submit">Save payment</button></form><form id="noteForm" class="card module"><span class="eyebrow">Adjustments</span><h3>Debit or credit note</h3><label>Note number</label><input name="note_number" placeholder="CN-001" required /><label>Note type</label><select name="note_type"><option value="credit">Credit note</option><option value="debit">Debit note</option></select><label>Party</label><select name="party_type"><option value="customer">Customer</option><option value="supplier">Supplier</option></select><label>Date</label><input name="note_date" type="date" required /><label>Amount</label><input name="amount" type="number" min="0" step="0.01" required /><label>Reason</label><input name="reason" required /><button class="primary" type="submit">Save note</button></form></div>`);
+  $('#contactForm').addEventListener('submit', (event) => submitAccountingForm(event, 'contacts'));
+  $('#receiptForm').addEventListener('submit', (event) => submitAccountingForm(event, 'receipts'));
+  $('#paymentForm').addEventListener('submit', (event) => submitAccountingForm(event, 'payments'));
+  $('#noteForm').addEventListener('submit', (event) => submitAccountingForm(event, 'notes'));
+}
+
+async function submitAccountingForm(event, resource) {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData(event.target));
+  try {
+    const data = await api(`accounting/${resource}`, { method: 'POST', body: JSON.stringify(form) });
+    setMessage($('#accountingMessage'), data.message, true);
+    event.target.reset();
+    if (resource !== 'contacts') await loadAccounting();
+  } catch (error) {
+    setMessage($('#accountingMessage'), error.message, false);
+  }
 }
 
 async function loadAdminUsers() {
