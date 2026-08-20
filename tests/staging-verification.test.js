@@ -19,6 +19,7 @@ function createD1Mock() {
   const m8 = fs.readFileSync(new URL("../migrations/0008_partner_relationships.sql", import.meta.url), "utf8");
   const m9 = fs.readFileSync(new URL("../migrations/0009_partner_staging_seed.sql", import.meta.url), "utf8");
   const m10 = fs.readFileSync(new URL("../migrations/0010_commercial_relationship.sql", import.meta.url), "utf8");
+  const m11 = fs.readFileSync(new URL("../migrations/0011_admin_staging_seed.sql", import.meta.url), "utf8");
 
   db.exec(schema);
   db.exec(m2);
@@ -30,6 +31,7 @@ function createD1Mock() {
   db.exec(m8);
   db.exec(m9);
   db.exec(m10);
+  db.exec(m11);
 
   return {
     raw: db,
@@ -101,7 +103,7 @@ async function callApi(env, path, options = {}) {
   return { status: res.status, ok: res.ok, data };
 }
 
-test("Phase 4 through 9 staging verification on seeded dataset", async (t) => {
+test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   const d1 = createD1Mock();
 
   // Create session for Customer A directly to ensure clean testing
@@ -310,13 +312,37 @@ test("Phase 4 through 9 staging verification on seeded dataset", async (t) => {
     assert.equal(res.status, 403);
   });
 
-  await t.test("21. Organization Isolation (Denied cross-tenant license read)", async () => {
+  await t.test("21. Super admin control plane is internal-only", async () => {
+    const adminToken = "test-token-admin-123456";
+    d1.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))").bind(adminToken).run();
+    const overview = await callApi(d1, "admin/overview", { token: adminToken });
+    assert.equal(overview.status, 200);
+    assert.ok(overview.data.metrics.organizations >= 3);
+
+    const organizations = await callApi(d1, "admin/organizations", { token: adminToken });
+    assert.equal(organizations.status, 200);
+    assert.ok(organizations.data.organizations.some((organization) => organization.name === "Organization A"));
+
+    const users = await callApi(d1, "admin/users", { token: adminToken });
+    assert.equal(users.status, 200);
+    assert.ok(users.data.users.some((user) => user.email === "admin.phase10@example.com"));
+
+    const audit = await callApi(d1, "admin/audit", { token: adminToken });
+    assert.equal(audit.status, 200);
+  });
+
+  await t.test("22. Customer cannot enter admin control plane", async () => {
+    const res = await callApi(d1, "admin/overview", { token: sessionToken });
+    assert.equal(res.status, 403);
+  });
+
+  await t.test("23. Organization Isolation (Denied cross-tenant license read)", async () => {
     // Attempt to access unassigned license ID 999
     const res = await callApi(d1, "licenses/999/entitlements", { token: sessionToken });
     assert.equal(res.status, 404);
   });
 
-  await t.test("22. License Mutation Denial (403 Forbidden for customer)", async () => {
+  await t.test("24. License Mutation Denial (403 Forbidden for customer)", async () => {
     // Attempt direct mutation of license status
     const res = await callApi(d1, "licenses/101/suspend", {
       method: "POST",
@@ -325,7 +351,7 @@ test("Phase 4 through 9 staging verification on seeded dataset", async (t) => {
     assert.equal(res.status, 403);
   });
 
-  await t.test("23. Logout & Invalidation", async () => {
+  await t.test("25. Logout & Invalidation", async () => {
     const res = await callApi(d1, "logout", {
       method: "POST",
       token: sessionToken,
@@ -334,7 +360,7 @@ test("Phase 4 through 9 staging verification on seeded dataset", async (t) => {
     assert.equal(res.data.ok, true);
   });
 
-  await t.test("24. Access After Logout Denied (401 Unauthorized)", async () => {
+  await t.test("26. Access After Logout Denied (401 Unauthorized)", async () => {
     const res = await callApi(d1, "organization", { token: sessionToken });
     assert.equal(res.status, 401);
   });

@@ -690,6 +690,41 @@ async function handleAdminUsers(request, env) {
 }
 __name(handleAdminUsers, "handleAdminUsers");
 __name2(handleAdminUsers, "handleAdminUsers");
+async function handleAdminControl(request, env, resource) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (resource === "overview") {
+    const [users, customers, organizations, products, licenses] = await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS count FROM users").first(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM customers").first(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM organizations").first(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM products WHERE status = 'active'").first(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM licenses").first()
+    ]);
+    return json({ ok: true, metrics: { users: users.count, customers: customers.count, organizations: organizations.count, products: products.count, licenses: licenses.count } });
+  }
+  if (resource === "organizations") {
+    const { results } = await env.DB.prepare(
+      `SELECT o.id, o.name, o.legal_name, o.status, o.created_at,
+              COUNT(DISTINCT m.id) AS member_count
+       FROM organizations o
+       LEFT JOIN organization_members m ON m.organization_id = o.id AND m.status = 'active'
+       GROUP BY o.id ORDER BY o.created_at DESC, o.id DESC`
+    ).all();
+    return json({ ok: true, organizations: results });
+  }
+  if (resource === "audit") {
+    const { results } = await env.DB.prepare(
+      `SELECT id, actor_person_id, organization_id, action, resource_type,
+              resource_id, request_ip, created_at
+       FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 200`
+    ).all();
+    return json({ ok: true, audit: results });
+  }
+  return json({ ok: false, error: "Unsupported admin operation" }, 405);
+}
+__name(handleAdminControl, "handleAdminControl");
+__name2(handleAdminControl, "handleAdminControl");
 async function handleProfile(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
@@ -1444,6 +1479,9 @@ async function onRequest(context) {
     if (path === "accounting/notes" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "notes");
     if (path === "accounting/ledger" && request.method === "GET") return await handleAccounting(request, env, "ledger");
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
+    if (path === "admin/overview" && request.method === "GET") return await handleAdminControl(request, env, "overview");
+    if (path === "admin/organizations" && request.method === "GET") return await handleAdminControl(request, env, "organizations");
+    if (path === "admin/audit" && request.method === "GET") return await handleAdminControl(request, env, "audit");
     if (path === "admin/users" && request.method === "GET") return await handleAdminUsers(request, env);
     if (path.startsWith("admin/users/") && request.method === "PATCH") {
       request.params = { id: path.split("/")[2] };

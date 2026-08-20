@@ -100,6 +100,9 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | GET | `/api/partner/customers` | List linked customer organizations (partner membership required) |
 | GET | `/api/partner/licenses` | Read licenses for linked customer organizations (partner license permission required) |
 | GET | `/api/partner/releases` | Read releases for linked customer products (partner release permission required) |
+| GET | `/api/admin/overview` | Internal super-admin metrics |
+| GET | `/api/admin/organizations` | Internal organization inventory (super admin only) |
+| GET | `/api/admin/audit` | Internal audit activity (super admin only) |
 | GET | `/api/products` | List products (Bearer token) |
 | POST | `/api/products` | Create a product (license permission required) |
 | GET | `/api/products/:id` | Read a product and its editions (Bearer token) |
@@ -114,17 +117,7 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | POST | `/api/licenses/:id/activate` | Activate a license installation |
 | POST | `/api/licenses/:id/suspend` | Suspend an active license |
 | POST | `/api/licenses/:id/renew` | Explicitly renew a license |
-| GET | `/api/accounting/accounts` | List company accounts (Bearer token) |
-| POST | `/api/accounting/accounts` | Create an account type (Bearer token) |
-| GET/POST | `/api/accounting/contacts` | List or create customers and suppliers (Bearer token) |
-| GET | `/api/accounting/invoices` | List sales invoices (Bearer token) |
-| POST | `/api/accounting/invoices` | Create a simple invoice with one or more items (Bearer token) |
-| GET | `/api/accounting/purchases` | List purchase bills (Bearer token) |
-| POST | `/api/accounting/purchases` | Record a purchase with one or more items (Bearer token) |
-| GET/POST | `/api/accounting/receipts` | List or record customer receipts (Bearer token) |
-| GET/POST | `/api/accounting/payments` | List or record supplier payments (Bearer token) |
-| GET/POST | `/api/accounting/notes` | List or create debit/credit notes (Bearer token) |
-| GET | `/api/accounting/ledger` | List double-entry ledger postings (Bearer token) |
+| GET/POST | `/api/accounting/*` | Blocked from the portal; operational accounting belongs to SMRITI Retail OS |
 | GET | `/api/demos` | List demos (staff token only) |
 | GET | `/api/admin/users` | List staff users (super admin token only) |
 | PATCH | `/api/admin/users/:id` | Update user role, status, or name (super admin token only) |
@@ -138,6 +131,18 @@ before the first staff user exists. Remove or rotate the secret after bootstrapp
 
 Set `ALLOWED_ORIGINS` as a comma-separated Pages environment variable for production
 and local development. The API does not allow wildcard CORS.
+
+## Production handoff checklist
+
+Before deploying the completed control plane:
+
+1. Back up the remote D1 database.
+2. Apply migrations `0002_identity_rbac.sql` through `0011_admin_staging_seed.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production.
+3. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
+4. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
+5. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.
+6. Verify customer, partner, and admin login, tenant isolation, logout invalidation, and the accounting boundary after deployment.
+7. Enable rate limiting, error monitoring, backups, and alerting before inviting production users.
 
 ## Phase 2 identity migration
 

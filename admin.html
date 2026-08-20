@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Control Plane | SMRITISYS</title>
+  <meta name="description" content="Internal SMRITISYS control plane." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/portal.css" />
+  <style>
+    .admin-shell { min-height:100vh; display:grid; grid-template-columns:245px 1fr; background:var(--paper); }
+    .admin-aside { background:#17231f; color:#d9ebe7; padding:1.5rem 1rem; display:flex; flex-direction:column; }
+    .admin-aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
+    .admin-nav { display:grid; gap:.25rem; }
+    .admin-nav button { text-align:left; border:0; color:#a8c3bc; background:transparent; padding:.75rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .admin-nav button:hover,.admin-nav button.active { color:#fff; background:#ffffff14; }
+    .admin-logout { margin-top:auto; border:1px solid #a8c3bc44; color:#cfe5df; background:transparent; padding:.7rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .admin-main { min-width:0; }
+    .admin-content { max-width:1440px; padding:clamp(1.2rem,4vw,3rem); }
+    .admin-metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:1rem; }
+    .admin-view { display:none; }
+    .admin-view.active { display:block; }
+    .admin-table { width:100%; border-collapse:collapse; }
+    .admin-table th,.admin-table td { padding:.8rem .5rem; text-align:left; border-bottom:1px solid var(--line); }
+    .admin-table th { color:var(--muted); font-size:.76rem; text-transform:uppercase; letter-spacing:.08em; }
+    @media (max-width:900px) { .admin-shell { grid-template-columns:1fr; } .admin-aside { padding:.8rem; } .admin-aside .brand { padding:.5rem .75rem 1rem; } .admin-nav { display:flex; overflow:auto; } .admin-nav button { white-space:nowrap; } .admin-logout { margin-top:.7rem; } .admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics { grid-template-columns:1fr; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } }
+  </style>
+</head>
+<body>
+  <section id="adminLoginView" class="login-shell">
+    <div class="login-art"><div class="brand">SMRITISYS / CONTROL PLANE</div><h1>Operate the relationship layer with clarity.</h1><p>Internal administration for identity, organizations, products, licenses, releases, and governance.</p></div>
+    <div class="login-panel"><form id="adminLoginForm" class="login-box"><span class="eyebrow">Internal access</span><h2>Administrator sign in</h2><p class="muted">Super admin credentials are required.</p><label for="adminEmail">Email address</label><input id="adminEmail" name="email" type="email" autocomplete="username" required /><label for="adminPassword">Password</label><input id="adminPassword" name="password" type="password" autocomplete="current-password" required /><button class="primary" type="submit">Sign in</button><p id="adminLoginMessage" class="message" role="alert"></p></form></div>
+  </section>
+  <section id="adminPortalView" class="admin-shell hidden">
+    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="audit">Audit</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
+    <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
+      <section class="admin-view active" data-admin-section="overview"><div class="welcome"><div><span class="eyebrow">Internal control plane</span><h2>System overview</h2><p class="muted">Governance and relationship data for authorized staff.</p></div></div><div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div></section>
+      <section class="admin-view" data-admin-section="users"><div class="section-head"><div><span class="eyebrow">Identity</span><h2>Staff users</h2></div><button class="secondary admin-refresh" data-refresh="users" type="button">Refresh</button></div><div id="adminUsersState" class="state-panel">Loading users...</div><div id="adminUsersList" class="card hidden"></div></section>
+      <section class="admin-view" data-admin-section="organizations"><div class="section-head"><div><span class="eyebrow">Relationships</span><h2>Organizations</h2></div><button class="secondary admin-refresh" data-refresh="organizations" type="button">Refresh</button></div><div id="adminOrganizationsState" class="state-panel">Loading organizations...</div><div id="adminOrganizationsList" class="card hidden"></div></section>
+      <section class="admin-view" data-admin-section="products"><div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div><div id="adminProductsState" class="state-panel">Loading products and licenses...</div><div id="adminProductsList" class="grid modules"></div></section>
+      <section class="admin-view" data-admin-section="audit"><div class="section-head"><div><span class="eyebrow">Governance</span><h2>Audit activity</h2></div><button class="secondary admin-refresh" data-refresh="audit" type="button">Refresh</button></div><div id="adminAuditState" class="state-panel">Loading audit activity...</div><div id="adminAuditList" class="card hidden"></div></section>
+    </div></main>
+  </section>
+  <script src="js/admin.js" defer></script>
+</body>
+</html>

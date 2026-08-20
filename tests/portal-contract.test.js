@@ -6,6 +6,7 @@ const html = fs.readFileSync(new URL("../portal.html", import.meta.url), "utf8")
 const script = fs.readFileSync(new URL("../js/portal.js", import.meta.url), "utf8");
 const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.url), "utf8");
 const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+const requirementsMigration = fs.readFileSync(new URL("../migrations/0006_custom_requirements.sql", import.meta.url), "utf8");
 
 test("customer navigation exposes only implemented workspace sections", () => {
   for (const section of ["overview", "organization", "products", "licenses", "support", "requirements", "profile"]) {
@@ -113,4 +114,10 @@ test("commercial relationship is read-only and separate from operational account
   assert.match(api, /Order not found/);
   assert.match(api, /Operational accounting belongs to SMRITI Retail OS/);
   assert.doesNotMatch(html, /accounting|ledger|GST ledger|Sales ledger|Purchase ledger/i);
+});
+
+test("requirements migration preserves existing replies", () => {
+  assert.match(requirementsMigration, /ALTER TABLE custom_requirement_messages RENAME TO custom_requirement_messages_legacy/);
+  assert.match(requirementsMigration, /INSERT INTO custom_requirement_messages \(id, requirement_id, author_type, author_id, message, created_at\)/);
+  assert.doesNotMatch(requirementsMigration, /DROP TABLE IF EXISTS custom_requirement_messages/);
 });

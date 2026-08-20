@@ -48,7 +48,7 @@ FROM custom_requirements_legacy r;
 
 DROP TABLE custom_requirements_legacy;
 
-DROP TABLE IF EXISTS custom_requirement_messages;
+ALTER TABLE custom_requirement_messages RENAME TO custom_requirement_messages_legacy;
 
 CREATE TABLE custom_requirement_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +59,12 @@ CREATE TABLE custom_requirement_messages (
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (requirement_id) REFERENCES custom_requirements(id) ON DELETE CASCADE
 );
+
+INSERT INTO custom_requirement_messages (id, requirement_id, author_type, author_id, message, created_at)
+SELECT id, requirement_id, author_type, author_id, message, created_at
+FROM custom_requirement_messages_legacy;
+
+DROP TABLE custom_requirement_messages_legacy;
 
 CREATE INDEX IF NOT EXISTS idx_custom_requirements_org ON custom_requirements(organization_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_custom_requirement_messages ON custom_requirement_messages(requirement_id, created_at);
