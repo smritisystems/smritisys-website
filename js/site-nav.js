@@ -41,7 +41,6 @@
       const isCurrentPage = href.startsWith(`${currentPath}#`) || href === currentPath || (href === 'distributor.html' && currentPath === 'distribution.html');
       if (isCurrentPage || source?.className.includes('text-brand-700')) {
         link.className = 'text-brand-700 font-semibold';
-        menu.open = true;
       }
       panel.append(link);
     });
