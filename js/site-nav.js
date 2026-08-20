@@ -1,4 +1,10 @@
 (() => {
+  const saathiAssetsByPage = {
+    'distributor.html': ['saathi_male_fullbody_hd.png', 'saathi_female_fullbody_hd.png'],
+    'warehouse.html': ['saathi_male_fullbody_hd.png', 'saathi_female_fullbody_hd.png'],
+    'barcode.html': ['saathi_female_fullbody_hd.png', 'saathi_male_fullbody_hd.png'],
+  };
+
   const productLinks = [
     ['products.html#capabilities', 'Retail POS'],
     ['distributor.html', 'Distributor'],
@@ -55,6 +61,16 @@
     createProductMenu(container, links, mobile);
   }
 
+  function normalizeProductSaathiImages() {
+    const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+    const assets = saathiAssetsByPage[currentPath];
+    if (!assets) return;
+    document.querySelectorAll('main img[src*="assets/SmritiSathi/pose_"]').forEach((image, index) => {
+      if (assets[index]) image.src = `assets/SmritiSathi/${assets[index]}`;
+    });
+  }
+
   groupProductLinks('header > div > div > nav.hidden.lg\\:flex');
   groupProductLinks('#mobileMenu .grid', true);
+  normalizeProductSaathiImages();
 })();
