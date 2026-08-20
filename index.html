@@ -826,14 +826,15 @@
 
   <!-- ========== FINAL CTA ========== -->
   <section id="contact" class="py-20 sm:py-24 bg-brand-800 text-white">
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 text-center">
       <h2 class="text-3xl sm:text-4xl font-bold tracking-tight mb-4">
         Ready to simplify your retail operations?
       </h2>
       <p class="text-lg text-indigo-200 mb-8">
         Book a short demo to see how SMRITI Retail OS helps your business streamline billing, inventory, compliance and multi-store growth without adding operational friction.
       </p>
-      <form id="demoForm" class="max-w-md mx-auto space-y-3 text-left">
+      <div class="mt-10 grid md:grid-cols-[minmax(0,1fr)_minmax(12rem,16rem)] gap-8 items-end max-w-3xl mx-auto">
+      <form id="demoForm" class="space-y-3 text-left">
         <label for="demoName" class="sr-only">Your name</label>
         <input id="demoName" type="text" name="name" placeholder="Your name" required
           class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
@@ -857,6 +858,8 @@
         </button>
         <p id="demoMsg" class="text-sm text-center hidden"></p>
       </form>
+      <div class="flex flex-col items-center justify-end text-center"><img src="assets/SmritiSathi/saathi_female_fullbody_hd.png" alt="SMRITI Saathi helping you start a retail product conversation" class="w-36 sm:w-44 h-auto" /><p class="mt-2 text-sm text-indigo-200">SMRITI Saathi will help guide the conversation.</p></div>
+      </div>
       <script>
         document.getElementById('demoForm').addEventListener('submit', async (e) => {
           e.preventDefault();
