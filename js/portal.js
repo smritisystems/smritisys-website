@@ -9,7 +9,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 function setMessage(element, text, ok) {
   element.textContent = text;
-  element.style.color = ok ? 'var(--green)' : 'var(--red)';
+  element.style.color = ok ? 'var(--turquoise)' : 'var(--red)';
 }
 
 async function api(path, options = {}) {
@@ -55,6 +55,7 @@ async function loadPortal() {
     fillProfile(data.profile);
     updateIdentity(data.profile);
     await loadTickets();
+    await loadAccounting();
   } catch (error) {
     localStorage.removeItem('smritisys_token');
     localStorage.removeItem('smritisys_account_type');
@@ -89,6 +90,13 @@ async function loadTickets() {
   $('#ticketList').innerHTML = data.tickets.length
     ? data.tickets.map((ticket) => `<article class="ticket"><div><h3>${escapeHtml(ticket.subject)}</h3><p>${escapeHtml(ticket.description)}</p></div><span class="status">${escapeHtml(ticket.status)}</span></article>`).join('')
     : '<p class="muted">No tickets yet. Your support history will appear here.</p>';
+}
+
+async function loadAccounting() {
+  const data = await api('accounting/ledger');
+  $('#ledgerList').innerHTML = data.ledger.length
+    ? data.ledger.map((entry) => `<article class="ticket"><div><h3>${escapeHtml(entry.account_code || entry.code)} · ${escapeHtml(entry.name)}</h3><p>${escapeHtml(entry.description)} · ${escapeHtml(entry.entry_date)}</p></div><span class="status">Dr ${Number(entry.debit).toFixed(2)} / Cr ${Number(entry.credit).toFixed(2)}</span></article>`).join('')
+    : '<p class="muted">No ledger entries yet. Create an invoice or record a purchase to begin.</p>';
 }
 
 async function loadAdminUsers() {
@@ -164,6 +172,45 @@ $('#ticketForm').addEventListener('submit', async (event) => {
     setMessage($('#ticketMessage'), error.message, false);
   }
 });
+
+$('#accountForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData(event.target));
+  try {
+    const data = await api('accounting/accounts', { method: 'POST', body: JSON.stringify(form) });
+    setMessage($('#accountingMessage'), data.message, true);
+    event.target.reset();
+  } catch (error) {
+    setMessage($('#accountingMessage'), error.message, false);
+  }
+});
+
+async function submitAccountingDocument(event, resource, numberField, partyField, dateField) {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData(event.target));
+  const item = {
+    description: resource === 'invoices' ? `Invoice ${form[numberField]}` : `Purchase ${form[numberField]}`,
+    quantity: 1,
+    unit_price: form.amount,
+    tax_rate: 0,
+  };
+  try {
+    const data = await api(`accounting/${resource}`, { method: 'POST', body: JSON.stringify({
+      [numberField]: form[numberField],
+      [partyField]: form[partyField],
+      [dateField]: form[dateField],
+      items: [item],
+    }) });
+    setMessage($('#accountingMessage'), data.message, true);
+    event.target.reset();
+    await loadAccounting();
+  } catch (error) {
+    setMessage($('#accountingMessage'), error.message, false);
+  }
+}
+
+$('#invoiceForm').addEventListener('submit', (event) => submitAccountingDocument(event, 'invoices', 'invoice_number', 'buyer_name', 'invoice_date'));
+$('#purchaseForm').addEventListener('submit', (event) => submitAccountingDocument(event, 'purchases', 'bill_number', 'supplier_name', 'purchase_date'));
 
 $('#logoutButton').addEventListener('click', () => {
   localStorage.removeItem('smritisys_token');

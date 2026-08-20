@@ -157,6 +157,146 @@ async function handleProfile(request, env) {
   return json({ ok: true, message: "Profile updated" });
 }
 
+async function ensureDefaultAccounts(env, customerId) {
+  const defaults = [
+    ["1000", "Cash", "asset"],
+    ["1100", "Accounts Receivable", "asset"],
+    ["2000", "Accounts Payable", "liability"],
+    ["4000", "Sales", "income"],
+    ["5000", "Purchases", "expense"],
+  ];
+  const statements = defaults.map(([code, name, accountType]) => env.DB.prepare(
+    `INSERT OR IGNORE INTO accounting_accounts (customer_id, code, name, account_type)
+     VALUES (?, ?, ?, ?)`
+  ).bind(customerId, code, name, accountType));
+  await env.DB.batch(statements);
+}
+
+async function handleAccounting(request, env, resource) {
+  const session = await getCustomerSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+  const customerId = session.account_id;
+  await ensureDefaultAccounts(env, customerId);
+
+  if (resource === "accounts") {
+    if (request.method === "GET") {
+      const { results } = await env.DB.prepare(
+        `SELECT id, code, name, account_type, opening_balance, status
+         FROM accounting_accounts WHERE customer_id = ? ORDER BY code`
+      ).bind(customerId).all();
+      return json({ ok: true, accounts: results });
+    }
+
+    const body = await request.json();
+    const allowedTypes = ["asset", "liability", "income", "expense", "equity"];
+    if (!body.code || !body.name || !allowedTypes.includes(body.account_type)) {
+      return json({ ok: false, error: "Code, name, and a valid account type are required" }, 400);
+    }
+    try {
+      await env.DB.prepare(
+        `INSERT INTO accounting_accounts
+         (customer_id, code, name, account_type, opening_balance)
+         VALUES (?, ?, ?, ?, ?)`
+      ).bind(customerId, body.code, body.name, body.account_type, Number(body.opening_balance) || 0).run();
+      return json({ ok: true, message: "Account created" }, 201);
+    } catch (error) {
+      if (String(error).includes("UNIQUE")) return json({ ok: false, error: "Account code already exists" }, 409);
+      throw error;
+    }
+  }
+
+  if (resource === "invoices" || resource === "purchases") {
+    if (request.method === "GET") {
+      const table = resource === "invoices" ? "accounting_invoices" : "accounting_purchases";
+      const orderField = resource === "invoices" ? "invoice_date" : "purchase_date";
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM ${table} WHERE customer_id = ? ORDER BY ${orderField} DESC, id DESC`
+      ).bind(customerId).all();
+      return json({ ok: true, [resource]: results });
+    }
+
+    const body = await request.json();
+    const items = Array.isArray(body.items) ? body.items : [];
+    const isInvoice = resource === "invoices";
+    const number = isInvoice ? body.invoice_number : body.bill_number;
+    const partyName = isInvoice ? body.buyer_name : body.supplier_name;
+    const date = isInvoice ? body.invoice_date : body.purchase_date;
+    if (!number || !partyName || !date || !items.length) {
+      return json({ ok: false, error: "Document number, party name, date, and at least one item are required" }, 400);
+    }
+
+    const normalizedItems = items.map((item) => {
+      const quantity = Number(item.quantity) || 0;
+      const unitPrice = Number(item.unit_price) || 0;
+      const taxRate = Number(item.tax_rate) || 0;
+      const base = quantity * unitPrice;
+      return { description: item.description, quantity, unitPrice, taxRate, lineTotal: base + (base * taxRate / 100) };
+    });
+    if (normalizedItems.some((item) => !item.description || item.quantity <= 0 || item.unitPrice < 0)) {
+      return json({ ok: false, error: "Each item needs a description, positive quantity, and valid price" }, 400);
+    }
+    const subtotal = normalizedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    const total = normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+    const tax = total - subtotal;
+    const table = isInvoice ? "accounting_invoices" : "accounting_purchases";
+    const numberColumn = isInvoice ? "invoice_number" : "bill_number";
+    const partyColumn = isInvoice ? "buyer_name" : "supplier_name";
+    const dateColumn = isInvoice ? "invoice_date" : "purchase_date";
+    const itemTable = isInvoice ? "accounting_invoice_items" : "accounting_purchase_items";
+    const parentColumn = isInvoice ? "invoice_id" : "purchase_id";
+    try {
+      const parent = await env.DB.prepare(
+        `INSERT INTO ${table} (customer_id, ${numberColumn}, ${partyColumn}, ${isInvoice ? "buyer_email, " : ""}${dateColumn}, ${isInvoice ? "due_date, " : ""}subtotal, tax_amount, total_amount)
+         VALUES (?, ?, ?, ${isInvoice ? "?, " : ""}?, ${isInvoice ? "?, " : ""}?, ?, ?)`
+      ).bind(...(isInvoice
+        ? [customerId, number, partyName, body.buyer_email || null, date, body.due_date || null, subtotal, tax, total]
+        : [customerId, number, partyName, date, subtotal, tax, total])).run();
+      const itemStatements = normalizedItems.map((item) => env.DB.prepare(
+        `INSERT INTO ${itemTable} (${parentColumn}, description, quantity, unit_price, tax_rate, line_total)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(parent.meta.last_row_id, item.description, item.quantity, item.unitPrice, item.taxRate, item.lineTotal));
+      const accountTypes = isInvoice
+        ? { debit: "asset", credit: "income" }
+        : { debit: "expense", credit: "liability" };
+      const accountRows = await env.DB.prepare(
+        `SELECT id, account_type FROM accounting_accounts
+         WHERE customer_id = ? AND account_type IN (?, ?)`
+      ).bind(customerId, accountTypes.debit, accountTypes.credit).all();
+      const accountIds = Object.fromEntries(accountRows.results.map((account) => [account.account_type, account.id]));
+      itemStatements.push(
+        env.DB.prepare(
+          `INSERT INTO accounting_ledger_entries
+           (customer_id, account_id, entry_date, reference_type, reference_id, description, debit, credit)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(customerId, accountIds[accountTypes.debit], date, resource, parent.meta.last_row_id, `${number} total`, total, 0),
+        env.DB.prepare(
+          `INSERT INTO accounting_ledger_entries
+           (customer_id, account_id, entry_date, reference_type, reference_id, description, debit, credit)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(customerId, accountIds[accountTypes.credit], date, resource, parent.meta.last_row_id, `${number} total`, 0, total),
+      );
+      await env.DB.batch(itemStatements);
+      return json({ ok: true, id: parent.meta.last_row_id, message: `${isInvoice ? "Invoice" : "Purchase"} recorded` }, 201);
+    } catch (error) {
+      if (String(error).includes("UNIQUE")) return json({ ok: false, error: "Document number already exists" }, 409);
+      throw error;
+    }
+  }
+
+  if (resource === "ledger" && request.method === "GET") {
+    const { results } = await env.DB.prepare(
+      `SELECT l.id, l.entry_date, l.description, l.debit, l.credit,
+              a.code, a.name, a.account_type
+       FROM accounting_ledger_entries l
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.customer_id = ? ORDER BY l.entry_date DESC, l.id DESC LIMIT 200`
+    ).bind(customerId).all();
+    return json({ ok: true, ledger: results });
+  }
+
+  return json({ ok: false, error: "Unsupported accounting operation" }, 405);
+}
+
 async function handleTickets(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
@@ -344,6 +484,10 @@ export async function onRequest(context) {
     if (path === "me" && request.method === "GET") return await handleMe(request, env);
     if (path === "profile" && ["GET", "PUT"].includes(request.method)) return await handleProfile(request, env);
     if (path === "tickets" && ["GET", "POST"].includes(request.method)) return await handleTickets(request, env);
+    if (path === "accounting/accounts" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "accounts");
+    if (path === "accounting/invoices" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "invoices");
+    if (path === "accounting/purchases" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "purchases");
+    if (path === "accounting/ledger" && request.method === "GET") return await handleAccounting(request, env, "ledger");
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
     if (path === "admin/users" && request.method === "GET") return await handleAdminUsers(request, env);
     if (path.startsWith("admin/users/") && request.method === "PATCH") {

@@ -193,6 +193,88 @@ CREATE TABLE IF NOT EXISTS implementation_milestones (
   FOREIGN KEY (project_id) REFERENCES implementation_projects(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS accounting_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  account_type TEXT NOT NULL,
+  opening_balance REAL NOT NULL DEFAULT 0,
+  status TEXT DEFAULT 'active',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(customer_id, code),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  invoice_number TEXT NOT NULL,
+  buyer_name TEXT NOT NULL,
+  buyer_email TEXT,
+  invoice_date TEXT NOT NULL,
+  due_date TEXT,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_amount REAL NOT NULL DEFAULT 0,
+  total_amount REAL NOT NULL DEFAULT 0,
+  status TEXT DEFAULT 'draft',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(customer_id, invoice_number),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_invoice_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  line_total REAL NOT NULL DEFAULT 0,
+  FOREIGN KEY (invoice_id) REFERENCES accounting_invoices(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_purchases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  bill_number TEXT NOT NULL,
+  supplier_name TEXT NOT NULL,
+  purchase_date TEXT NOT NULL,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_amount REAL NOT NULL DEFAULT 0,
+  total_amount REAL NOT NULL DEFAULT 0,
+  status TEXT DEFAULT 'recorded',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(customer_id, bill_number),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_purchase_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  purchase_id INTEGER NOT NULL,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  line_total REAL NOT NULL DEFAULT 0,
+  FOREIGN KEY (purchase_id) REFERENCES accounting_purchases(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS accounting_ledger_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  account_id INTEGER NOT NULL,
+  entry_date TEXT NOT NULL,
+  reference_type TEXT,
+  reference_id INTEGER,
+  description TEXT NOT NULL,
+  debit REAL NOT NULL DEFAULT 0,
+  credit REAL NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+  FOREIGN KEY (account_id) REFERENCES accounting_accounts(id)
+);
+
 CREATE TABLE IF NOT EXISTS demo_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -227,3 +309,7 @@ CREATE INDEX IF NOT EXISTS idx_referrals_customer ON referrals(referrer_customer
 CREATE INDEX IF NOT EXISTS idx_projects_customer ON implementation_projects(customer_id);
 CREATE INDEX IF NOT EXISTS idx_commissions_partner ON partner_commissions(partner_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_customer ON notifications(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_accounts_customer ON accounting_accounts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_invoices_customer ON accounting_invoices(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_purchases_customer ON accounting_purchases(customer_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_ledger_customer ON accounting_ledger_entries(customer_id);

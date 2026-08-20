@@ -74,6 +74,13 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | PUT | `/api/profile` | Update customer profile (Bearer token) |
 | GET | `/api/tickets` | List customer support tickets (Bearer token) |
 | POST | `/api/tickets` | Create support ticket (Bearer token) |
+| GET | `/api/accounting/accounts` | List company accounts (Bearer token) |
+| POST | `/api/accounting/accounts` | Create an account type (Bearer token) |
+| GET | `/api/accounting/invoices` | List sales invoices (Bearer token) |
+| POST | `/api/accounting/invoices` | Create a simple invoice with one or more items (Bearer token) |
+| GET | `/api/accounting/purchases` | List purchase bills (Bearer token) |
+| POST | `/api/accounting/purchases` | Record a purchase with one or more items (Bearer token) |
+| GET | `/api/accounting/ledger` | List double-entry ledger postings (Bearer token) |
 | GET | `/api/demos` | List demos (staff token only) |
 | GET | `/api/admin/users` | List staff users (super admin token only) |
 | PATCH | `/api/admin/users/:id` | Update user role, status, or name (super admin token only) |
