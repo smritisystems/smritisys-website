@@ -1,0 +1,11 @@
+# Optional local config. Cloudflare Pages Git deploy uses Dashboard settings.
+# D1 binding must be added in Pages project → Settings → Functions → D1 bindings
+
+name = "smritisys"
+compatibility_date = "2024-09-23"
+
+# For local dev only (wrangler pages dev)
+[[d1_databases]]
+binding = "DB"
+database_name = "smritisys-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

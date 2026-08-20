@@ -589,25 +589,61 @@
       <p class="text-lg text-indigo-200 mb-8">
         Book a short demo. We’ll show you how SMRITI Retail OS fits your stores — no technical jargon, just practical outcomes.
       </p>
-      <form class="max-w-md mx-auto space-y-3 text-left" onsubmit="event.preventDefault(); alert('Demo request received! (Prototype — connect to your backend later)');">
-        <input type="text" placeholder="Your name" required
+      <form id="demoForm" class="max-w-md mx-auto space-y-3 text-left">
+        <input type="text" name="name" placeholder="Your name" required
           class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
-        <input type="email" placeholder="Work email" required
+        <input type="email" name="email" placeholder="Work email" required
           class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
-        <input type="tel" placeholder="Phone number"
+        <input type="tel" name="phone" placeholder="Phone number"
           class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
-        <select class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-indigo-100 focus:outline-none focus:ring-2 focus:ring-white/40">
+        <select name="stores" class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-indigo-100 focus:outline-none focus:ring-2 focus:ring-white/40">
           <option value="" class="text-slate-800">Number of stores</option>
-          <option class="text-slate-800">1 store</option>
-          <option class="text-slate-800">2–5 stores</option>
-          <option class="text-slate-800">6–20 stores</option>
-          <option class="text-slate-800">20+ stores</option>
+          <option value="1" class="text-slate-800">1 store</option>
+          <option value="2-5" class="text-slate-800">2–5 stores</option>
+          <option value="6-20" class="text-slate-800">6–20 stores</option>
+          <option value="20+" class="text-slate-800">20+ stores</option>
         </select>
-        <button type="submit"
+        <button type="submit" id="demoBtn"
           class="w-full mt-2 px-6 py-3.5 text-base font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">
           Request a demo
         </button>
+        <p id="demoMsg" class="text-sm text-center hidden"></p>
       </form>
+      <script>
+        document.getElementById('demoForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = document.getElementById('demoBtn');
+          const msg = document.getElementById('demoMsg');
+          btn.disabled = true;
+          btn.textContent = 'Sending...';
+          msg.classList.add('hidden');
+          const fd = new FormData(e.target);
+          const body = {
+            name: fd.get('name'),
+            email: fd.get('email'),
+            phone: fd.get('phone'),
+            stores: fd.get('stores')
+          };
+          try {
+            const res = await fetch('/api/demo', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            msg.textContent = data.message || data.error || 'Done';
+            msg.className = 'text-sm text-center ' + (data.ok ? 'text-emerald-300' : 'text-red-300');
+            msg.classList.remove('hidden');
+            if (data.ok) e.target.reset();
+          } catch (err) {
+            msg.textContent = 'Network error. Please try again.';
+            msg.className = 'text-sm text-center text-red-300';
+            msg.classList.remove('hidden');
+          }
+          btn.disabled = false;
+          btn.textContent = 'Request a demo';
+        });
+      </script>
       <p class="mt-6 text-sm text-indigo-300">
         Or email us at <a href="mailto:support@smritibooks.com" class="underline hover:text-white">support@smritibooks.com</a>
       </p>

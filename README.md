@@ -1,47 +1,88 @@
-# SMRITISYS — Public Website (UI Prototype)
+# SMRITISYS — Auto Deploy (GitHub → Cloudflare Pages)
 
-Official marketing website prototype for **SMRITISYS** / **SMRITI Retail OS**.
+Push to GitHub = automatic deploy. No manual `wrangler deploy`.
 
-## How to view
+## Structure
 
-Open `index.html` in any modern browser (Chrome, Edge, Firefox, Safari).  
-No build step required — uses Tailwind CSS via CDN.
+```
+smritisys-auto/
+├── index.html              ← Marketing website
+├── functions/api/[[path]].js  ← Login, signup, demo API
+├── schema.sql              ← D1 tables
+├── wrangler.toml           ← Local/dev config
+└── README.md
+```
 
-## Sections included
+## One-time setup (only once)
 
-1. **Hero** — Value proposition + illustrative POS dashboard
-2. **Trust bar** — GST-ready · Barcode · Multi-store · Tally sync
-3. **Features** — POS, Inventory, Customers & Loyalty, Sales & Purchase, Reports, Own store + multi-platform
-4. **eCommerce Management** — Host own store + connect Shopify / Amazon / Flipkart / Meesho etc.
-5. **How it works** — 3 simple steps
-6. **Editions** — Community · Prime · Enterprise (feature comparison cards)
-7. **Security** — Multi-company data isolation & trust signals
-8. **Contact / Demo form**
-9. **Footer**
+### 1. Create D1 database
+1. Cloudflare Dashboard → **Workers & Pages** → **D1**
+2. Create database → name: `smritisys-db`
+3. Copy **database_id** (optional for local)
 
-## Editions summary
+### 2. Create tables
+In D1 console (or CLI):
+```bash
+npx wrangler d1 execute smritisys-db --file=./schema.sql
+```
+Or open D1 → Console → paste contents of `schema.sql` → Run.
 
-| Edition     | Focus                                      |
-|-------------|--------------------------------------------|
-| Community   | Single shop, core POS & stock              |
-| Prime       | Multi-store, targets, eCommerce, loyalty   |
-| Enterprise  | Assets, workflows, deep integrations, SLA  |
+### 3. Connect GitHub to Cloudflare Pages
+1. Cloudflare Dashboard → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
+2. Select repo: `smritisystems/smritisys-website`
+3. Settings:
 
-## Tech notes
+| Field | Value |
+|-------|--------|
+| Project name | `smritisys` |
+| Production branch | `main` |
+| Framework preset | **None** |
+| Build command | *(leave empty)* |
+| Build output directory | `/` |
 
-- Pure HTML + Tailwind CSS (CDN)
-- Inter font (Google Fonts)
-- Fully responsive
-- No JavaScript framework required for this prototype
+4. **Save and Deploy**
 
-## Next steps (optional)
+### 4. Bind D1 to the Pages project (important)
+1. Open the Pages project → **Settings** → **Functions**
+2. Scroll to **D1 database bindings**
+3. Add binding:
+   - Variable name: `DB`
+   - D1 database: `smritisys-db`
+4. Save
 
-- Migrate to React + Vite + Tailwind (matching SMRITI Retail OS stack)
-- Add real product screenshots
-- Wire demo form to backend / CRM
-- Add pricing or “Contact for quote” details
+After this, every push to `main` auto-deploys.
 
----
+## Daily use
 
-© SMRITISYS / AITDL Networks · SMRITI Retail OS  
-Related: smritibooks.com · aitdl.com · erpnbook.com
+```bash
+git add .
+git commit -m "update"
+git push
+```
+
+Cloudflare Pages will automatically build and deploy. No manual deploy command.
+
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/demo` | Save demo request |
+| POST | `/api/signup` | `{ type: "user"\|"customer", email, password, name }` |
+| POST | `/api/login` | `{ type: "user"\|"customer", email, password }` → token |
+| GET | `/api/me` | Current user (Bearer token) |
+| GET | `/api/demos` | List demos (staff token only) |
+
+## Create first staff user
+
+After deploy:
+
+```bash
+curl -X POST https://YOUR_PROJECT.pages.dev/api/signup \
+  -H "Content-Type: application/json" \
+  -d "{\"type\":\"user\",\"email\":\"admin@smritisys.com\",\"password\":\"change-me\",\"name\":\"Admin\"}"
+```
+
+## Free tier
+- Pages: unlimited bandwidth, 500 builds/month
+- D1: 5M reads/day, 100k writes/day, 5GB storage
+- Enough for demos + user/customer accounts
