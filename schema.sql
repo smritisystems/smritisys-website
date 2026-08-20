@@ -22,6 +22,37 @@ CREATE TABLE IF NOT EXISTS customers (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS organizations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  legal_name TEXT,
+  gst_number TEXT,
+  status TEXT DEFAULT 'active',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  organization_id INTEGER NOT NULL,
+  account_type TEXT NOT NULL,
+  account_id INTEGER NOT NULL,
+  member_role TEXT NOT NULL DEFAULT 'member',
+  status TEXT DEFAULT 'active',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(organization_id, account_type, account_id),
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS relationships (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  organization_id INTEGER NOT NULL,
+  relationship_type TEXT NOT NULL,
+  status TEXT DEFAULT 'active',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(organization_id, relationship_type),
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS customer_profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER UNIQUE NOT NULL,
@@ -191,6 +222,43 @@ CREATE TABLE IF NOT EXISTS implementation_milestones (
   due_date TEXT,
   completed_at TEXT,
   FOREIGN KEY (project_id) REFERENCES implementation_projects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS product_releases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL,
+  version TEXT NOT NULL,
+  release_date TEXT NOT NULL,
+  summary TEXT,
+  status TEXT DEFAULT 'published',
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(product_id, version),
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE TABLE IF NOT EXISTS custom_requirements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  business_need TEXT NOT NULL,
+  status TEXT DEFAULT 'submitted',
+  feasibility TEXT,
+  scope TEXT,
+  estimate_amount REAL,
+  target_date TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS announcements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  audience TEXT DEFAULT 'customer',
+  published_at TEXT,
+  status TEXT DEFAULT 'draft',
+  created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS accounting_accounts (
@@ -363,6 +431,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+CREATE INDEX IF NOT EXISTS idx_org_members_account ON organization_members(account_type, account_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_org ON relationships(organization_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_demo_status ON demo_requests(status);
 CREATE INDEX IF NOT EXISTS idx_profiles_customer ON customer_profiles(customer_id);
@@ -373,6 +443,9 @@ CREATE INDEX IF NOT EXISTS idx_tickets_customer ON support_tickets(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_customer ON referrals(referrer_customer_id);
 CREATE INDEX IF NOT EXISTS idx_projects_customer ON implementation_projects(customer_id);
+CREATE INDEX IF NOT EXISTS idx_releases_product ON product_releases(product_id);
+CREATE INDEX IF NOT EXISTS idx_requirements_customer ON custom_requirements(customer_id);
+CREATE INDEX IF NOT EXISTS idx_announcements_status ON announcements(status, audience);
 CREATE INDEX IF NOT EXISTS idx_commissions_partner ON partner_commissions(partner_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_customer ON notifications(customer_id);
 CREATE INDEX IF NOT EXISTS idx_accounting_accounts_customer ON accounting_accounts(customer_id);

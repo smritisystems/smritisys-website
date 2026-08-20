@@ -55,7 +55,6 @@ async function loadPortal() {
     fillProfile(data.profile);
     updateIdentity(data.profile);
     await loadTickets();
-    await loadAccounting();
   } catch (error) {
     localStorage.removeItem('smritisys_token');
     localStorage.removeItem('smritisys_account_type');

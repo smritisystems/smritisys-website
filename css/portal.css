@@ -28,6 +28,8 @@ aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
 .nav { display:grid; gap:.25rem; }
 .nav button { text-align:left; border:0; color:#a7e4dc; background:transparent; padding:.75rem; border-radius:4px; }
 .nav button:hover,.nav button.active { color:#fff; background:#ffffff18; }
+.nav-link { color:#a7e4dc; padding:.75rem; border-radius:4px; text-decoration:none; font-size:.875rem; }
+.nav-link:hover { color:#fff; background:#ffffff18; }
 .logout { margin-top:auto; border:1px solid #5eead433; color:#a7e4dc; background:transparent; padding:.7rem; border-radius:4px; }
 main { min-width:0; }
 .topbar { min-height:76px; padding:1rem clamp(1.2rem,4vw,3rem); display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:#fbfdf9; }

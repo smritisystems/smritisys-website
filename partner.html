@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Partner Portal | SMRITISYS</title>
+  <meta name="description" content="SMRITISYS partner portal for customers, opportunities, licenses and commissions." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/portal.css" />
+  <style>
+    .partner-shell { min-height:100vh; background:var(--paper); }
+    .partner-header { background:#134e4a; color:#d4faf4; padding:1.5rem clamp(1rem,5vw,5rem); display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+    .partner-header h1 { color:#fff; margin:.3rem 0 0; font:700 clamp(1.5rem,3vw,2.4rem) 'Space Grotesk',sans-serif; }
+    .partner-main { max-width:1200px; margin:auto; padding:clamp(1rem,5vw,4rem); }
+    .partner-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
+    .partner-action { min-height:150px; display:flex; flex-direction:column; justify-content:space-between; }
+    .partner-action h2 { font-size:1.1rem; margin:.4rem 0; }
+    .partner-action p { color:var(--muted); margin:0; line-height:1.5; font-size:.9rem; }
+    @media (max-width:700px) { .partner-header { align-items:flex-start; flex-direction:column; } .partner-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="partner-shell">
+    <header class="partner-header"><div><div class="brand">SMRITISYS / PARTNER PORTAL</div><h1>Build the channel with confidence.</h1></div><a class="primary" href="portal.html">Customer Portal</a></header>
+    <main class="partner-main">
+      <span class="eyebrow">Channel ecosystem</span>
+      <h2>One partner workspace, policy-driven access.</h2>
+      <p class="muted">Manage the commercial relationship around SMRITI Retail OS. Operational customer data remains in the customer's product application.</p>
+      <div class="partner-grid" style="margin-top:2rem">
+        <article class="card partner-action"><div><span class="eyebrow">Pipeline</span><h2>Customers &amp; leads</h2><p>Register customers, capture leads and track opportunities.</p></div><button class="primary">Register customer</button></article>
+        <article class="card partner-action"><div><span class="eyebrow">Commercial</span><h2>Licenses &amp; renewals</h2><p>Request licenses, monitor renewals and manage customer entitlements.</p></div><button class="primary">View licenses</button></article>
+        <article class="card partner-action"><div><span class="eyebrow">Earnings</span><h2>Commissions</h2><p>See pending commissions, payout history and partner tier benefits.</p></div><button class="primary">View commissions</button></article>
+        <article class="card partner-action"><div><span class="eyebrow">Enablement</span><h2>Resources &amp; training</h2><p>Access product resources, release notes and training paths.</p></div><button class="primary">Open resources</button></article>
+        <article class="card partner-action"><div><span class="eyebrow">Service</span><h2>Partner support</h2><p>Raise channel requests and coordinate customer escalations.</p></div><button class="primary">Contact support</button></article>
+        <article class="card partner-action"><div><span class="eyebrow">Identity</span><h2>Partner profile</h2><p>Manage your organization, partner type and authorized contacts.</p></div><button class="primary">Manage profile</button></article>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

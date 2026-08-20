@@ -1,4 +1,8 @@
-# SMRITISYS — Auto Deploy (GitHub → Cloudflare Pages)
+# SMRITISYS — Business Portal + Corporate Website
+
+SMRITISYS is the relationship, licensing, support, partner, commercial, and control plane. **SMRITI Retail OS is a separate operational application** for POS, billing, inventory, purchases, sales, CRM, accounting, GST, and reports.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the product boundary and experience map.
 
 Push to GitHub = automatic deploy. No manual `wrangler deploy`.
 
@@ -6,11 +10,22 @@ Push to GitHub = automatic deploy. No manual `wrangler deploy`.
 
 ```
 smritisys-auto/
-├── index.html              ← Marketing website
-├── functions/api/[[path]].js  ← Login, signup, demo API
-├── schema.sql              ← D1 tables
+├── index.html              ← SMRITISYS public corporate website
+├── portal.html             ← Customer relationship portal
+├── partner.html            ← Partner portal entry surface
+├── functions/api/[[path]].js  ← Control-plane API
+├── schema.sql              ← Control-plane D1 tables
 ├── wrangler.toml           ← Local/dev config
 └── README.md
+```
+
+Operational application boundary:
+
+```text
+smritisys.com             Corporate website and control plane
+smritisys.com/portal.html Customer portal
+smritisys.com/partner.html Partner portal
+app.smritisys.com         SMRITI Retail OS operational application
 ```
 
 ## One-time setup (only once)
