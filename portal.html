@@ -8,81 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <style>
-    :root { --ink:#17231f; --muted:#71807a; --line:#dce5df; --paper:#f5f7f2; --white:#fff; --green:#176b52; --mint:#dff2e5; --amber:#e4a23b; --red:#c95c4b; }
-    * { box-sizing:border-box; }
-    body { margin:0; color:var(--ink); background:var(--paper); font-family:'DM Sans',sans-serif; }
-    button,input,textarea,select { font:inherit; }
-    button { cursor:pointer; }
-    .hidden { display:none !important; }
-    .login-shell { min-height:100vh; display:grid; grid-template-columns:1.05fr .95fr; }
-    .login-art { padding:clamp(2rem,7vw,7rem); color:#f5fff7; background:#173b31; position:relative; overflow:hidden; }
-    .login-art:after { content:""; position:absolute; width:28rem; height:28rem; border:1px solid #8fc7a5; border-radius:50%; right:-9rem; bottom:-9rem; box-shadow:0 0 0 4rem #173b31,0 0 0 4.1rem #8fc7a5; opacity:.45; }
-    .brand { font-family:'Space Grotesk',sans-serif; font-weight:700; letter-spacing:.04em; }
-    .login-art h1 { max-width:560px; margin:6rem 0 1.25rem; font:700 clamp(2.5rem,5vw,5.4rem)/.98 'Space Grotesk',sans-serif; letter-spacing:-.04em; }
-    .login-art p { max-width:480px; color:#c4dfcf; font-size:1.05rem; line-height:1.7; }
-    .login-panel { display:flex; align-items:center; justify-content:center; padding:2rem; }
-    .login-box { width:min(100%,420px); background:var(--white); border:1px solid var(--line); padding:2.25rem; box-shadow:0 18px 50px #19392b10; }
-    h2,h3 { font-family:'Space Grotesk',sans-serif; }
-    .login-box h2 { margin:.25rem 0 .5rem; font-size:2rem; }
-    .muted { color:var(--muted); }
-    label { display:block; font-size:.82rem; font-weight:700; margin:1.15rem 0 .4rem; }
-    input,textarea,select { width:100%; border:1px solid var(--line); background:#fbfdf9; color:var(--ink); padding:.78rem .85rem; outline:none; border-radius:4px; }
-    input:focus,textarea:focus,select:focus { border-color:var(--green); box-shadow:0 0 0 3px #176b5217; }
-    .primary { border:0; color:#fff; background:var(--green); padding:.82rem 1rem; font-weight:700; border-radius:4px; }
-    .primary:hover { background:#0f5842; }
-    .login-box .primary { width:100%; margin-top:1.4rem; }
-    .message { min-height:1.3rem; font-size:.85rem; margin-top:.8rem; }
-    .portal { min-height:100vh; display:grid; grid-template-columns:245px 1fr; }
-    aside { background:#173b31; color:#d8ede0; padding:1.5rem 1rem; display:flex; flex-direction:column; }
-    aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
-    .nav { display:grid; gap:.25rem; }
-    .nav button { text-align:left; border:0; color:#b8d5c3; background:transparent; padding:.75rem; border-radius:4px; }
-    .nav button:hover,.nav button.active { color:#fff; background:#ffffff18; }
-    .logout { margin-top:auto; border:1px solid #8fc7a533; color:#b8d5c3; background:transparent; padding:.7rem; border-radius:4px; }
-    main { min-width:0; }
-    .topbar { min-height:76px; padding:1rem clamp(1.2rem,4vw,3rem); display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:#fbfdf9; }
-    .topbar h1 { margin:0; font:600 1.35rem 'Space Grotesk',sans-serif; }
-    .user-chip { display:flex; align-items:center; gap:.65rem; font-size:.85rem; }
-    .avatar { width:35px; height:35px; display:grid; place-items:center; background:var(--mint); color:var(--green); font-weight:700; border-radius:50%; }
-    .content { padding:clamp(1.2rem,4vw,3rem); max-width:1440px; }
-    .eyebrow { color:var(--green); font-size:.78rem; text-transform:uppercase; letter-spacing:.12em; font-weight:700; }
-    .welcome { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin-bottom:1.7rem; }
-    .welcome h2 { margin:.35rem 0 .35rem; font-size:clamp(1.8rem,3vw,2.6rem); }
-    .grid { display:grid; gap:1rem; }
-    .stats { grid-template-columns:repeat(4,minmax(0,1fr)); }
-    .card { background:var(--white); border:1px solid var(--line); padding:1.25rem; border-radius:6px; }
-    .stat-label { color:var(--muted); font-size:.82rem; }
-    .stat-value { display:block; margin:.5rem 0 .3rem; font:700 1.8rem 'Space Grotesk',sans-serif; }
-    .status { display:inline-block; padding:.25rem .5rem; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; background:var(--mint); color:var(--green); }
-    .modules { grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:1rem; }
-    .module { min-height:150px; display:flex; flex-direction:column; justify-content:space-between; }
-    .module h3 { margin:.25rem 0 .45rem; font-size:1.1rem; }
-    .module p { color:var(--muted); margin:0; font-size:.88rem; line-height:1.5; }
-    .text-button { border:0; padding:0; color:var(--green); background:transparent; font-weight:700; text-align:left; }
-    .view { display:none; }
-    .view.active { display:block; }
-    .section-head { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin-bottom:1rem; }
-    .section-head h2 { margin:.3rem 0 0; font-size:1.8rem; }
-    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 1rem; }
-    .form-grid .full { grid-column:1/-1; }
-    .ticket { border-top:1px solid var(--line); padding:1rem 0; display:flex; justify-content:space-between; gap:1rem; }
-    .ticket:first-child { border-top:0; }
-    .ticket h3 { margin:0 0 .3rem; font-size:1rem; }
-    .ticket p { margin:0; color:var(--muted); font-size:.85rem; }
-    .admin-user { display:grid; grid-template-columns:1.3fr 1fr 130px 120px; gap:1rem; align-items:center; border-top:1px solid var(--line); padding:1rem 0; }
-    .admin-user:first-child { border-top:0; }
-    .admin-user strong { display:block; }
-    .admin-user small { color:var(--muted); }
-    .admin-user select { padding:.55rem; }
-    .roadmap { margin-top:1rem; }
-    .roadmap-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.75rem; margin-top:1rem; }
-    .roadmap-item { padding:.9rem; background:#f7fbf7; border-left:3px solid var(--green); }
-    .roadmap-item strong { display:block; font-size:.9rem; }
-    .roadmap-item span { color:var(--muted); font-size:.8rem; }
-    @media (max-width:850px) { .login-shell { grid-template-columns:1fr; } .login-art { min-height:300px; padding:2rem; } .login-art h1 { margin:4rem 0 1rem; font-size:3rem; } .portal { grid-template-columns:1fr; } aside { padding:.8rem; } aside .brand { padding:.5rem .75rem 1rem; } .nav { display:flex; overflow:auto; } .nav button { white-space:nowrap; } .logout { margin-top:.7rem; } .stats,.modules,.roadmap-list { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-user { grid-template-columns:1fr 1fr; } }
-    @media (max-width:560px) { .login-art { display:none; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } }
-  </style>
+  <link rel="stylesheet" href="css/portal.css" />
 </head>
 <body>
   <section id="loginView" class="login-shell">
@@ -163,51 +89,6 @@
     </main>
   </section>
 
-  <script>
-    const state = { token: localStorage.getItem('smritisys_token'), accountType: localStorage.getItem('smritisys_account_type') || 'customer', profile: null };
-    const $ = (selector) => document.querySelector(selector);
-    const $$ = (selector) => [...document.querySelectorAll(selector)];
-    const setMessage = (element, text, ok) => { element.textContent = text; element.style.color = ok ? 'var(--green)' : 'var(--red)'; };
-    async function api(path, options = {}) {
-      const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-      if (state.token) headers.Authorization = `Bearer ${state.token}`;
-      const response = await fetch(`/api/${path}`, { ...options, headers });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Request failed');
-      return data;
-    }
-    function showPortal() { $('#loginView').classList.add('hidden'); $('#portalView').classList.remove('hidden'); loadPortal(); }
-    function showLogin(message = '') { $('#portalView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); if (message) setMessage($('#loginMessage'), message, false); }
-    async function loadPortal() {
-      try {
-        if (state.accountType === 'user') {
-          const data = await api('me');
-          updateIdentity(data.user);
-          $('#profileForm').querySelectorAll('input, textarea, select, button').forEach((control) => { control.disabled = true; });
-          $('#profileMessage').textContent = 'Staff profile editing is managed by the administration area.';
-          $('#openTicketCount').textContent = '—';
-          return;
-        }
-        const data = await api('profile');
-        state.profile = data.profile;
-        fillProfile(data.profile);
-        updateIdentity(data.profile);
-        await loadTickets();
-      }
-      catch (error) { localStorage.removeItem('smritisys_token'); state.token = null; showLogin(error.message); }
-    }
-    function fillProfile(profile) { ['name','email','phone','company','gst_number','website','bio'].forEach((key) => { const input = $(`#profile${key === 'gst_number' ? 'Gst' : key[0].toUpperCase() + key.slice(1)}`); if (input) input.value = profile[key] || ''; }); }
-    function updateIdentity(profile) { const name = profile.name || 'Customer'; $('#userName').textContent = name; $('#welcomeName').textContent = name.split(' ')[0]; $('#userAvatar').textContent = name.charAt(0).toUpperCase(); }
-    async function loadTickets() { const data = await api('tickets'); $('#openTicketCount').textContent = data.tickets.filter((ticket) => ticket.status === 'open' || ticket.status === 'in_progress').length; $('#ticketList').innerHTML = data.tickets.length ? data.tickets.map((ticket) => `<article class="ticket"><div><h3>${escapeHtml(ticket.subject)}</h3><p>${escapeHtml(ticket.description)}</p></div><span class="status">${escapeHtml(ticket.status)}</span></article>`).join('') : '<p class="muted">No tickets yet. Your support history will appear here.</p>'; }
-    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[character])); }
-    $$('.nav button').forEach((button) => button.addEventListener('click', () => { $$('.nav button').forEach((item) => item.classList.remove('active')); button.classList.add('active'); $$('.view').forEach((view) => view.classList.toggle('active', view.dataset.section === button.dataset.view)); $('#pageTitle').textContent = button.textContent; }));
-    $$('[data-go]').forEach((button) => button.addEventListener('click', () => $(`button[data-view="${button.dataset.go}"]`).click()));
-    $('#loginForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); const button = event.target.querySelector('button'); button.disabled = true; setMessage($('#loginMessage'), 'Signing in...', true); try { const data = await api('login', { method:'POST', body:JSON.stringify({ email:form.get('email'), password:form.get('password') }) }); state.token = data.token; state.accountType = data.account_type; localStorage.setItem('smritisys_token', state.token); localStorage.setItem('smritisys_account_type', state.accountType); showPortal(); } catch (error) { setMessage($('#loginMessage'), error.message, false); } button.disabled = false; });
-    $('#profileForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); try { const data = await api('profile', { method:'PUT', body:JSON.stringify(Object.fromEntries(form)) }); setMessage($('#profileMessage'), data.message, true); updateIdentity(Object.fromEntries(form)); } catch (error) { setMessage($('#profileMessage'), error.message, false); } });
-    $('#newTicketButton').addEventListener('click', () => $('#ticketForm').classList.toggle('hidden'));
-    $('#ticketForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); try { const data = await api('tickets', { method:'POST', body:JSON.stringify(Object.fromEntries(form)) }); setMessage($('#ticketMessage'), `Ticket #${data.ticket_id} created`, true); event.target.reset(); $('#ticketForm').classList.add('hidden'); await loadTickets(); } catch (error) { setMessage($('#ticketMessage'), error.message, false); } });
-    $('#logoutButton').addEventListener('click', () => { localStorage.removeItem('smritisys_token'); localStorage.removeItem('smritisys_account_type'); state.token = null; showLogin(); });
-    if (state.token) showPortal();
-  </script>
+  <script src="js/portal.js" defer></script>
 </body>
 </html>
