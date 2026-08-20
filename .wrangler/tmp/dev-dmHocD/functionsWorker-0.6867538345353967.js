@@ -7,7 +7,9 @@ var __name2 = /* @__PURE__ */ __name((target, value) => __defProp2(target, "name
 function isTrustedOrigin(request, env) {
   const origin = request.headers.get("Origin");
   if (!origin) return null;
-  const allowedOrigins = (env.ALLOWED_ORIGINS || "https://smritisys.com,http://localhost:8788,http://127.0.0.1:8788").split(",").map((value) => value.trim()).filter(Boolean);
+  const configuredOrigins = typeof env.ALLOWED_ORIGINS === "string" ? env.ALLOWED_ORIGINS : "";
+  if (!configuredOrigins.trim()) return null;
+  const allowedOrigins = configuredOrigins.split(",").map((value) => value.trim()).filter(Boolean);
   return allowedOrigins.includes(origin) ? origin : null;
 }
 __name(isTrustedOrigin, "isTrustedOrigin");

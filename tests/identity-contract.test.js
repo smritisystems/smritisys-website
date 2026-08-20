@@ -30,6 +30,12 @@ test("server authorization uses organization membership permissions", () => {
   assert.match(schema, /'support\.create'/);
 });
 
+test("production CORS requires explicit allowed origins", () => {
+  assert.match(api, /typeof env\.ALLOWED_ORIGINS === "string"/);
+  assert.match(api, /if \(!configuredOrigins\.trim\(\)\) return null/);
+  assert.doesNotMatch(api, /env\.ALLOWED_ORIGINS \|\| "https:\/\/smritisys\.com/);
+});
+
 test("fresh schema seeds the same RBAC catalog", () => {
   assert.match(schema, /INSERT OR IGNORE INTO roles/);
   assert.match(schema, /INSERT OR IGNORE INTO permissions/);
