@@ -1,0 +1,10 @@
+{
+  "name": "smritisys-public-site",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./css/site.css -o ./css/site.generated.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
