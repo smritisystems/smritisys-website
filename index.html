@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMRITISYS — SMRITI Retail OS | Community · Prime · Enterprise</title>
+  <meta name="description" content="SMRITI Retail OS by SMRITISYS — Fast POS billing, inventory, multi-store, eCommerce (own store + multi-platform), sales targets and asset management. Available in Community, Prime and Enterprise editions." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:  '#eef2ff',
+              100: '#e0e7ff',
+              200: '#c7d2fe',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              800: '#3730a3',
+              900: '#312e81',
+            },
+            accent: {
+              500: '#10b981',
+              600: '#059669',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .gradient-hero {
+      background: linear-gradient(135deg, #312e81 0%, #4338ca 40%, #4f46e5 70%, #6366f1 100%);
+    }
+    .card-hover {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card-hover:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.08), 0 8px 10px -6px rgb(0 0 0 / 0.05);
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+
+  <!-- ========== NAV ========== -->
+  <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo -->
+        <a href="#" class="flex items-center gap-2.5 group">
+          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">
+            S
+          </div>
+          <div class="leading-tight">
+            <span class="font-bold text-slate-900 tracking-tight">SMRITISYS</span>
+            <span class="hidden sm:inline text-xs text-slate-500 block -mt-0.5">Retail OS</span>
+          </div>
+        </a>
+
+        <!-- Desktop Nav -->
+        <nav class="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600">
+          <a href="#features" class="hover:text-brand-700 transition">Features</a>
+          <a href="#ecommerce" class="hover:text-brand-700 transition">eCommerce</a>
+          <a href="#editions" class="hover:text-brand-700 transition">Editions</a>
+          <a href="#how-it-works" class="hover:text-brand-700 transition">How it works</a>
+          <a href="#security" class="hover:text-brand-700 transition">Security</a>
+          <a href="#contact" class="hover:text-brand-700 transition">Contact</a>
+        </nav>
+
+        <!-- CTA -->
+        <div class="flex items-center gap-3">
+          <a href="#contact" class="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-brand-700 transition">
+            Sign in
+          </a>
+          <a href="#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">
+            Book a Demo
+          </a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========== HERO ========== -->
+  <section class="gradient-hero text-white overflow-hidden">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24 lg:py-28">
+      <div class="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div>
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-sm font-medium mb-6 border border-white/15">
+            <span class="w-1.5 h-1.5 rounded-full bg-accent-500"></span>
+            Built for modern Indian retail
+          </div>
+          <h1 class="text-4xl sm:text-5xl lg:text-[3.25rem] font-extrabold leading-[1.15] tracking-tight mb-6">
+            One system for<br class="hidden sm:block" />
+            billing, stock &amp;<br class="hidden sm:block" />
+            multi-store growth
+          </h1>
+          <p class="text-lg sm:text-xl text-indigo-100 max-w-xl mb-8 leading-relaxed">
+            SMRITI Retail OS helps store owners run faster checkouts, keep inventory accurate, and manage multiple locations — without the complexity of traditional ERP.
+          </p>
+          <div class="flex flex-col sm:flex-row gap-3">
+            <a href="#contact" class="inline-flex items-center justify-center px-6 py-3.5 text-base font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">
+              Book a free demo
+            </a>
+            <a href="#features" class="inline-flex items-center justify-center px-6 py-3.5 text-base font-semibold text-white border-2 border-white/30 hover:bg-white/10 rounded-xl transition">
+              See features
+            </a>
+          </div>
+          <p class="mt-6 text-sm text-indigo-200">
+            No credit card required · Works for single shops &amp; multi-branch chains
+          </p>
+        </div>
+
+        <!-- Hero visual placeholder -->
+        <div class="relative">
+          <div class="bg-white/10 backdrop-blur rounded-2xl border border-white/20 p-4 sm:p-6 shadow-2xl">
+            <div class="bg-slate-900 rounded-xl overflow-hidden">
+              <!-- Fake app chrome -->
+              <div class="flex items-center gap-2 px-4 py-3 bg-slate-800 border-b border-slate-700">
+                <div class="flex gap-1.5">
+                  <span class="w-2.5 h-2.5 rounded-full bg-red-400"></span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                </div>
+                <span class="text-xs text-slate-400 ml-2">SMRITI · POS Terminal</span>
+              </div>
+              <div class="p-5 space-y-4">
+                <div class="flex justify-between items-center">
+                  <span class="text-sm text-slate-400">Today’s sales</span>
+                  <span class="text-emerald-400 text-sm font-medium">+12.4%</span>
+                </div>
+                <div class="text-3xl font-bold text-white tracking-tight">₹1,84,250</div>
+                <div class="grid grid-cols-3 gap-3 pt-2">
+                  <div class="bg-slate-800 rounded-lg p-3 text-center">
+                    <div class="text-lg font-semibold text-white">142</div>
+                    <div class="text-xs text-slate-400">Bills</div>
+                  </div>
+                  <div class="bg-slate-800 rounded-lg p-3 text-center">
+                    <div class="text-lg font-semibold text-white">38</div>
+                    <div class="text-xs text-slate-400">Items low</div>
+                  </div>
+                  <div class="bg-slate-800 rounded-lg p-3 text-center">
+                    <div class="text-lg font-semibold text-white">4</div>
+                    <div class="text-xs text-slate-400">Stores</div>
+                  </div>
+                </div>
+                <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div class="h-full w-3/4 bg-gradient-to-r from-brand-500 to-accent-500 rounded-full"></div>
+                </div>
+                <p class="text-xs text-slate-500 text-center">Live dashboard preview · Illustrative data</p>
+              </div>
+            </div>
+          </div>
+          <!-- Decorative blobs -->
+          <div class="absolute -z-10 -top-8 -right-8 w-64 h-64 bg-indigo-400/30 rounded-full blur-3xl"></div>
+          <div class="absolute -z-10 -bottom-8 -left-8 w-48 h-48 bg-emerald-400/20 rounded-full blur-3xl"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== TRUST BAR ========== -->
+  <section class="bg-white border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <p class="text-center text-sm font-medium text-slate-500 mb-6">Designed for the way Indian retail actually works</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+        <div>
+          <div class="text-2xl font-bold text-slate-900">GST-ready</div>
+          <div class="text-sm text-slate-500 mt-1">HSN, tax, e-invoice ready flows</div>
+        </div>
+        <div>
+          <div class="text-2xl font-bold text-slate-900">Barcode first</div>
+          <div class="text-sm text-slate-500 mt-1">Scan, label, print in seconds</div>
+        </div>
+        <div>
+          <div class="text-2xl font-bold text-slate-900">Multi-store</div>
+          <div class="text-sm text-slate-500 mt-1">One login, many locations</div>
+        </div>
+        <div>
+          <div class="text-2xl font-bold text-slate-900">Tally sync</div>
+          <div class="text-sm text-slate-500 mt-1">Accounting that stays in sync</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== FEATURES ========== -->
+  <section id="features" class="py-20 sm:py-24">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center max-w-2xl mx-auto mb-14">
+        <h2 class="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight mb-4">
+          Everything your store needs — in one place
+        </h2>
+        <p class="text-lg text-slate-600">
+          From the billing counter to the back office. Built so your team can start using it the same day.
+        </p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Feature 1 -->
+        <div class="card-hover bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div class="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-slate-900 mb-2">Lightning-fast POS</h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            Barcode scan, multi-tender payments, discounts, returns and thermal receipts. Built for peak-hour speed.
+          </p>
+        </div>
+
+        <!-- Feature 2 -->
+        <div class="card-hover bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-slate-900 mb-2">Real-time inventory</h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            Stock ledgers, adjustments, low-stock alerts and barcode label printing. Always know what you have.
+          </p>
+        </div>
+
+        <!-- Feature 3 -->
+        <div class="card-hover bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-slate-900 mb-2">Customers &amp; loyalty</h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            Customer master with GST details, credit limits, purchase history and simple loyalty points.
+          </p>
+        </div>
+
+        <!-- Feature 4 -->
+        <div class="card-hover bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div class="w-11 h-11 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-slate-900 mb-2">Sales &amp; purchase</h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            Quotations, orders, delivery challans, GRNs, credit/debit notes — full document flow.
+          </p>
+        </div>
+
+        <!-- Feature 5 -->
+        <div class="card-hover bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div class="w-11 h-11 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-slate-900 mb-2">Reports &amp; accounts</h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            Business ledger, stock reports, custom report designer and Tally / ERP sync options.
+          </p>
+        </div>
+
+        <!-- Feature 6 -->
+        <div class="card-hover bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div class="w-11 h-11 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-slate-900 mb-2">Own store + multi-platform</h3>
+          <p class="text-slate-600 text-sm leading-relaxed">
+            Host your own online store or connect Shopify, Amazon, Flipkart and more. One inventory, all channels.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ECOMMERCE MANAGEMENT ========== -->
+  <section id="ecommerce" class="py-20 sm:py-24 bg-slate-100 border-y border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center max-w-2xl mx-auto mb-14">
+        <div class="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+          eCommerce Management
+        </div>
+        <h2 class="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight mb-4">
+          Sell everywhere. Manage in one place.
+        </h2>
+        <p class="text-lg text-slate-600">
+          Host your own branded online store or connect the platforms you already use. Inventory and orders stay perfectly in sync — no more double-selling or spreadsheet headaches.
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-8 mb-12">
+        <!-- Host Own -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+          <div class="w-12 h-12 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-5">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+          </div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-3">Host your own store</h3>
+          <p class="text-slate-600 mb-5 leading-relaxed">
+            Launch a branded online storefront powered by SMRITI. Your catalog, your prices, your customers — fully controlled and always in sync with shop inventory.
+          </p>
+          <ul class="space-y-2.5 text-sm text-slate-700">
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Branded store (your domain or subdomain)
+            </li>
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Catalog &amp; stock synced from Item Master
+            </li>
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Orders flow straight into Sales / POS
+            </li>
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Mobile-friendly storefront
+            </li>
+          </ul>
+        </div>
+
+        <!-- Connect Platforms -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+          <div class="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mb-5">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+          </div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-3">Connect existing platforms</h3>
+          <p class="text-slate-600 mb-5 leading-relaxed">
+            Already selling on Shopify, Amazon, Flipkart or Meesho? Connect them all. Orders come in, stock goes out — automatically.
+          </p>
+          <ul class="space-y-2.5 text-sm text-slate-700">
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Shopify, WooCommerce, Amazon, Flipkart, Meesho &amp; more
+            </li>
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Multi-channel inventory reservation
+            </li>
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Unified order inbox inside SMRITI
+            </li>
+            <li class="flex items-start gap-2.5">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              Status updates pushed back to platforms
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Key benefits row -->
+      <div class="grid sm:grid-cols-3 gap-6 text-center">
+        <div class="bg-white/80 rounded-xl border border-slate-200 px-5 py-6">
+          <div class="text-2xl font-bold text-slate-900 mb-1">One catalog</div>
+          <div class="text-sm text-slate-600">Item Master is the single source of truth for every channel</div>
+        </div>
+        <div class="bg-white/80 rounded-xl border border-slate-200 px-5 py-6">
+          <div class="text-2xl font-bold text-slate-900 mb-1">Zero overselling</div>
+          <div class="text-sm text-slate-600">Real-time stock reservation across online and offline</div>
+        </div>
+        <div class="bg-white/80 rounded-xl border border-slate-200 px-5 py-6">
+          <div class="text-2xl font-bold text-slate-900 mb-1">One order hub</div>
+          <div class="text-sm text-slate-600">All marketplace and own-store orders in a single inbox</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== HOW IT WORKS ========== -->
+  <section id="how-it-works" class="py-20 sm:py-24 bg-white border-y border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center max-w-2xl mx-auto mb-14">
+        <h2 class="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight mb-4">
+          Up and running in three simple steps
+        </h2>
+        <p class="text-lg text-slate-600">
+          No months-long implementation. Designed so a store can go live quickly.
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-8 md:gap-12">
+        <div class="relative text-center md:text-left">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-brand-700 text-white font-bold text-lg mb-5">1</div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-2">Set up your store</h3>
+          <p class="text-slate-600 leading-relaxed">
+            Add company details, branches, users and roles. Import items and customers from Excel if you already have data.
+          </p>
+        </div>
+        <div class="relative text-center md:text-left">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-brand-700 text-white font-bold text-lg mb-5">2</div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-2">Start billing &amp; stock</h3>
+          <p class="text-slate-600 leading-relaxed">
+            Train staff on the POS in minutes. Scan barcodes, take payments, print labels and keep stock moving accurately.
+          </p>
+        </div>
+        <div class="relative text-center md:text-left">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-brand-700 text-white font-bold text-lg mb-5">3</div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-2">Grow with confidence</h3>
+          <p class="text-slate-600 leading-relaxed">
+            Add more stores, enable loyalty, run reports, and keep accounts in sync — all from the same system.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== EDITIONS ========== -->
+  <section id="editions" class="py-20 sm:py-24 bg-slate-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center max-w-2xl mx-auto mb-14">
+        <h2 class="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight mb-4">
+          Three editions. One powerful platform.
+        </h2>
+        <p class="text-lg text-slate-600">
+          Start simple or go all-in. Every edition shares the same solid core — choose the level that matches your business today.
+        </p>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-6 lg:gap-8">
+
+        <!-- Community -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-7 shadow-sm flex flex-col">
+          <div class="mb-5">
+            <span class="inline-block text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Community</span>
+            <h3 class="text-2xl font-bold text-slate-900">Community Edition</h3>
+            <p class="text-slate-600 text-sm mt-2">For single shops and early adopters who want core retail operations without complexity.</p>
+          </div>
+          <ul class="space-y-3 text-sm text-slate-700 flex-1 mb-8">
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> POS billing &amp; receipts</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Item master &amp; basic stock</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Customer master</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Basic reports</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Single store / company</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Community support</li>
+          </ul>
+          <a href="#contact" class="block text-center px-5 py-3 rounded-xl border-2 border-slate-300 text-slate-800 font-semibold hover:bg-slate-50 transition">
+            Get started
+          </a>
+        </div>
+
+        <!-- Prime (highlighted) -->
+        <div class="bg-white rounded-2xl border-2 border-brand-600 p-7 shadow-lg flex flex-col relative">
+          <div class="absolute -top-3.5 left-1/2 -translate-x-1/2">
+            <span class="inline-block px-3 py-1 rounded-full bg-brand-700 text-white text-xs font-semibold tracking-wide">Most popular</span>
+          </div>
+          <div class="mb-5">
+            <span class="inline-block text-xs font-semibold tracking-wide uppercase text-brand-700 mb-2">Prime</span>
+            <h3 class="text-2xl font-bold text-slate-900">Prime Edition</h3>
+            <p class="text-slate-600 text-sm mt-2">For growing multi-store retailers who need full operations, targets and online selling.</p>
+          </div>
+          <ul class="space-y-3 text-sm text-slate-700 flex-1 mb-8">
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Everything in Community</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Multi-store &amp; multi-company</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Sales &amp; purchase studios</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Sales personnel, targets &amp; store assignment</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Loyalty &amp; CRM basics</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Own store + platform connectors</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Barcode studio &amp; advanced reports</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Priority email support</li>
+          </ul>
+          <a href="#contact" class="block text-center px-5 py-3 rounded-xl bg-brand-700 text-white font-semibold hover:bg-brand-600 shadow-sm transition">
+            Book a demo
+          </a>
+        </div>
+
+        <!-- Enterprise -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-7 shadow-sm flex flex-col">
+          <div class="mb-5">
+            <span class="inline-block text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Enterprise</span>
+            <h3 class="text-2xl font-bold text-slate-900">Enterprise Edition</h3>
+            <p class="text-slate-600 text-sm mt-2">For chains and larger groups that need governance, assets, deep integrations and dedicated support.</p>
+          </div>
+          <ul class="space-y-3 text-sm text-slate-700 flex-1 mb-8">
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Everything in Prime</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Asset management</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Advanced approvals &amp; workflows</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Full audit &amp; compliance suite</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Tally / ERP deep sync</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Custom report designer &amp; API access</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Dedicated success manager</li>
+            <li class="flex gap-2.5"><svg class="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> SLA-backed support</li>
+          </ul>
+          <a href="#contact" class="block text-center px-5 py-3 rounded-xl border-2 border-slate-300 text-slate-800 font-semibold hover:bg-slate-50 transition">
+            Talk to sales
+          </a>
+        </div>
+
+      </div>
+
+      <p class="text-center text-sm text-slate-500 mt-10">
+        All editions run on the same secure multi-company architecture. Upgrade anytime as your business grows.
+      </p>
+    </div>
+  </section>
+
+  <!-- ========== SECURITY / MULTI-STORE ========== -->
+  <section id="security" class="py-20 sm:py-24">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div>
+          <div class="inline-flex items-center gap-2 text-sm font-semibold text-brand-700 mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            Enterprise-grade foundation
+          </div>
+          <h2 class="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight mb-5">
+            Your data stays isolated and secure
+          </h2>
+          <p class="text-lg text-slate-600 mb-6 leading-relaxed">
+            Each company runs in its own dedicated data space. Strong role-based access, full audit trails, and a central control plane mean you get the power of multi-company software without sharing data between businesses.
+          </p>
+          <ul class="space-y-3 text-slate-700">
+            <li class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span>Physical separation of company data</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span>Role-based permissions &amp; staff management</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span>Complete audit logs for compliance</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-accent-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span>Built-in training sandbox for new staff</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="bg-slate-900 rounded-2xl p-8 text-white shadow-xl">
+          <h3 class="text-lg font-semibold mb-6 text-slate-200">What store owners care about</h3>
+          <div class="space-y-5">
+            <div class="flex items-center justify-between border-b border-slate-700 pb-4">
+              <span class="text-slate-300">Fast checkout during peak hours</span>
+              <span class="text-accent-500 font-medium">✓</span>
+            </div>
+            <div class="flex items-center justify-between border-b border-slate-700 pb-4">
+              <span class="text-slate-300">Accurate stock across locations</span>
+              <span class="text-accent-500 font-medium">✓</span>
+            </div>
+            <div class="flex items-center justify-between border-b border-slate-700 pb-4">
+              <span class="text-slate-300">Simple GST &amp; billing compliance</span>
+              <span class="text-accent-500 font-medium">✓</span>
+            </div>
+            <div class="flex items-center justify-between border-b border-slate-700 pb-4">
+              <span class="text-slate-300">Easy staff onboarding</span>
+              <span class="text-accent-500 font-medium">✓</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-slate-300">Reports the owner actually opens</span>
+              <span class="text-accent-500 font-medium">✓</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== FINAL CTA ========== -->
+  <section id="contact" class="py-20 sm:py-24 bg-brand-800 text-white">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+      <h2 class="text-3xl sm:text-4xl font-bold tracking-tight mb-4">
+        Ready to modernize your retail operations?
+      </h2>
+      <p class="text-lg text-indigo-200 mb-8">
+        Book a short demo. We’ll show you how SMRITI Retail OS fits your stores — no technical jargon, just practical outcomes.
+      </p>
+      <form class="max-w-md mx-auto space-y-3 text-left" onsubmit="event.preventDefault(); alert('Demo request received! (Prototype — connect to your backend later)');">
+        <input type="text" placeholder="Your name" required
+          class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
+        <input type="email" placeholder="Work email" required
+          class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
+        <input type="tel" placeholder="Phone number"
+          class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/40" />
+        <select class="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-indigo-100 focus:outline-none focus:ring-2 focus:ring-white/40">
+          <option value="" class="text-slate-800">Number of stores</option>
+          <option class="text-slate-800">1 store</option>
+          <option class="text-slate-800">2–5 stores</option>
+          <option class="text-slate-800">6–20 stores</option>
+          <option class="text-slate-800">20+ stores</option>
+        </select>
+        <button type="submit"
+          class="w-full mt-2 px-6 py-3.5 text-base font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">
+          Request a demo
+        </button>
+      </form>
+      <p class="mt-6 text-sm text-indigo-300">
+        Or email us at <a href="mailto:support@smritibooks.com" class="underline hover:text-white">support@smritibooks.com</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- ========== FOOTER ========== -->
+  <footer class="bg-slate-900 text-slate-400 py-12">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="flex flex-col md:flex-row justify-between gap-8">
+        <div>
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">S</div>
+            <span class="font-bold text-white">SMRITISYS</span>
+          </div>
+          <p class="text-sm max-w-xs leading-relaxed">
+            Official platform for SMRITI Retail OS — enterprise retail software built for clarity, speed and control.
+          </p>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm">
+          <div>
+            <h4 class="font-semibold text-white mb-3">Product</h4>
+            <ul class="space-y-2">
+              <li><a href="#features" class="hover:text-white transition">Features</a></li>
+              <li><a href="#ecommerce" class="hover:text-white transition">eCommerce</a></li>
+              <li><a href="#editions" class="hover:text-white transition">Editions</a></li>
+              <li><a href="#how-it-works" class="hover:text-white transition">How it works</a></li>
+              <li><a href="#security" class="hover:text-white transition">Security</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3">Company</h4>
+            <ul class="space-y-2">
+              <li><a href="#" class="hover:text-white transition">About</a></li>
+              <li><a href="#contact" class="hover:text-white transition">Contact</a></li>
+              <li><a href="https://github.com/smritisystems" class="hover:text-white transition" target="_blank" rel="noopener">GitHub</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3">Related</h4>
+            <ul class="space-y-2">
+              <li><a href="https://smritibooks.com" class="hover:text-white transition" target="_blank" rel="noopener">SMRITIBooks</a></li>
+              <li><a href="https://aitdl.com" class="hover:text-white transition" target="_blank" rel="noopener">AITDL</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="mt-10 pt-8 border-t border-slate-800 text-sm text-center md:text-left">
+        © 2026 SMRITISYS / AITDL Networks. All rights reserved. SMRITI Retail OS is proprietary commercial software.
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
