@@ -70,6 +70,10 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | POST | `/api/signup` | `{ type: "user"\|"customer", email, password, name }` |
 | POST | `/api/login` | `{ type: "user"\|"customer", email, password }` → token |
 | GET | `/api/me` | Current user (Bearer token) |
+| GET | `/api/profile` | Current customer profile (Bearer token) |
+| PUT | `/api/profile` | Update customer profile (Bearer token) |
+| GET | `/api/tickets` | List customer support tickets (Bearer token) |
+| POST | `/api/tickets` | Create support ticket (Bearer token) |
 | GET | `/api/demos` | List demos (staff token only) |
 
 ## Create first staff user

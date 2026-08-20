@@ -1,6 +1,6 @@
 /**
  * SMRITISYS Pages Functions
- * Handles: /api/demo, /api/signup, /api/login, /api/me, /api/demos
+ * Handles account, profile, support ticket, and demo APIs.
  * Auto-deploys with Cloudflare Pages on every GitHub push
  */
 
@@ -37,6 +37,94 @@ function makeToken() {
   const arr = new Uint8Array(24);
   crypto.getRandomValues(arr);
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function getCustomerSession(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.replace("Bearer ", "").trim();
+  if (!token) return null;
+
+  return await env.DB.prepare(
+    `SELECT account_id FROM sessions
+     WHERE token = ? AND account_type = 'customer' AND expires_at > datetime('now')`
+  )
+    .bind(token)
+    .first();
+}
+
+async function handleProfile(request, env) {
+  const session = await getCustomerSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+
+  if (request.method === "GET") {
+    const profile = await env.DB.prepare(
+      `SELECT c.id, c.email, c.name, c.phone, c.company, c.status,
+              p.gst_number, p.website, p.bio, p.timezone
+       FROM customers c
+       LEFT JOIN customer_profiles p ON p.customer_id = c.id
+       WHERE c.id = ?`
+    )
+      .bind(session.account_id)
+      .first();
+    return json({ ok: true, profile });
+  }
+
+  const body = await request.json();
+  const { name, phone, company, gst_number, website, bio, timezone } = body;
+  if (!name || !company) {
+    return json({ ok: false, error: "Name and company are required" }, 400);
+  }
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE customers SET name = ?, phone = ?, company = ? WHERE id = ?`
+    ).bind(name, phone || null, company, session.account_id),
+    env.DB.prepare(
+      `INSERT INTO customer_profiles
+       (customer_id, gst_number, website, bio, timezone, updated_at)
+       VALUES (?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(customer_id) DO UPDATE SET
+         gst_number = excluded.gst_number,
+         website = excluded.website,
+         bio = excluded.bio,
+         timezone = excluded.timezone,
+         updated_at = datetime('now')`
+    ).bind(session.account_id, gst_number || null, website || null, bio || null, timezone || "Asia/Kolkata"),
+  ]);
+
+  return json({ ok: true, message: "Profile updated" });
+}
+
+async function handleTickets(request, env) {
+  const session = await getCustomerSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+
+  if (request.method === "GET") {
+    const { results } = await env.DB.prepare(
+      `SELECT id, subject, description, priority, status, created_at, updated_at
+       FROM support_tickets WHERE customer_id = ? ORDER BY created_at DESC`
+    )
+      .bind(session.account_id)
+      .all();
+    return json({ ok: true, tickets: results });
+  }
+
+  const body = await request.json();
+  const { subject, description, priority } = body;
+  if (!subject || !description) {
+    return json({ ok: false, error: "Subject and description are required" }, 400);
+  }
+  const allowedPriorities = ["low", "normal", "high", "urgent"];
+  const ticketPriority = allowedPriorities.includes(priority) ? priority : "normal";
+
+  const result = await env.DB.prepare(
+    `INSERT INTO support_tickets (customer_id, subject, description, priority)
+     VALUES (?, ?, ?, ?)`
+  )
+    .bind(session.account_id, subject, description, ticketPriority)
+    .run();
+
+  return json({ ok: true, ticket_id: result.meta.last_row_id }, 201);
 }
 
 async function handleDemo(request, env) {
@@ -196,6 +284,8 @@ export async function onRequest(context) {
     if (path === "signup" && request.method === "POST") return await handleSignup(request, env);
     if (path === "login" && request.method === "POST") return await handleLogin(request, env);
     if (path === "me" && request.method === "GET") return await handleMe(request, env);
+    if (path === "profile" && ["GET", "PUT"].includes(request.method)) return await handleProfile(request, env);
+    if (path === "tickets" && ["GET", "POST"].includes(request.method)) return await handleTickets(request, env);
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
     return json({ ok: false, error: "Not found" }, 404);
   } catch (err) {
