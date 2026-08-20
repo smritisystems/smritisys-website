@@ -89,6 +89,12 @@ body {
   color: #94a3b8;
 }
 
+.saathi-footer-line {
+  margin-top: 1rem;
+  color: #a5b4fc;
+  font-size: 0.875rem;
+}
+
 .public-footer-links a:hover,
 .public-footer-links a:focus-visible {
   color: white;

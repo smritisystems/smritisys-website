@@ -107,6 +107,16 @@
     footer.querySelector(':scope > div')?.append(section);
   }
 
+  function addSaathiFooterLine() {
+    const footer = document.querySelector('footer');
+    const footerContent = footer?.querySelector(':scope > div');
+    if (!footerContent || footerContent.querySelector('.saathi-footer-line')) return;
+    const line = document.createElement('p');
+    line.className = 'saathi-footer-line';
+    line.textContent = 'SMRITI Saathi \u2014 your retail business guide';
+    footerContent.append(line);
+  }
+
   function addPolicyAdministrationDetails() {
     const detailsByPage = {
       'privacy-policy.html': 'SMRITI SYSTEMS administers privacy requests at <a href="mailto:smritisys@gmail.com">smritisys@gmail.com</a>. Public enquiries are generally retained for up to 24 months after the last meaningful interaction, subject to legal and business requirements.',
@@ -128,5 +138,6 @@
   normalizeProductSaathiImages();
   moveSecondaryLinksToFooter();
   addLegalLinksToFooter();
+  addSaathiFooterLine();
   addPolicyAdministrationDetails();
 })();
