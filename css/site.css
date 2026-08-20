@@ -98,6 +98,27 @@ body {
   margin-top: 1rem;
 }
 
+.policy-administration {
+  margin: 0 auto;
+  max-width: 48rem;
+  padding: 1rem;
+  border: 1px solid #dbeafe;
+  border-radius: 0.75rem;
+  background: #eff6ff;
+  color: #475569;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.policy-administration strong {
+  color: #1e3a8a;
+}
+
+.policy-administration a {
+  color: #4338ca;
+  font-weight: 600;
+}
+
 @media (min-width: 1024px) {
   .product-menu-panel {
     position: absolute;

@@ -23,6 +23,67 @@
     return link.getAttribute('href') === path || link.getAttribute('href') === `${path}#capabilities`;
   }
 
+  function createCanonicalProductMenu(mobile, currentPath) {
+    const menu = document.createElement('details');
+    menu.className = 'product-menu';
+    const summary = document.createElement('summary');
+    summary.className = mobile ? 'product-menu-trigger rounded-lg px-3 py-2' : 'product-menu-trigger';
+    summary.textContent = 'Product';
+    const panel = document.createElement('div');
+    panel.className = `product-menu-panel ${mobile ? 'text-slate-700' : 'text-slate-600'}`;
+
+    productLinks.forEach(([href, label]) => {
+      const link = document.createElement('a');
+      link.href = href;
+      link.textContent = label;
+      const isCurrentPage = href.startsWith(`${currentPath}#`) || href === currentPath || (href === 'distributor.html' && currentPath === 'distribution.html');
+      if (isCurrentPage) {
+        link.className = 'text-brand-700 font-semibold';
+        summary.classList.add('text-brand-700', 'font-semibold');
+      }
+      panel.append(link);
+    });
+
+    menu.append(summary, panel);
+    return menu;
+  }
+
+  function normalizePublicNavigation() {
+    const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+    const createNavLink = (href, label, mobile) => {
+      const link = document.createElement('a');
+      link.href = href;
+      link.textContent = label;
+      link.className = mobile ? 'rounded-lg px-3 py-2 hover:bg-slate-50' : 'hover:text-brand-700 transition';
+      if (href === currentPath || (href === 'index.html' && currentPath === 'index.html')) link.className += ' text-brand-700 font-semibold';
+      return link;
+    };
+    const desktop = document.querySelector('header nav.hidden.lg\\:flex');
+    const mobile = document.querySelector('#mobileMenu .grid');
+    if (desktop) {
+      desktop.replaceChildren();
+      desktop.append(createNavLink('index.html', 'Home', false));
+      desktop.append(createCanonicalProductMenu(false, currentPath));
+      desktop.append(createNavLink('industries.html', 'Industries', false));
+      desktop.append(createNavLink('security.html', 'Security', false));
+      desktop.append(createNavLink('index.html#contact', 'Contact', false));
+    }
+    if (mobile) {
+      mobile.replaceChildren();
+      const links = [
+        ['index.html', 'Home'],
+        ['industries.html', 'Industries'],
+        ['security.html', 'Security'],
+        ['index.html#contact', 'Contact'],
+        ['portal.html', 'Customer Login'],
+      ];
+      const homeLink = links.shift();
+      mobile.append(createNavLink(homeLink[0], homeLink[1], true));
+      mobile.append(createCanonicalProductMenu(true, currentPath));
+      links.forEach(([href, label]) => mobile.append(createNavLink(href, label, true)));
+    }
+  }
+
   function createProductMenu(container, links, mobile) {
     const menu = document.createElement('details');
     const currentPath = window.location.pathname.split('/').pop() || 'index.html';
@@ -94,9 +155,26 @@
     footer.querySelector(':scope > div')?.append(section);
   }
 
-  groupProductLinks('header > div > div > nav.hidden.lg\\:flex');
-  groupProductLinks('#mobileMenu .grid', true);
+  function addPolicyAdministrationDetails() {
+    const detailsByPage = {
+      'privacy-policy.html': 'SMRITI SYSTEMS administers privacy requests at <a href="mailto:smritisys@gmail.com">smritisys@gmail.com</a>. Public enquiries are generally retained for up to 24 months after the last meaningful interaction, subject to legal and business requirements.',
+      'terms-and-conditions.html': 'These terms are provided by <strong>SMRITI SYSTEMS</strong>. Subject to applicable law, Indian law applies and courts in Mumbai, Maharashtra are the intended jurisdiction.',
+      'cookie-policy.html': 'Cookie and browser-storage questions can be sent to <a href="mailto:smritisys@gmail.com">smritisys@gmail.com</a>. This notice should be revisited whenever deployed website tooling changes.',
+      'regulatory-compliance.html': '<strong>SMRITI SYSTEMS</strong> administers this public governance notice. Compliance questions can be sent to <a href="mailto:smritisys@gmail.com">smritisys@gmail.com</a>. Mumbai, Maharashtra is the intended business jurisdiction, subject to applicable law.'
+    };
+    const currentPath = window.location.pathname.split('/').pop();
+    const detail = detailsByPage[currentPath];
+    const main = document.querySelector('main');
+    if (!detail || !main || main.querySelector('.policy-administration')) return;
+    const notice = document.createElement('p');
+    notice.className = 'policy-administration';
+    notice.innerHTML = `<strong>Policy administration:</strong> ${detail}`;
+    main.insertBefore(notice, main.firstElementChild?.nextElementSibling || main.firstChild);
+  }
+
+  normalizePublicNavigation();
   normalizeProductSaathiImages();
   moveSecondaryLinksToFooter();
   addLegalLinksToFooter();
+  addPolicyAdministrationDetails();
 })();
