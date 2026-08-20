@@ -70,7 +70,17 @@
     .ticket:first-child { border-top:0; }
     .ticket h3 { margin:0 0 .3rem; font-size:1rem; }
     .ticket p { margin:0; color:var(--muted); font-size:.85rem; }
-    @media (max-width:850px) { .login-shell { grid-template-columns:1fr; } .login-art { min-height:300px; padding:2rem; } .login-art h1 { margin:4rem 0 1rem; font-size:3rem; } .portal { grid-template-columns:1fr; } aside { padding:.8rem; } aside .brand { padding:.5rem .75rem 1rem; } .nav { display:flex; overflow:auto; } .nav button { white-space:nowrap; } .logout { margin-top:.7rem; } .stats,.modules { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    .admin-user { display:grid; grid-template-columns:1.3fr 1fr 130px 120px; gap:1rem; align-items:center; border-top:1px solid var(--line); padding:1rem 0; }
+    .admin-user:first-child { border-top:0; }
+    .admin-user strong { display:block; }
+    .admin-user small { color:var(--muted); }
+    .admin-user select { padding:.55rem; }
+    .roadmap { margin-top:1rem; }
+    .roadmap-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.75rem; margin-top:1rem; }
+    .roadmap-item { padding:.9rem; background:#f7fbf7; border-left:3px solid var(--green); }
+    .roadmap-item strong { display:block; font-size:.9rem; }
+    .roadmap-item span { color:var(--muted); font-size:.8rem; }
+    @media (max-width:850px) { .login-shell { grid-template-columns:1fr; } .login-art { min-height:300px; padding:2rem; } .login-art h1 { margin:4rem 0 1rem; font-size:3rem; } .portal { grid-template-columns:1fr; } aside { padding:.8rem; } aside .brand { padding:.5rem .75rem 1rem; } .nav { display:flex; overflow:auto; } .nav button { white-space:nowrap; } .logout { margin-top:.7rem; } .stats,.modules,.roadmap-list { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-user { grid-template-columns:1fr 1fr; } }
     @media (max-width:560px) { .login-art { display:none; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } }
   </style>
 </head>
@@ -107,6 +117,7 @@
         <button data-view="commerce">Products &amp; orders</button>
         <button data-view="programs">Referral &amp; partner programs</button>
         <button data-view="implementation">Implementation</button>
+        <button id="adminNav" class="hidden" data-view="admin">Administration</button>
       </nav>
       <button id="logoutButton" class="logout">Sign out</button>
     </aside>
@@ -129,6 +140,7 @@
             <article class="card module"><div><span class="eyebrow">Help desk</span><h3>Support &amp; AMC</h3><p>Raise a request, track replies and see what your AMC covers.</p></div><button class="text-button" data-go="support">Go to support →</button></article>
             <article class="card module"><div><span class="eyebrow">Growth</span><h3>Partner programs</h3><p>Refer a business, apply as a partner or start reselling SMRITISYS.</p></div><button class="text-button" data-go="programs">Explore programs →</button></article>
           </div>
+          <div class="card roadmap"><span class="eyebrow">Portal roadmap</span><h3>More control is coming into one workspace.</h3><div class="roadmap-list"><div class="roadmap-item"><strong>Purchases &amp; invoices</strong><span>Catalog, checkout and order history</span></div><div class="roadmap-item"><strong>Renewals &amp; notifications</strong><span>AMC and license reminders</span></div><div class="roadmap-item"><strong>Partner commissions</strong><span>Referrals, reseller sales and payouts</span></div></div></div>
         </section>
 
         <section class="view" data-section="profile">
@@ -146,6 +158,7 @@
         <section class="view" data-section="commerce"><div class="section-head"><div><span class="eyebrow">Commerce</span><h2>Products &amp; orders</h2></div><button class="primary">Browse products</button></div><div class="card"><h3>New product purchase</h3><p class="muted">Product catalog and online checkout will appear here. Your orders, invoices and upgrades will stay connected to your licenses.</p></div></section>
         <section class="view" data-section="programs"><div class="section-head"><div><span class="eyebrow">Growth network</span><h2>Referral &amp; partner programs</h2></div></div><div class="grid modules"><article class="card module"><div><span class="eyebrow">Referral program</span><h3>Share SMRITISYS</h3><p>Get a referral link and earn rewards when a referred business becomes a customer.</p></div><button class="primary">Get referral link</button></article><article class="card module"><div><span class="eyebrow">Partner program</span><h3>Grow with us</h3><p>Apply for implementation, consulting and technology partnership benefits.</p></div><button class="primary">Apply as partner</button></article><article class="card module"><div><span class="eyebrow">Reseller program</span><h3>Sell SMRITISYS</h3><p>Access reseller pricing, commissions and a workspace for your sales pipeline.</p></div><button class="primary">Apply as reseller</button></article></div></section>
         <section class="view" data-section="implementation"><div class="section-head"><div><span class="eyebrow">Delivery</span><h2>Implementation</h2></div></div><div class="card"><h3>Retail rollout</h3><p class="muted">Project planning, data import, staff training and go-live milestones will be tracked here.</p><div style="margin-top:1.2rem;background:var(--mint);height:8px"><div style="width:62%;height:100%;background:var(--green)"></div></div><p style="margin:.6rem 0 0;font-size:.85rem" class="muted">62% complete · Target go-live 04 September 2026</p></div></section>
+        <section class="view" data-section="admin"><div class="section-head"><div><span class="eyebrow">Super admin</span><h2>User administration</h2></div><span class="status">Full control</span></div><div id="adminUserList" class="card"><p class="muted">Loading users...</p></div><p id="adminMessage" class="message" role="status"></p></section>
       </div>
     </main>
   </section>
