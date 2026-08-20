@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customer Portal | SMRITISYS</title>
+  <meta name="description" content="SMRITISYS customer portal for licenses, support, AMC, purchases, partners and implementation." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root { --ink:#17231f; --muted:#71807a; --line:#dce5df; --paper:#f5f7f2; --white:#fff; --green:#176b52; --mint:#dff2e5; --amber:#e4a23b; --red:#c95c4b; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); font-family:'DM Sans',sans-serif; }
+    button,input,textarea,select { font:inherit; }
+    button { cursor:pointer; }
+    .hidden { display:none !important; }
+    .login-shell { min-height:100vh; display:grid; grid-template-columns:1.05fr .95fr; }
+    .login-art { padding:clamp(2rem,7vw,7rem); color:#f5fff7; background:#173b31; position:relative; overflow:hidden; }
+    .login-art:after { content:""; position:absolute; width:28rem; height:28rem; border:1px solid #8fc7a5; border-radius:50%; right:-9rem; bottom:-9rem; box-shadow:0 0 0 4rem #173b31,0 0 0 4.1rem #8fc7a5; opacity:.45; }
+    .brand { font-family:'Space Grotesk',sans-serif; font-weight:700; letter-spacing:.04em; }
+    .login-art h1 { max-width:560px; margin:6rem 0 1.25rem; font:700 clamp(2.5rem,5vw,5.4rem)/.98 'Space Grotesk',sans-serif; letter-spacing:-.04em; }
+    .login-art p { max-width:480px; color:#c4dfcf; font-size:1.05rem; line-height:1.7; }
+    .login-panel { display:flex; align-items:center; justify-content:center; padding:2rem; }
+    .login-box { width:min(100%,420px); background:var(--white); border:1px solid var(--line); padding:2.25rem; box-shadow:0 18px 50px #19392b10; }
+    h2,h3 { font-family:'Space Grotesk',sans-serif; }
+    .login-box h2 { margin:.25rem 0 .5rem; font-size:2rem; }
+    .muted { color:var(--muted); }
+    label { display:block; font-size:.82rem; font-weight:700; margin:1.15rem 0 .4rem; }
+    input,textarea,select { width:100%; border:1px solid var(--line); background:#fbfdf9; color:var(--ink); padding:.78rem .85rem; outline:none; border-radius:4px; }
+    input:focus,textarea:focus,select:focus { border-color:var(--green); box-shadow:0 0 0 3px #176b5217; }
+    .primary { border:0; color:#fff; background:var(--green); padding:.82rem 1rem; font-weight:700; border-radius:4px; }
+    .primary:hover { background:#0f5842; }
+    .login-box .primary { width:100%; margin-top:1.4rem; }
+    .message { min-height:1.3rem; font-size:.85rem; margin-top:.8rem; }
+    .portal { min-height:100vh; display:grid; grid-template-columns:245px 1fr; }
+    aside { background:#173b31; color:#d8ede0; padding:1.5rem 1rem; display:flex; flex-direction:column; }
+    aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
+    .nav { display:grid; gap:.25rem; }
+    .nav button { text-align:left; border:0; color:#b8d5c3; background:transparent; padding:.75rem; border-radius:4px; }
+    .nav button:hover,.nav button.active { color:#fff; background:#ffffff18; }
+    .logout { margin-top:auto; border:1px solid #8fc7a533; color:#b8d5c3; background:transparent; padding:.7rem; border-radius:4px; }
+    main { min-width:0; }
+    .topbar { min-height:76px; padding:1rem clamp(1.2rem,4vw,3rem); display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:#fbfdf9; }
+    .topbar h1 { margin:0; font:600 1.35rem 'Space Grotesk',sans-serif; }
+    .user-chip { display:flex; align-items:center; gap:.65rem; font-size:.85rem; }
+    .avatar { width:35px; height:35px; display:grid; place-items:center; background:var(--mint); color:var(--green); font-weight:700; border-radius:50%; }
+    .content { padding:clamp(1.2rem,4vw,3rem); max-width:1440px; }
+    .eyebrow { color:var(--green); font-size:.78rem; text-transform:uppercase; letter-spacing:.12em; font-weight:700; }
+    .welcome { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin-bottom:1.7rem; }
+    .welcome h2 { margin:.35rem 0 .35rem; font-size:clamp(1.8rem,3vw,2.6rem); }
+    .grid { display:grid; gap:1rem; }
+    .stats { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .card { background:var(--white); border:1px solid var(--line); padding:1.25rem; border-radius:6px; }
+    .stat-label { color:var(--muted); font-size:.82rem; }
+    .stat-value { display:block; margin:.5rem 0 .3rem; font:700 1.8rem 'Space Grotesk',sans-serif; }
+    .status { display:inline-block; padding:.25rem .5rem; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; background:var(--mint); color:var(--green); }
+    .modules { grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:1rem; }
+    .module { min-height:150px; display:flex; flex-direction:column; justify-content:space-between; }
+    .module h3 { margin:.25rem 0 .45rem; font-size:1.1rem; }
+    .module p { color:var(--muted); margin:0; font-size:.88rem; line-height:1.5; }
+    .text-button { border:0; padding:0; color:var(--green); background:transparent; font-weight:700; text-align:left; }
+    .view { display:none; }
+    .view.active { display:block; }
+    .section-head { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin-bottom:1rem; }
+    .section-head h2 { margin:.3rem 0 0; font-size:1.8rem; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 1rem; }
+    .form-grid .full { grid-column:1/-1; }
+    .ticket { border-top:1px solid var(--line); padding:1rem 0; display:flex; justify-content:space-between; gap:1rem; }
+    .ticket:first-child { border-top:0; }
+    .ticket h3 { margin:0 0 .3rem; font-size:1rem; }
+    .ticket p { margin:0; color:var(--muted); font-size:.85rem; }
+    @media (max-width:850px) { .login-shell { grid-template-columns:1fr; } .login-art { min-height:300px; padding:2rem; } .login-art h1 { margin:4rem 0 1rem; font-size:3rem; } .portal { grid-template-columns:1fr; } aside { padding:.8rem; } aside .brand { padding:.5rem .75rem 1rem; } .nav { display:flex; overflow:auto; } .nav button { white-space:nowrap; } .logout { margin-top:.7rem; } .stats,.modules { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:560px) { .login-art { display:none; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } }
+  </style>
+</head>
+<body>
+  <section id="loginView" class="login-shell">
+    <div class="login-art">
+      <div class="brand">SMRITISYS / CUSTOMER PORTAL</div>
+      <h1>Keep every part of your retail operation moving.</h1>
+      <p>Licenses, AMC renewals, support, purchases, implementation and partner programs in one calm workspace.</p>
+    </div>
+    <div class="login-panel">
+      <form id="loginForm" class="login-box">
+        <span class="eyebrow">Customer access</span>
+        <h2>Welcome back</h2>
+        <p class="muted">Sign in to manage your SMRITISYS relationship.</p>
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" autocomplete="email" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <button class="primary" type="submit">Sign in</button>
+        <p id="loginMessage" class="message" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <section id="portalView" class="portal hidden">
+    <aside>
+      <span class="brand">SMRITISYS</span>
+      <nav class="nav" aria-label="Portal sections">
+        <button class="active" data-view="overview">Overview</button>
+        <button data-view="profile">My profile</button>
+        <button data-view="support">Support tickets</button>
+        <button data-view="licenses">Licenses &amp; AMC</button>
+        <button data-view="commerce">Products &amp; orders</button>
+        <button data-view="programs">Referral &amp; partner programs</button>
+        <button data-view="implementation">Implementation</button>
+      </nav>
+      <button id="logoutButton" class="logout">Sign out</button>
+    </aside>
+    <main>
+      <header class="topbar">
+        <h1 id="pageTitle">Overview</h1>
+        <div class="user-chip"><span id="userName">Customer</span><span id="userAvatar" class="avatar">C</span></div>
+      </header>
+      <div class="content">
+        <section class="view active" data-section="overview">
+          <div class="welcome"><div><span class="eyebrow">Customer workspace</span><h2>Good to see you, <span id="welcomeName">there</span>.</h2><p class="muted">Your account activity and service status at a glance.</p></div><button class="primary" data-go="support">Open a ticket</button></div>
+          <div class="grid stats">
+            <div class="card"><span class="stat-label">Active licenses</span><strong class="stat-value">2</strong><span class="status">Active</span></div>
+            <div class="card"><span class="stat-label">AMC coverage</span><strong class="stat-value">148 days</strong><span class="status">In coverage</span></div>
+            <div class="card"><span class="stat-label">Open tickets</span><strong class="stat-value" id="openTicketCount">0</strong><span class="status">Support</span></div>
+            <div class="card"><span class="stat-label">Referral rewards</span><strong class="stat-value">₹0</strong><span class="status">Available</span></div>
+          </div>
+          <div class="grid modules">
+            <article class="card module"><div><span class="eyebrow">Service</span><h3>License management</h3><p>View seats, activation status and renewal dates for every product.</p></div><button class="text-button" data-go="licenses">View licenses →</button></article>
+            <article class="card module"><div><span class="eyebrow">Help desk</span><h3>Support &amp; AMC</h3><p>Raise a request, track replies and see what your AMC covers.</p></div><button class="text-button" data-go="support">Go to support →</button></article>
+            <article class="card module"><div><span class="eyebrow">Growth</span><h3>Partner programs</h3><p>Refer a business, apply as a partner or start reselling SMRITISYS.</p></div><button class="text-button" data-go="programs">Explore programs →</button></article>
+          </div>
+        </section>
+
+        <section class="view" data-section="profile">
+          <div class="section-head"><div><span class="eyebrow">Account</span><h2>My profile</h2></div></div>
+          <form id="profileForm" class="card"><div class="form-grid"><div><label for="profileName">Full name</label><input id="profileName" name="name" required /></div><div><label for="profileEmail">Email</label><input id="profileEmail" name="email" type="email" readonly /></div><div><label for="profilePhone">Phone</label><input id="profilePhone" name="phone" /></div><div><label for="profileCompany">Company</label><input id="profileCompany" name="company" required /></div><div><label for="profileGst">GST number</label><input id="profileGst" name="gst_number" /></div><div><label for="profileWebsite">Website</label><input id="profileWebsite" name="website" type="url" /></div><div class="full"><label for="profileBio">About your business</label><textarea id="profileBio" name="bio" rows="4"></textarea></div></div><button class="primary" type="submit">Save profile</button><p id="profileMessage" class="message" role="status"></p></form>
+        </section>
+
+        <section class="view" data-section="support">
+          <div class="section-head"><div><span class="eyebrow">Help desk</span><h2>Support tickets</h2></div><button id="newTicketButton" class="primary">New ticket</button></div>
+          <form id="ticketForm" class="card hidden"><div class="form-grid"><div class="full"><label for="ticketSubject">Subject</label><input id="ticketSubject" name="subject" required /></div><div><label for="ticketPriority">Priority</label><select id="ticketPriority" name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></div><div class="full"><label for="ticketDescription">Describe the issue</label><textarea id="ticketDescription" name="description" rows="5" required></textarea></div></div><button class="primary" type="submit">Submit ticket</button><p id="ticketMessage" class="message" role="status"></p></form>
+          <div id="ticketList" class="card"><p class="muted">Loading tickets...</p></div>
+        </section>
+
+        <section class="view" data-section="licenses"><div class="section-head"><div><span class="eyebrow">Service portfolio</span><h2>Licenses &amp; AMC</h2></div></div><div class="grid modules"><article class="card module"><div><span class="eyebrow">SMRITI Retail OS</span><h3>Professional edition</h3><p>12 seats · Renews 16 January 2027</p></div><span class="status">Active</span></article><article class="card module"><div><span class="eyebrow">AMC contract AMC-1042</span><h3>Annual maintenance</h3><p>Support, updates and remote assistance · Expires 16 January 2027</p></div><span class="status">Covered</span></article></div></section>
+        <section class="view" data-section="commerce"><div class="section-head"><div><span class="eyebrow">Commerce</span><h2>Products &amp; orders</h2></div><button class="primary">Browse products</button></div><div class="card"><h3>New product purchase</h3><p class="muted">Product catalog and online checkout will appear here. Your orders, invoices and upgrades will stay connected to your licenses.</p></div></section>
+        <section class="view" data-section="programs"><div class="section-head"><div><span class="eyebrow">Growth network</span><h2>Referral &amp; partner programs</h2></div></div><div class="grid modules"><article class="card module"><div><span class="eyebrow">Referral program</span><h3>Share SMRITISYS</h3><p>Get a referral link and earn rewards when a referred business becomes a customer.</p></div><button class="primary">Get referral link</button></article><article class="card module"><div><span class="eyebrow">Partner program</span><h3>Grow with us</h3><p>Apply for implementation, consulting and technology partnership benefits.</p></div><button class="primary">Apply as partner</button></article><article class="card module"><div><span class="eyebrow">Reseller program</span><h3>Sell SMRITISYS</h3><p>Access reseller pricing, commissions and a workspace for your sales pipeline.</p></div><button class="primary">Apply as reseller</button></article></div></section>
+        <section class="view" data-section="implementation"><div class="section-head"><div><span class="eyebrow">Delivery</span><h2>Implementation</h2></div></div><div class="card"><h3>Retail rollout</h3><p class="muted">Project planning, data import, staff training and go-live milestones will be tracked here.</p><div style="margin-top:1.2rem;background:var(--mint);height:8px"><div style="width:62%;height:100%;background:var(--green)"></div></div><p style="margin:.6rem 0 0;font-size:.85rem" class="muted">62% complete · Target go-live 04 September 2026</p></div></section>
+      </div>
+    </main>
+  </section>
+
+  <script>
+    const state = { token: localStorage.getItem('smritisys_token'), profile: null };
+    const $ = (selector) => document.querySelector(selector);
+    const $$ = (selector) => [...document.querySelectorAll(selector)];
+    const setMessage = (element, text, ok) => { element.textContent = text; element.style.color = ok ? 'var(--green)' : 'var(--red)'; };
+    async function api(path, options = {}) {
+      const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+      if (state.token) headers.Authorization = `Bearer ${state.token}`;
+      const response = await fetch(`/api/${path}`, { ...options, headers });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Request failed');
+      return data;
+    }
+    function showPortal() { $('#loginView').classList.add('hidden'); $('#portalView').classList.remove('hidden'); loadPortal(); }
+    function showLogin(message = '') { $('#portalView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); if (message) setMessage($('#loginMessage'), message, false); }
+    async function loadPortal() {
+      try { const data = await api('profile'); state.profile = data.profile; fillProfile(data.profile); updateIdentity(data.profile); await loadTickets(); }
+      catch (error) { localStorage.removeItem('smritisys_token'); state.token = null; showLogin(error.message); }
+    }
+    function fillProfile(profile) { ['name','email','phone','company','gst_number','website','bio'].forEach((key) => { const input = $(`#profile${key === 'gst_number' ? 'Gst' : key[0].toUpperCase() + key.slice(1)}`); if (input) input.value = profile[key] || ''; }); }
+    function updateIdentity(profile) { const name = profile.name || 'Customer'; $('#userName').textContent = name; $('#welcomeName').textContent = name.split(' ')[0]; $('#userAvatar').textContent = name.charAt(0).toUpperCase(); }
+    async function loadTickets() { const data = await api('tickets'); $('#openTicketCount').textContent = data.tickets.filter((ticket) => ticket.status === 'open' || ticket.status === 'in_progress').length; $('#ticketList').innerHTML = data.tickets.length ? data.tickets.map((ticket) => `<article class="ticket"><div><h3>${escapeHtml(ticket.subject)}</h3><p>${escapeHtml(ticket.description)}</p></div><span class="status">${escapeHtml(ticket.status)}</span></article>`).join('') : '<p class="muted">No tickets yet. Your support history will appear here.</p>'; }
+    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[character])); }
+    $$('.nav button').forEach((button) => button.addEventListener('click', () => { $$('.nav button').forEach((item) => item.classList.remove('active')); button.classList.add('active'); $$('.view').forEach((view) => view.classList.toggle('active', view.dataset.section === button.dataset.view)); $('#pageTitle').textContent = button.textContent; }));
+    $$('[data-go]').forEach((button) => button.addEventListener('click', () => $(`button[data-view="${button.dataset.go}"]`).click()));
+    $('#loginForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); const button = event.target.querySelector('button'); button.disabled = true; setMessage($('#loginMessage'), 'Signing in...', true); try { const data = await api('login', { method:'POST', body:JSON.stringify({ type:'customer', email:form.get('email'), password:form.get('password') }) }); state.token = data.token; localStorage.setItem('smritisys_token', state.token); showPortal(); } catch (error) { setMessage($('#loginMessage'), error.message, false); } button.disabled = false; });
+    $('#profileForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); try { const data = await api('profile', { method:'PUT', body:JSON.stringify(Object.fromEntries(form)) }); setMessage($('#profileMessage'), data.message, true); updateIdentity(Object.fromEntries(form)); } catch (error) { setMessage($('#profileMessage'), error.message, false); } });
+    $('#newTicketButton').addEventListener('click', () => $('#ticketForm').classList.toggle('hidden'));
+    $('#ticketForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); try { const data = await api('tickets', { method:'POST', body:JSON.stringify(Object.fromEntries(form)) }); setMessage($('#ticketMessage'), `Ticket #${data.ticket_id} created`, true); event.target.reset(); $('#ticketForm').classList.add('hidden'); await loadTickets(); } catch (error) { setMessage($('#ticketMessage'), error.message, false); } });
+    $('#logoutButton').addEventListener('click', () => { localStorage.removeItem('smritisys_token'); state.token = null; showLogin(); });
+    if (state.token) showPortal();
+  </script>
+</body>
+</html>
