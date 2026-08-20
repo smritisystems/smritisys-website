@@ -69,7 +69,34 @@
     });
   }
 
+  function moveSecondaryLinksToFooter() {
+    const secondaryPaths = new Set(['presentations.html', 'editions.html']);
+    document.querySelectorAll('header nav').forEach((nav) => {
+      [...nav.querySelectorAll(':scope > a')].forEach((link) => {
+        if (secondaryPaths.has(link.getAttribute('href'))) link.remove();
+      });
+    });
+
+    const footer = document.querySelector('footer');
+    if (!footer || footer.querySelector('a[href="presentations.html"], a[href="editions.html"]')) return;
+    const section = document.createElement('section');
+    section.className = 'public-footer-links';
+    section.innerHTML = '<h2>Product &amp; Editions</h2><nav aria-label="Product and editions"><a href="presentations.html">Presentations</a><a href="editions.html">Editions</a></nav>';
+    footer.querySelector(':scope > div')?.append(section);
+  }
+
+  function addLegalLinksToFooter() {
+    const footer = document.querySelector('footer');
+    if (!footer || footer.querySelector('.public-legal-links')) return;
+    const section = document.createElement('section');
+    section.className = 'public-footer-links public-legal-links';
+    section.innerHTML = '<h2>Legal &amp; Compliance</h2><nav aria-label="Legal and compliance"><a href="privacy-policy.html">Privacy Policy</a><a href="terms-and-conditions.html">Terms &amp; Conditions</a><a href="cookie-policy.html">Cookies</a><a href="regulatory-compliance.html">Regulatory Compliance</a></nav>';
+    footer.querySelector(':scope > div')?.append(section);
+  }
+
   groupProductLinks('header > div > div > nav.hidden.lg\\:flex');
   groupProductLinks('#mobileMenu .grid', true);
   normalizeProductSaathiImages();
+  moveSecondaryLinksToFooter();
+  addLegalLinksToFooter();
 })();

@@ -63,6 +63,41 @@ body {
   color: #4338ca;
 }
 
+.public-footer-links {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(51 65 85 / 0.8);
+}
+
+.public-footer-links h2 {
+  margin: 0 0 0.75rem;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.public-footer-links nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  font-size: 0.875rem;
+}
+
+.public-footer-links a {
+  color: #94a3b8;
+}
+
+.public-footer-links a:hover,
+.public-footer-links a:focus-visible {
+  color: white;
+}
+
+.public-footer-links + .public-footer-links {
+  margin-top: 1rem;
+}
+
 @media (min-width: 1024px) {
   .product-menu-panel {
     position: absolute;
