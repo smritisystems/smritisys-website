@@ -1,0 +1,303 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security, Trust & Governance | SMRITISYS</title>
+  <meta name="description" content="Explore SMRITISYS and SMRITI Retail OS security architecture, tenant data isolation, role-based access control, and compliance governance." />
+  <link rel="canonical" href="https://smritisys.com/security.html" />
+  <meta property="og:title" content="Security & Trust | SMRITISYS" />
+  <meta property="og:description" content="Understand the boundaries and trust foundations of SMRITISYS." />
+  <meta property="og:url" content="https://smritisys.com/security.html" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/site.generated.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+  <!-- Header -->
+  <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="flex items-center justify-between h-16">
+        <a href="index.html" class="flex items-center gap-2.5 group">
+          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">S</div>
+          <div class="leading-tight">
+            <span class="font-bold text-slate-900 tracking-tight">SMRITISYS</span>
+            <span class="hidden sm:inline text-xs text-slate-500 block -mt-0.5">Retail OS</span>
+          </div>
+        </a>
+        <nav class="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
+          <a href="index.html" class="hover:text-brand-700 transition">Home</a>
+          <a href="products.html" class="hover:text-brand-700 transition">Product</a>
+          <a href="editions.html" class="hover:text-brand-700 transition">Editions</a>
+          <a href="industries.html" class="hover:text-brand-700 transition">Industries</a>
+          <a href="security.html" class="text-brand-700 font-semibold transition">Security</a>
+          <a href="index.html#contact" class="hover:text-brand-700 transition">Contact</a>
+        </nav>
+        <div class="flex items-center gap-3">
+          <button id="mobileMenuBtn" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open navigation menu" class="inline-flex lg:hidden items-center justify-center w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition">
+            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          <a href="portal.html" class="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-brand-700 transition">Customer Login</a>
+          <a href="index.html#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">Book a Demo</a>
+        </div>
+      </div>
+      <nav id="mobileMenu" class="hidden lg:hidden border-t border-slate-200 py-3" aria-label="Mobile navigation">
+        <div class="grid gap-1 text-sm font-medium text-slate-700">
+          <a href="index.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Home</a>
+          <a href="products.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Product</a>
+          <a href="editions.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
+          <a href="industries.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
+          <a href="security.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold bg-brand-50">Security</a>
+          <a href="index.html#contact" class="rounded-lg px-3 py-2 hover:bg-slate-50">Contact</a>
+          <a href="portal.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold">Customer Login</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="gradient-hero text-white py-20 sm:py-28">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 text-center">
+        <p class="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-200">Security &amp; Trust</p>
+        <h1 class="mt-4 text-4xl sm:text-6xl font-extrabold tracking-tight">Clear boundaries create dependable systems.</h1>
+        <p class="mt-6 text-lg text-indigo-100 leading-relaxed">
+          SMRITISYS separates public discovery, relationship management and daily retail operations so each surface has a clear responsibility.
+        </p>
+        <div class="mt-8 flex flex-wrap justify-center gap-4 text-xs font-semibold uppercase tracking-wider text-indigo-200">
+          <span class="inline-flex items-center px-3 py-1 rounded-full bg-white/10 border border-white/20">Organization context</span>
+          <span class="inline-flex items-center px-3 py-1 rounded-full bg-white/10 border border-white/20">Role-based access</span>
+          <span class="inline-flex items-center px-3 py-1 rounded-full bg-white/10 border border-white/20">Accountable workflows</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture Boundary Section -->
+    <section class="bg-white py-16 sm:py-20 border-b border-slate-200">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center max-w-3xl mx-auto mb-12">
+          <p class="text-xs font-semibold uppercase tracking-wider text-brand-700">Clear Operating Separation</p>
+          <h2 class="mt-2 text-3xl font-bold text-slate-900">How the Architecture Protects Your Data</h2>
+          <p class="mt-4 text-slate-600 leading-relaxed">
+            We maintain a clear division between relationship management and store operations. The public website explains, the Control Plane manages, and SMRITI Retail OS runs the business.
+          </p>
+        </div>
+        <div class="grid md:grid-cols-2 gap-8">
+          <div class="border border-slate-200 rounded-2xl p-8 bg-slate-50">
+            <div class="w-10 h-10 rounded-xl bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-lg mb-4">1</div>
+            <h3 class="text-xl font-bold text-slate-900">SMRITISYS Control Plane</h3>
+            <p class="text-xs font-semibold text-brand-700 uppercase tracking-wide mt-1">Discover + Manage</p>
+            <p class="mt-3 text-slate-600 leading-relaxed">
+              Handles identity, license entitlements, support requests, and release cataloging with authenticated customer sessions and organization-level filtering.
+            </p>
+            <ul class="mt-5 space-y-2 text-sm text-slate-700">
+              <li class="flex items-center gap-2"><span class="text-emerald-600 font-bold">✓</span> PBKDF2 password hashing & server-side session invalidation</li>
+              <li class="flex items-center gap-2"><span class="text-emerald-600 font-bold">✓</span> Request-only customer workflows (no direct license mutation)</li>
+              <li class="flex items-center gap-2"><span class="text-emerald-600 font-bold">✓</span> License events and administrative audit logs</li>
+            </ul>
+          </div>
+          <div class="border border-slate-200 rounded-2xl p-8 bg-slate-50">
+            <div class="w-10 h-10 rounded-xl bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-lg mb-4">2</div>
+            <h3 class="text-xl font-bold text-slate-900">SMRITI Retail OS</h3>
+            <p class="text-xs font-semibold text-brand-700 uppercase tracking-wide mt-1">Run Your Business</p>
+            <p class="mt-3 text-slate-600 leading-relaxed">
+              Is the separate operational application for store POS, inventory, purchasing, sales and daily retail work. Availability depends on edition, deployment stage and implementation scope.
+            </p>
+            <ul class="mt-5 space-y-2 text-sm text-slate-700">
+              <li class="flex items-center gap-2"><span class="text-emerald-600 font-bold">✓</span> Separate operational product boundary</li>
+              <li class="flex items-center gap-2"><span class="text-emerald-600 font-bold">✓</span> Deployment-dependent operating workflows</li>
+              <li class="flex items-center gap-2"><span class="text-emerald-600 font-bold">✓</span> Retail operations kept distinct from the Control Plane</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Core Security Pillars -->
+    <section class="py-20 sm:py-24 bg-slate-50">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center max-w-2xl mx-auto mb-14">
+          <p class="text-xs font-semibold uppercase tracking-wider text-brand-700">Security Architecture</p>
+          <h2 class="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">Core Security & Trust Principles</h2>
+          <p class="mt-4 text-slate-600">Engineered from day one for enterprise governance and resilience.</p>
+        </div>
+        <div class="grid md:grid-cols-3 gap-6">
+          <article class="border border-slate-200 rounded-2xl p-7 bg-white shadow-sm">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-semibold mb-4">01</div>
+            <h3 class="text-lg font-bold text-slate-900">Tenant Data Isolation</h3>
+            <p class="mt-2 text-sm text-slate-600 leading-relaxed">
+              Every customer organization operates in an isolated workspace. All queries, license checks, and support records are bound to the authenticated organization identity.
+            </p>
+            <p class="mt-4 text-xs font-semibold text-brand-700 uppercase tracking-wide">AVAILABLE</p>
+          </article>
+          <article class="border border-slate-200 rounded-2xl p-7 bg-white shadow-sm">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-semibold mb-4">02</div>
+            <h3 class="text-lg font-bold text-slate-900">Role-Based Access Control</h3>
+            <p class="mt-2 text-sm text-slate-600 leading-relaxed">
+              Granular permission catalog enforces separation between customer viewers, store operators, internal support staff, and system administrators.
+            </p>
+            <p class="mt-4 text-xs font-semibold text-brand-700 uppercase tracking-wide">AVAILABLE</p>
+          </article>
+          <article class="border border-slate-200 rounded-2xl p-7 bg-white shadow-sm">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-semibold mb-4">03</div>
+            <h3 class="text-lg font-bold text-slate-900">Cryptographic Identity</h3>
+            <p class="mt-2 text-sm text-slate-600 leading-relaxed">
+              Password storage utilizes PBKDF2-SHA256 with 120,000 iterations. Sessions are server-side managed with instant revocation upon logout or password modification.
+            </p>
+            <p class="mt-4 text-xs font-semibold text-brand-700 uppercase tracking-wide">AVAILABLE</p>
+          </article>
+          <article class="border border-slate-200 rounded-2xl p-7 bg-white shadow-sm">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-semibold mb-4">04</div>
+            <h3 class="text-lg font-bold text-slate-900">Auditable Events</h3>
+            <p class="mt-2 text-sm text-slate-600 leading-relaxed">
+              License state changes, entitlement adjustments, and administrative events are stored in append-only tables protected by database-level update prevention triggers.
+            </p>
+            <p class="mt-4 text-xs font-semibold text-brand-700 uppercase tracking-wide">AVAILABLE</p>
+          </article>
+          <article class="border border-slate-200 rounded-2xl p-7 bg-white shadow-sm">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-semibold mb-4">05</div>
+            <h3 class="text-lg font-bold text-slate-900">Governed License Mutations</h3>
+            <p class="mt-2 text-sm text-slate-600 leading-relaxed">
+              Customers cannot modify license counts, editions, or validity directly. Change actions create verifiable request records requiring administrative approval.
+            </p>
+            <p class="mt-4 text-xs font-semibold text-brand-700 uppercase tracking-wide">AVAILABLE</p>
+          </article>
+          <article class="border border-slate-200 rounded-2xl p-7 bg-white shadow-sm">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-semibold mb-4">06</div>
+            <h3 class="text-lg font-bold text-slate-900">Deployment Independence</h3>
+            <p class="mt-2 text-sm text-slate-600 leading-relaxed">
+              Deployment, infrastructure and data ownership depend on the selected operating model and implementation scope.
+            </p>
+            <p class="mt-4 text-xs font-semibold text-brand-700 uppercase tracking-wide">DEPLOYMENT DEPENDENT</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Availability & Deployment Governance -->
+    <section class="bg-white py-16 sm:py-20 border-y border-slate-200">
+      <div class="max-w-5xl mx-auto px-4 sm:px-6">
+        <div class="text-center max-w-2xl mx-auto mb-10">
+          <p class="text-xs font-semibold uppercase tracking-wider text-brand-700">Honest Governance</p>
+          <h2 class="text-2xl sm:text-3xl font-bold text-slate-900">Capability Availability Framework</h2>
+          <p class="mt-3 text-slate-600 text-sm">Every capability across SMRITISYS and SMRITI Retail OS is clearly classified by operational readiness.</p>
+        </div>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50">
+            <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 mb-2">AVAILABLE</span>
+            <p class="text-slate-700 font-medium">Fully implemented, tested, and actively deployable.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50">
+            <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-800 mb-2">IN ACTIVE ROLLOUT</span>
+            <p class="text-slate-700 font-medium">Progressively introduced as deployment evidence is established.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50">
+            <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-purple-100 text-purple-800 mb-2">DEPLOYMENT DEPENDENT</span>
+            <p class="text-slate-700 font-medium">Configured based on store topology, hardware, and network environment.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50">
+            <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800 mb-2">EMERGING</span>
+            <p class="text-slate-700 font-medium">In validation with early deployment pilots.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50">
+            <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-slate-200 text-slate-800 mb-2">PLANNED</span>
+            <p class="text-slate-700 font-medium">On our public architectural roadmap for future release cycles.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50">
+            <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-indigo-100 text-indigo-800 mb-2">DEPLOYMENT DEPENDENT</span>
+            <p class="text-slate-700 font-medium">Enterprise controls depend on deployment and implementation scope.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="bg-slate-900 text-white py-16 sm:py-20">
+      <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+        <h2 class="text-3xl font-bold tracking-tight">Discuss your security & deployment requirements.</h2>
+        <p class="mt-4 text-slate-300 leading-relaxed">
+          Our team can walk through your infrastructure topology, data isolation needs, and compliance roadmap.
+        </p>
+        <div class="mt-8 flex flex-wrap justify-center gap-4">
+          <a href="index.html#contact" class="inline-flex items-center justify-center px-6 py-3.5 rounded-xl bg-white text-brand-800 font-semibold shadow hover:bg-slate-100 transition">Book a Technical Demo</a>
+          <a href="editions.html" class="inline-flex items-center justify-center px-6 py-3.5 rounded-xl border border-white/20 text-white font-semibold hover:bg-white/10 transition">Compare Editions</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Global Footer -->
+  <footer class="bg-slate-950 text-slate-400 py-12 border-t border-slate-800">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="flex flex-col md:flex-row justify-between gap-8 mb-8">
+        <div>
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">S</div>
+            <span class="font-bold text-white text-lg tracking-tight">SMRITISYS</span>
+          </div>
+          <p class="text-sm max-w-sm leading-relaxed text-slate-400">
+            SMRITISYS is the discovery and management control plane. SMRITI Retail OS is the transactional execution engine for modern retail.
+          </p>
+          <div class="mt-4 text-xs text-slate-500 font-medium space-y-1">
+            <p><strong class="text-slate-400">SMRITISYS</strong> = Discover + Manage</p>
+            <p><strong class="text-slate-400">SMRITI Retail OS</strong> = Run</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm">
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Product & Editions</h4>
+            <ul class="space-y-2">
+              <li><a href="products.html" class="hover:text-white transition">Product Story</a></li>
+              <li><a href="editions.html" class="hover:text-white transition">Compare Editions</a></li>
+              <li><a href="industries.html" class="hover:text-white transition">Industry Workflows</a></li>
+              <li><a href="security.html" class="hover:text-white transition">Security & Trust</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Portals & Programs</h4>
+            <ul class="space-y-2">
+              <li><a href="portal.html" class="hover:text-white transition">Customer Portal</a></li>
+              <li><a href="partner.html" class="hover:text-white transition">Partner Program</a></li>
+              <li><a href="shoper9.html" class="hover:text-white transition">Shoper 9 Migration</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Company</h4>
+            <ul class="space-y-2">
+              <li><a href="founders.html" class="hover:text-white transition">Founders</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Book a Demo</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Contact Us</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="border-t border-slate-800 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-500">
+        <p>&copy; 2026 SMRITIBooks.com & AITDL Networks. All Rights Reserved. Proprietary Commercial Software.</p>
+        <div class="flex gap-4">
+          <a href="security.html" class="hover:text-slate-400 transition">Security Policy</a>
+          <a href="portal.html" class="hover:text-slate-400 transition">Customer Sign In</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const mobileMenuButton = document.getElementById('mobileMenuBtn');
+    const mobileMenu = document.getElementById('mobileMenu');
+    mobileMenuButton?.addEventListener('click', () => {
+      const isOpen = mobileMenuButton.getAttribute('aria-expanded') === 'true';
+      mobileMenuButton.setAttribute('aria-expanded', String(!isOpen));
+      mobileMenuButton.setAttribute('aria-label', isOpen ? 'Open navigation menu' : 'Close navigation menu');
+      mobileMenu?.classList.toggle('hidden', isOpen);
+    });
+    mobileMenu?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => {
+      mobileMenuButton?.setAttribute('aria-expanded', 'false');
+      mobileMenuButton?.setAttribute('aria-label', 'Open navigation menu');
+      mobileMenu?.classList.add('hidden');
+    }));
+  </script>
+</body>
+</html>

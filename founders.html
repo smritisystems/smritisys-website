@@ -5,74 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Founders | SMRITI Retail OS</title>
   <meta name="description" content="Meet the founders behind SMRITI Retail OS and the vision for a simpler, more resilient retail operating system." />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#eef2ff',
-              100: '#e0e7ff',
-              200: '#c7d2fe',
-              500: '#6366f1',
-              600: '#4f46e5',
-              700: '#4338ca',
-              800: '#3730a3',
-              900: '#312e81',
-            },
-            accent: {
-              500: '#10b981',
-              600: '#059669',
-            }
-          },
-          fontFamily: {
-            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
-          }
-        }
-      }
-    }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    body { font-family: 'Inter', system-ui, sans-serif; }
-    .gradient-hero {
-      background: linear-gradient(135deg, #312e81 0%, #4338ca 40%, #4f46e5 70%, #6366f1 100%);
-    }
-  </style>
+  <link rel="stylesheet" href="css/site.generated.css" />
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased">
 
+    <!-- Header -->
   <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
       <div class="flex items-center justify-between h-16">
         <a href="index.html" class="flex items-center gap-2.5 group">
-          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">
-            S
-          </div>
+          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">S</div>
           <div class="leading-tight">
             <span class="font-bold text-slate-900 tracking-tight">SMRITISYS</span>
             <span class="hidden sm:inline text-xs text-slate-500 block -mt-0.5">Retail OS</span>
           </div>
         </a>
-
-        <nav class="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600">
-          <a href="index.html#features" class="hover:text-brand-700 transition">Features</a>
-          <a href="index.html#products" class="hover:text-brand-700 transition">Products</a>
-          <a href="index.html#editions" class="hover:text-brand-700 transition">Editions</a>
-          <a href="index.html#how-it-works" class="hover:text-brand-700 transition">How it works</a>
-          <a href="index.html#security" class="hover:text-brand-700 transition">Security</a>
+        <nav class="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
+          <a href="index.html" class="hover:text-brand-700 transition">Home</a>
+          <a href="products.html" class="hover:text-brand-700 transition">Product</a>
+          <a href="editions.html" class="hover:text-brand-700 transition">Editions</a>
+          <a href="industries.html" class="hover:text-brand-700 transition">Industries</a>
+          <a href="security.html" class="hover:text-brand-700 transition">Security</a>
           <a href="index.html#contact" class="hover:text-brand-700 transition">Contact</a>
         </nav>
-
         <div class="flex items-center gap-3">
-          <a href="index.html#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">
-            Book a Demo
-          </a>
+          <button id="mobileMenuBtn" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open navigation menu" class="inline-flex lg:hidden items-center justify-center w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition">
+            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          <a href="portal.html" class="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-brand-700 transition">Customer Login</a>
+          <a href="index.html#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">Book a Demo</a>
         </div>
       </div>
+      <nav id="mobileMenu" class="hidden lg:hidden border-t border-slate-200 py-3" aria-label="Mobile navigation">
+        <div class="grid gap-1 text-sm font-medium text-slate-700">
+          <a href="index.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Home</a>
+          <a href="products.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Product</a>
+          <a href="editions.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
+          <a href="industries.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
+          <a href="security.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Security</a>
+          <a href="index.html#contact" class="rounded-lg px-3 py-2 hover:bg-slate-50">Contact</a>
+          <a href="portal.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold">Customer Login</a>
+        </div>
+      </nav>
     </div>
   </header>
 
@@ -188,49 +162,57 @@
     </section>
   </main>
 
-  <footer class="bg-slate-900 text-slate-400 py-12">
+    <!-- Global Footer -->
+  <footer class="bg-slate-950 text-slate-400 py-12 border-t border-slate-800">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
-      <div class="flex flex-col md:flex-row justify-between gap-8">
+      <div class="flex flex-col md:flex-row justify-between gap-8 mb-8">
         <div>
           <div class="flex items-center gap-2.5 mb-3">
             <div class="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">S</div>
-            <span class="font-bold text-white">SMRITISYS</span>
+            <span class="font-bold text-white text-lg tracking-tight">SMRITISYS</span>
           </div>
-          <p class="text-sm max-w-xs leading-relaxed">
-            Official platform for SMRITI Retail OS — enterprise retail software built for clarity, speed and control.
+          <p class="text-sm max-w-sm leading-relaxed text-slate-400">
+            SMRITISYS is the discovery and management control plane. SMRITI Retail OS is the transactional execution engine for modern retail.
           </p>
+          <div class="mt-4 text-xs text-slate-500 font-medium space-y-1">
+            <p><strong class="text-slate-400">SMRITISYS</strong> = Discover + Manage</p>
+            <p><strong class="text-slate-400">SMRITI Retail OS</strong> = Run</p>
+          </div>
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm">
           <div>
-            <h4 class="font-semibold text-white mb-3">Product</h4>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Product & Editions</h4>
             <ul class="space-y-2">
-              <li><a href="index.html#features" class="hover:text-white transition">Features</a></li>
-              <li><a href="index.html#products" class="hover:text-white transition">Products</a></li>
-              <li><a href="index.html#editions" class="hover:text-white transition">Editions</a></li>
-              <li><a href="index.html#how-it-works" class="hover:text-white transition">How it works</a></li>
-              <li><a href="index.html#security" class="hover:text-white transition">Security</a></li>
+              <li><a href="products.html" class="hover:text-white transition">Product Story</a></li>
+              <li><a href="editions.html" class="hover:text-white transition">Compare Editions</a></li>
+              <li><a href="industries.html" class="hover:text-white transition">Industry Workflows</a></li>
+              <li><a href="security.html" class="hover:text-white transition">Security & Trust</a></li>
             </ul>
           </div>
           <div>
-            <h4 class="font-semibold text-white mb-3">Company</h4>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Portals & Programs</h4>
+            <ul class="space-y-2">
+              <li><a href="portal.html" class="hover:text-white transition">Customer Portal</a></li>
+              <li><a href="partner.html" class="hover:text-white transition">Partner Program</a></li>
+              <li><a href="shoper9.html" class="hover:text-white transition">Shoper 9 Migration</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Company</h4>
             <ul class="space-y-2">
               <li><a href="founders.html" class="hover:text-white transition">Founders</a></li>
-              <li><a href="index.html#contact" class="hover:text-white transition">Contact</a></li>
-              <li><a href="https://github.com/smritisystems" class="hover:text-white transition" target="_blank" rel="noopener">GitHub</a></li>
-            </ul>
-          </div>
-          <div>
-            <h4 class="font-semibold text-white mb-3">Related</h4>
-            <ul class="space-y-2">
-              <li><a href="https://smritibooks.com" class="hover:text-white transition" target="_blank" rel="noopener">SMRITIBooks</a></li>
-              <li><a href="https://aitdl.com" class="hover:text-white transition" target="_blank" rel="noopener">AITDL</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Book a Demo</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Contact Us</a></li>
             </ul>
           </div>
         </div>
       </div>
-      <div class="mt-10 pt-8 border-t border-slate-800 text-sm text-center md:text-left">
-        © 2026 SMRITISYS.<br />
-        Product, brand, and software usage terms are governed by applicable licensing arrangements, copyright notices, and third-party component licenses. Certain components may carry separate open-source terms; review the repository notices and licensing files before redistribution or commercial reuse.
+      <div class="border-t border-slate-800 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-500">
+        <p>&copy; 2026 SMRITIBooks.com & AITDL Networks. All Rights Reserved. Proprietary Commercial Software.</p>
+        <div class="flex gap-4">
+          <a href="security.html" class="hover:text-slate-400 transition">Security Policy</a>
+          <a href="portal.html" class="hover:text-slate-400 transition">Customer Sign In</a>
+        </div>
       </div>
     </div>
   </footer>

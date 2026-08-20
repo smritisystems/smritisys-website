@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SMRITI Retail OS | Enterprise Retail Operating System</title>
   <meta name="description" content="SMRITI Retail OS is an enterprise-grade retail operating platform for POS billing, inventory, GST workflows, multi-store control and digital commerce. Built for operational simplicity and business growth." />
+  <link rel="canonical" href="https://smritisys.com/" />
+  <meta property="og:title" content="SMRITI Retail OS | SMRITISYS" />
+  <meta property="og:description" content="The retail operating system built for real stores." />
+  <meta property="og:url" content="https://smritisys.com/" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/site.generated.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,55 +19,42 @@
 <body class="bg-slate-50 text-slate-800 antialiased">
 
   <!-- ========== NAV ========== -->
+    <!-- Header -->
   <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
       <div class="flex items-center justify-between h-16">
-        <!-- Logo -->
-        <a href="#" class="flex items-center gap-2.5 group">
-          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">
-            S
-          </div>
+        <a href="index.html" class="flex items-center gap-2.5 group">
+          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">S</div>
           <div class="leading-tight">
             <span class="font-bold text-slate-900 tracking-tight">SMRITISYS</span>
             <span class="hidden sm:inline text-xs text-slate-500 block -mt-0.5">Retail OS</span>
           </div>
         </a>
-
-        <!-- Desktop Nav -->
         <nav class="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
-          <a href="#features" class="hover:text-brand-700 transition">Capabilities</a>
+          <a href="index.html" class="text-brand-700 font-semibold transition">Home</a>
           <a href="products.html" class="hover:text-brand-700 transition">Product</a>
-          <a href="#editions" class="hover:text-brand-700 transition">Editions</a>
-          <a href="#industries" class="hover:text-brand-700 transition">Industries</a>
-          <a href="#security" class="hover:text-brand-700 transition">Security</a>
-          <a href="#contact" class="hover:text-brand-700 transition">Contact</a>
+          <a href="editions.html" class="hover:text-brand-700 transition">Editions</a>
+          <a href="industries.html" class="hover:text-brand-700 transition">Industries</a>
+          <a href="security.html" class="hover:text-brand-700 transition">Security</a>
+          <a href="index.html#contact" class="hover:text-brand-700 transition">Contact</a>
         </nav>
-
-        <button id="mobileMenuBtn" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open navigation menu" class="inline-flex lg:hidden items-center justify-center w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition">
-          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
-
-        <!-- CTA -->
         <div class="flex items-center gap-3">
-          <a href="portal.html" class="hidden sm:inline-flex whitespace-nowrap text-sm font-medium text-slate-600 hover:text-brand-700 transition">
-            Customer Login
-          </a>
-          <a href="#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">
-            Book a Demo
-          </a>
+          <button id="mobileMenuBtn" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open navigation menu" class="inline-flex lg:hidden items-center justify-center w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition">
+            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          <a href="portal.html" class="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-brand-700 transition">Customer Login</a>
+          <a href="index.html#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">Book a Demo</a>
         </div>
       </div>
       <nav id="mobileMenu" class="hidden lg:hidden border-t border-slate-200 py-3" aria-label="Mobile navigation">
         <div class="grid gap-1 text-sm font-medium text-slate-700">
-          <a href="#features" class="rounded-lg px-3 py-2 hover:bg-slate-50">Capabilities</a>
+          <a href="index.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold bg-brand-50">Home</a>
           <a href="products.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Product</a>
-          <a href="#editions" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
-          <a href="#industries" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
-          <a href="#security" class="rounded-lg px-3 py-2 hover:bg-slate-50">Security</a>
-          <a href="#contact" class="rounded-lg px-3 py-2 hover:bg-slate-50">Contact</a>
-          <a href="portal.html" class="rounded-lg px-3 py-2 text-brand-700 hover:bg-brand-50">Customer Login</a>
+          <a href="editions.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
+          <a href="industries.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
+          <a href="security.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Security</a>
+          <a href="index.html#contact" class="rounded-lg px-3 py-2 hover:bg-slate-50">Contact</a>
+          <a href="portal.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold">Customer Login</a>
         </div>
       </nav>
     </div>
@@ -100,7 +93,7 @@
           </div>
           <div class="mt-8 flex items-center gap-3 text-sm text-indigo-100">
             <span class="inline-flex items-center justify-center w-2.5 h-2.5 rounded-full bg-accent-500"></span>
-            Trusted by modern retail teams seeking clarity, speed and scale
+            Designed for modern retail teams seeking clarity, speed and scale
           </div>
         </div>
 
@@ -119,28 +112,28 @@
               </div>
               <div class="p-5 space-y-4">
                 <div class="flex justify-between items-center">
-                  <span class="text-sm text-slate-400">Today’s sales</span>
-                  <span class="text-emerald-400 text-sm font-medium">+12.4%</span>
+                  <span class="text-sm text-slate-400">Product Preview</span>
+                  <span class="text-emerald-400 text-sm font-medium">Deployment dependent</span>
                 </div>
-                <div class="text-3xl font-bold text-white tracking-tight">₹1,84,250</div>
+                <div class="text-3xl font-bold text-white tracking-tight">Retail workspace</div>
                 <div class="grid grid-cols-3 gap-3 pt-2">
                   <div class="bg-slate-800 rounded-lg p-3 text-center">
-                    <div class="text-lg font-semibold text-white">142</div>
-                    <div class="text-xs text-slate-400">Bills</div>
+                    <div class="text-lg font-semibold text-white">POS</div>
+                    <div class="text-xs text-slate-400">Billing</div>
                   </div>
                   <div class="bg-slate-800 rounded-lg p-3 text-center">
-                    <div class="text-lg font-semibold text-white">38</div>
-                    <div class="text-xs text-slate-400">Items low</div>
+                    <div class="text-lg font-semibold text-white">Stock</div>
+                    <div class="text-xs text-slate-400">Inventory</div>
                   </div>
                   <div class="bg-slate-800 rounded-lg p-3 text-center">
-                    <div class="text-lg font-semibold text-white">4</div>
-                    <div class="text-xs text-slate-400">Stores</div>
+                    <div class="text-lg font-semibold text-white">Work</div>
+                    <div class="text-xs text-slate-400">Context</div>
                   </div>
                 </div>
                 <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
                   <div class="h-full w-3/4 bg-gradient-to-r from-brand-500 to-accent-500 rounded-full"></div>
                 </div>
-                <p class="text-xs text-slate-500 text-center">Live dashboard preview · Illustrative data</p>
+                <p class="text-xs text-slate-500 text-center">Representative product preview · Not a production screenshot</p>
               </div>
             </div>
           </div>
@@ -154,25 +147,11 @@
 
   <!-- ========== TRUST BAR ========== -->
   <section class="bg-white border-b border-slate-200">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8">
-      <p class="text-center text-sm font-medium text-slate-500 mb-8">Built for modern retail teams that need speed, control and operational clarity</p>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5 shadow-sm">
-          <div class="text-3xl font-bold text-slate-900">2x</div>
-          <div class="text-sm text-slate-500 mt-1">Faster checkout flow</div>
-        </div>
-        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5 shadow-sm">
-          <div class="text-3xl font-bold text-slate-900">35%</div>
-          <div class="text-sm text-slate-500 mt-1">Lower stock loss</div>
-        </div>
-        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5 shadow-sm">
-          <div class="text-3xl font-bold text-slate-900">50+</div>
-          <div class="text-sm text-slate-500 mt-1">Store workflows covered</div>
-        </div>
-        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5 shadow-sm">
-          <div class="text-3xl font-bold text-slate-900">1</div>
-          <div class="text-sm text-slate-500 mt-1">Connected commerce platform</div>
-        </div>
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+      <div class="grid sm:grid-cols-3 gap-4 text-center">
+        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5"><div class="text-lg font-semibold text-slate-900">Operational clarity</div><div class="text-sm text-slate-500 mt-1">One connected retail workspace</div></div>
+        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5"><div class="text-lg font-semibold text-slate-900">Deployment-aware</div><div class="text-sm text-slate-500 mt-1">Capabilities vary by scope</div></div>
+        <div class="bg-slate-50 rounded-xl border border-slate-200 px-4 py-5"><div class="text-lg font-semibold text-slate-900">Clear boundaries</div><div class="text-sm text-slate-500 mt-1">Discover, manage, run</div></div>
       </div>
     </div>
   </section>
@@ -221,7 +200,7 @@
         <div class="grid sm:grid-cols-2 gap-4">
           <div class="sm:row-span-2 rounded-2xl border border-slate-300 bg-slate-900 p-4 shadow-xl">
             <div class="flex items-center justify-between border-b border-slate-700 pb-3 text-xs text-slate-400">
-              <span>SMRITI / POS</span><span class="text-emerald-400">Register ready</span>
+              <span>SMRITI / POS</span><span class="text-emerald-400">Product Preview</span>
             </div>
             <div class="py-5">
               <div class="flex items-end justify-between mb-5"><div><p class="text-xs text-slate-400">Current bill</p><p class="mt-1 text-3xl font-bold text-white">3 items</p></div><span class="rounded bg-emerald-400/15 px-2 py-1 text-xs text-emerald-300">In progress</span></div>
@@ -241,7 +220,7 @@
           </div>
 
           <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div class="flex items-center justify-between text-xs text-slate-500"><span>STORE NETWORK</span><span class="text-emerald-600">Live view</span></div>
+            <div class="flex items-center justify-between text-xs text-slate-500"><span>STORE NETWORK</span><span class="text-emerald-600">Deployment dependent</span></div>
             <div class="mt-4 grid grid-cols-3 gap-2 text-center text-xs"><div class="rounded-lg bg-emerald-50 p-2"><strong class="block text-lg text-emerald-700">04</strong><span class="text-slate-500">Stores</span></div><div class="rounded-lg bg-sky-50 p-2"><strong class="block text-lg text-sky-700">12</strong><span class="text-slate-500">Transfers</span></div><div class="rounded-lg bg-amber-50 p-2"><strong class="block text-lg text-amber-700">08</strong><span class="text-slate-500">Alerts</span></div></div>
             <p class="mt-3 text-sm font-semibold text-slate-900">Branches move as one business</p>
           </div>
@@ -251,17 +230,11 @@
   </section>
 
   <section class="bg-slate-50 border-b border-slate-200">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8">
-      <p class="text-center text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 mb-5">Currently using SMRITI Retail OS</p>
-      <div class="flex flex-wrap justify-center gap-3 text-sm font-medium text-slate-600">
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Ramfashion Export Pvt. Ltd.</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Citywalk Shoes</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Tattly Threads</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Craftved</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Kaarigar</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Asha Handicrafts</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">Legend Sports</span>
-        <span class="px-3 py-2 rounded-full bg-white border border-slate-200">And more</span>
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+      <div class="grid sm:grid-cols-3 gap-4 text-center">
+        <div class="bg-white rounded-xl border border-slate-200 px-4 py-5"><div class="text-lg font-semibold text-slate-900">Operational clarity</div><div class="text-sm text-slate-500 mt-1">One connected retail workspace</div></div>
+        <div class="bg-white rounded-xl border border-slate-200 px-4 py-5"><div class="text-lg font-semibold text-slate-900">Deployment-aware</div><div class="text-sm text-slate-500 mt-1">Capabilities vary by scope</div></div>
+        <div class="bg-white rounded-xl border border-slate-200 px-4 py-5"><div class="text-lg font-semibold text-slate-900">Clear boundaries</div><div class="text-sm text-slate-500 mt-1">Discover, manage, run</div></div>
       </div>
     </div>
   </section>
@@ -509,8 +482,8 @@
           <div class="text-sm text-slate-600">Item Master is the single source of truth for every channel</div>
         </div>
         <div class="bg-white/80 rounded-xl border border-slate-200 px-5 py-6">
-          <div class="text-2xl font-bold text-slate-900 mb-1">Zero overselling</div>
-          <div class="text-sm text-slate-600">Real-time stock reservation across online and offline</div>
+          <div class="text-2xl font-bold text-slate-900 mb-1">Stock context</div>
+          <div class="text-sm text-slate-600">Designed for connected retail decisions</div>
         </div>
         <div class="bg-white/80 rounded-xl border border-slate-200 px-5 py-6">
           <div class="text-2xl font-bold text-slate-900 mb-1">One order hub</div>
@@ -551,7 +524,7 @@
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
       <div class="text-center max-w-2xl mx-auto mb-14">
         <h2 class="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight mb-4">
-          Trusted by retailers who need speed, control and consistency
+          Designed for retailers who need speed, control and consistency
         </h2>
         <p class="text-lg text-slate-600">
           Real feedback from teams running stores, shops and multi-location retail operations across fast-moving customer environments.
@@ -923,50 +896,57 @@
   </section>
 
   <!-- ========== FOOTER ========== -->
-  <footer class="bg-slate-900 text-slate-400 py-12">
+    <!-- Global Footer -->
+  <footer class="bg-slate-950 text-slate-400 py-12 border-t border-slate-800">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
-      <div class="flex flex-col md:flex-row justify-between gap-8">
+      <div class="flex flex-col md:flex-row justify-between gap-8 mb-8">
         <div>
           <div class="flex items-center gap-2.5 mb-3">
             <div class="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">S</div>
-            <span class="font-bold text-white">SMRITISYS</span>
+            <span class="font-bold text-white text-lg tracking-tight">SMRITISYS</span>
           </div>
-          <p class="text-sm max-w-xs leading-relaxed">
-            Official platform for SMRITI Retail OS — enterprise retail software built for clarity, speed and control.
+          <p class="text-sm max-w-sm leading-relaxed text-slate-400">
+            SMRITISYS is the discovery and management control plane. SMRITI Retail OS is the transactional execution engine for modern retail.
           </p>
+          <div class="mt-4 text-xs text-slate-500 font-medium space-y-1">
+            <p><strong class="text-slate-400">SMRITISYS</strong> = Discover + Manage</p>
+            <p><strong class="text-slate-400">SMRITI Retail OS</strong> = Run</p>
+          </div>
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm">
           <div>
-            <h4 class="font-semibold text-white mb-3">Product</h4>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Product & Editions</h4>
             <ul class="space-y-2">
-              <li><a href="#features" class="hover:text-white transition">Capabilities</a></li>
-              <li><a href="products.html" class="hover:text-white transition">Product</a></li>
-              <li><a href="#editions" class="hover:text-white transition">Editions</a></li>
-              <li><a href="#industries" class="hover:text-white transition">Industries</a></li>
-              <li><a href="#security" class="hover:text-white transition">Security</a></li>
+              <li><a href="products.html" class="hover:text-white transition">Product Story</a></li>
+              <li><a href="editions.html" class="hover:text-white transition">Compare Editions</a></li>
+              <li><a href="industries.html" class="hover:text-white transition">Industry Workflows</a></li>
+              <li><a href="security.html" class="hover:text-white transition">Security & Trust</a></li>
             </ul>
           </div>
           <div>
-            <h4 class="font-semibold text-white mb-3">Company</h4>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Portals & Programs</h4>
             <ul class="space-y-2">
-              <li><a href="founders.html" class="text-slate-400 hover:text-white transition">Founders</a></li>
-              <li><a href="shoper9.html" class="text-slate-400 hover:text-white transition">Retail implementation experience</a></li>
-              <li><a href="#contact" class="hover:text-white transition">Contact</a></li>
-              <li><a href="https://github.com/smritisystems" class="hover:text-white transition" target="_blank" rel="noopener">GitHub</a></li>
+              <li><a href="portal.html" class="hover:text-white transition">Customer Portal</a></li>
+              <li><a href="partner.html" class="hover:text-white transition">Partner Program</a></li>
+              <li><a href="shoper9.html" class="hover:text-white transition">Shoper 9 Migration</a></li>
             </ul>
           </div>
           <div>
-            <h4 class="font-semibold text-white mb-3">Related</h4>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Company</h4>
             <ul class="space-y-2">
-              <li><a href="https://smritibooks.com" class="hover:text-white transition" target="_blank" rel="noopener">SMRITIBooks</a></li>
-              <li><a href="https://aitdl.com" class="hover:text-white transition" target="_blank" rel="noopener">AITDL</a></li>
+              <li><a href="founders.html" class="hover:text-white transition">Founders</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Book a Demo</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Contact Us</a></li>
             </ul>
           </div>
         </div>
       </div>
-      <div class="mt-10 pt-8 border-t border-slate-800 text-sm text-center md:text-left">
-        © 2026 SMRITISYS.<br />
-        Product, brand, and software usage terms are governed by applicable licensing arrangements, copyright notices, and third-party component licenses. Certain components may carry separate open-source terms; review the repository notices and licensing files before redistribution or commercial reuse.
+      <div class="border-t border-slate-800 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-500">
+        <p>&copy; 2026 SMRITIBooks.com & AITDL Networks. All Rights Reserved. Proprietary Commercial Software.</p>
+        <div class="flex gap-4">
+          <a href="security.html" class="hover:text-slate-400 transition">Security Policy</a>
+          <a href="portal.html" class="hover:text-slate-400 transition">Customer Sign In</a>
+        </div>
       </div>
     </div>
   </footer>

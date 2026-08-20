@@ -1,44 +1,58 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SMRITI Retail OS Product | SMRITISYS</title>
-  <meta name="description" content="Explore the SMRITI Retail OS operating workspace for POS, inventory, purchasing, sales, customers, stores and connected channels." />
+  <title>SMRITI Retail OS Product Story | SMRITISYS</title>
+  <meta name="description" content="Explore the SMRITI Retail OS operating workspace for POS, inventory, purchasing, sales, customers, stores and connected retail operations." />
+  <link rel="canonical" href="https://smritisys.com/products.html" />
+  <meta property="og:title" content="SMRITI Retail OS Product Story | SMRITISYS" />
+  <meta property="og:description" content="Explore the retail operating workspace designed for real stores." />
+  <meta property="og:url" content="https://smritisys.com/products.html" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/site.generated.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased">
+  <!-- Header -->
   <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
       <div class="flex items-center justify-between h-16">
         <a href="index.html" class="flex items-center gap-2.5 group">
-          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm">S</div>
-          <div class="leading-tight"><span class="font-bold text-slate-900 tracking-tight">SMRITISYS</span><span class="hidden sm:block text-xs text-slate-500 -mt-0.5">Retail OS</span></div>
+          <div class="w-9 h-9 rounded-lg bg-brand-700 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-brand-600 transition">S</div>
+          <div class="leading-tight">
+            <span class="font-bold text-slate-900 tracking-tight">SMRITISYS</span>
+            <span class="hidden sm:inline text-xs text-slate-500 block -mt-0.5">Retail OS</span>
+          </div>
         </a>
         <nav class="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
-          <a href="#capabilities" class="hover:text-brand-700 transition">Capabilities</a>
-          <a href="#workspaces" class="hover:text-brand-700 transition">Workspaces</a>
-          <a href="index.html#industries" class="hover:text-brand-700 transition">Industries</a>
-          <a href="index.html#editions" class="hover:text-brand-700 transition">Editions</a>
+          <a href="index.html" class="hover:text-brand-700 transition">Home</a>
+          <a href="products.html" class="text-brand-700 font-semibold transition">Product</a>
+          <a href="editions.html" class="hover:text-brand-700 transition">Editions</a>
+          <a href="industries.html" class="hover:text-brand-700 transition">Industries</a>
+          <a href="security.html" class="hover:text-brand-700 transition">Security</a>
+          <a href="index.html#contact" class="hover:text-brand-700 transition">Contact</a>
         </nav>
         <div class="flex items-center gap-3">
-          <button id="mobileMenuBtn" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open navigation menu" class="inline-flex lg:hidden items-center justify-center w-10 h-10 rounded-lg border border-slate-200 text-slate-700">
+          <button id="mobileMenuBtn" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open navigation menu" class="inline-flex lg:hidden items-center justify-center w-10 h-10 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition">
             <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
-          <a href="portal.html" class="hidden sm:inline-flex whitespace-nowrap text-sm font-medium text-slate-600 hover:text-brand-700 transition">Customer Login</a>
+          <a href="portal.html" class="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-brand-700 transition">Customer Login</a>
           <a href="index.html#contact" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-600 rounded-lg shadow-sm transition">Book a Demo</a>
         </div>
       </div>
       <nav id="mobileMenu" class="hidden lg:hidden border-t border-slate-200 py-3" aria-label="Mobile navigation">
         <div class="grid gap-1 text-sm font-medium text-slate-700">
-          <a href="#capabilities" class="rounded-lg px-3 py-2 hover:bg-slate-50">Capabilities</a>
-          <a href="#workspaces" class="rounded-lg px-3 py-2 hover:bg-slate-50">Workspaces</a>
-          <a href="index.html#industries" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
-          <a href="index.html#editions" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
-          <a href="portal.html" class="rounded-lg px-3 py-2 text-brand-700 hover:bg-brand-50">Customer Login</a>
+          <a href="index.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Home</a>
+          <a href="products.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold bg-brand-50">Product</a>
+          <a href="editions.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
+          <a href="industries.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
+          <a href="security.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Security</a>
+          <a href="index.html#contact" class="rounded-lg px-3 py-2 hover:bg-slate-50">Contact</a>
+          <a href="portal.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold">Customer Login</a>
         </div>
       </nav>
     </div>
@@ -49,52 +63,190 @@
       <div class="max-w-6xl mx-auto px-4 sm:px-6">
         <div class="max-w-3xl">
           <p class="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-200">SMRITI Retail OS</p>
-          <h1 class="mt-4 text-4xl sm:text-6xl font-extrabold leading-tight tracking-tight">One operational workspace for the way retail really runs.</h1>
-          <p class="mt-6 text-lg sm:text-xl text-indigo-100 leading-relaxed max-w-2xl">Fast at the counter. Clear in the back office. Connect products, stock, purchasing, sales, customers, stores and channels without turning the business into a maze of modules.</p>
+          <h1 class="mt-4 text-4xl sm:text-6xl font-extrabold leading-tight tracking-tight">The retail operating system built for real stores.</h1>
+          <p class="mt-6 text-lg sm:text-xl text-indigo-100 leading-relaxed max-w-2xl">Powerful retail operations without the complexity of traditional enterprise software. SMRITI Retail OS is designed around products, stock, purchasing, sales, customers, stores and connected retail work.</p>
           <div class="mt-8 flex flex-col sm:flex-row gap-3">
-            <a href="index.html#contact" class="inline-flex items-center justify-center px-6 py-3.5 font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">Book a Demo</a>
-            <a href="#capabilities" class="inline-flex items-center justify-center px-6 py-3.5 font-semibold text-white border-2 border-white/30 hover:bg-white/10 rounded-xl transition">See capabilities</a>
+            <a href="#visual-story" class="inline-flex items-center justify-center px-6 py-3.5 font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">Explore SMRITI Retail OS</a>
+            <a href="index.html#contact" class="inline-flex items-center justify-center px-6 py-3.5 font-semibold text-white border-2 border-white/30 hover:bg-white/10 rounded-xl transition">Book a Demo</a>
           </div>
         </div>
       </div>
     </section>
 
-    <section id="capabilities" class="bg-white py-20 sm:py-24">
+    <section id="visual-story" class="bg-white border-b border-slate-200 py-20 sm:py-24">
       <div class="max-w-6xl mx-auto px-4 sm:px-6">
-        <div class="max-w-2xl mb-12"><p class="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">The product</p><h2 class="mt-3 text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">Connected capability, organized around retail work.</h2><p class="mt-4 text-lg text-slate-600 leading-relaxed">SMRITI keeps the operating model visible: what is being sold, where it is, how it moves and who the customer is.</p></div>
-        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          <article class="border border-slate-200 rounded-xl p-6 bg-slate-50"><h3 class="text-xl font-semibold text-slate-900">POS &amp; Billing</h3><p class="mt-3 text-slate-600 leading-relaxed">Barcode scanning, discounts, returns, exchanges and fast multi-tender checkout for busy counters.</p></article>
-          <article class="border border-slate-200 rounded-xl p-6 bg-slate-50"><h3 class="text-xl font-semibold text-slate-900">Item Master &amp; Inventory</h3><p class="mt-3 text-slate-600 leading-relaxed">Keep identity, variants, pricing and stock movement aligned across stores and channels.</p></article>
-          <article class="border border-slate-200 rounded-xl p-6 bg-slate-50"><h3 class="text-xl font-semibold text-slate-900">Purchase &amp; Sales</h3><p class="mt-3 text-slate-600 leading-relaxed">Move from buying to receiving to selling with operational context in one connected flow.</p></article>
-          <article class="border border-slate-200 rounded-xl p-6 bg-slate-50"><h3 class="text-xl font-semibold text-slate-900">Customers &amp; Loyalty</h3><p class="mt-3 text-slate-600 leading-relaxed">Build a useful customer record with purchase history, GST details, credit context and loyalty.</p></article>
-          <article class="border border-slate-200 rounded-xl p-6 bg-slate-50"><h3 class="text-xl font-semibold text-slate-900">Multi-Store Operations</h3><p class="mt-3 text-slate-600 leading-relaxed">See branches, staff, targets, transfers and physical stock as one operating network.</p></article>
-          <article class="border border-slate-200 rounded-xl p-6 bg-slate-50"><h3 class="text-xl font-semibold text-slate-900">Connected Channels</h3><p class="mt-3 text-slate-600 leading-relaxed">Coordinate your own store and marketplace availability with a shared product and stock truth.</p></article>
+        <div class="max-w-2xl mb-12">
+          <p class="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">01 / Retail OS</p>
+          <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">The operating system for modern retail businesses.</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">Built for single-store clarity, multi-store coordination, and enterprise-grade operational discipline.</p>
+        </div>
+        <div class="grid lg:grid-cols-2 gap-8 items-center">
+          <div class="space-y-4">
+            <div class="border border-slate-200 rounded-xl p-5 bg-slate-50"><h3 class="font-semibold text-slate-900">One operating environment</h3><p class="mt-1.5 text-sm text-slate-600">POS, stock, purchasing, and sales move together in a unified retail workspace.</p></div>
+            <div class="border border-slate-200 rounded-xl p-5 bg-slate-50"><h3 class="font-semibold text-slate-900">Direct operational clarity</h3><p class="mt-1.5 text-sm text-slate-600">Every stock movement, bill, and transfer connects directly to business performance.</p></div>
+            <div class="border border-slate-200 rounded-xl p-5 bg-slate-50"><h3 class="font-semibold text-slate-900">Scales with your store network</h3><p class="mt-1.5 text-sm text-slate-600">From a single retail counter to multi-branch regional retail operations.</p></div>
+          </div>
+          <div class="border-2 border-dashed border-slate-300 rounded-2xl p-8 bg-slate-50 text-center">
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Retail OS Product Preview</p>
+            <p class="mt-2 text-2xl font-bold text-slate-800">Operational Workspace Overview</p>
+            <p class="mt-2 text-sm text-slate-600">Unified layout displaying sales throughput, pending receipts, active registers, and category velocity.</p>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="workspaces" class="bg-slate-900 text-white py-20 sm:py-24">
+    <section class="bg-slate-50 border-b border-slate-200 py-20 sm:py-24">
       <div class="max-w-6xl mx-auto px-4 sm:px-6">
-        <div class="grid lg:grid-cols-2 gap-12 items-center">
-          <div><p class="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">Single Workspace Principle</p><h2 class="mt-3 text-3xl sm:text-4xl font-bold tracking-tight">One workspace. Different business behavior.</h2><p class="mt-5 text-lg text-slate-300 leading-relaxed">The navigation follows the work, not an abstract software module list.</p></div>
-          <div class="grid sm:grid-cols-2 gap-4">
-            <div class="border border-slate-700 rounded-xl p-5 bg-slate-800/70"><p class="text-emerald-300 text-sm font-semibold">01</p><h3 class="mt-2 text-lg font-semibold">Billing workspace</h3><p class="mt-2 text-sm text-slate-300">Retail sale, B2B sale, return, exchange, quotation and order.</p></div>
-            <div class="border border-slate-700 rounded-xl p-5 bg-slate-800/70"><p class="text-emerald-300 text-sm font-semibold">02</p><h3 class="mt-2 text-lg font-semibold">Purchase workspace</h3><p class="mt-2 text-sm text-slate-300">Supplier, purchase order, receiving, invoice and stock impact.</p></div>
-            <div class="border border-slate-700 rounded-xl p-5 bg-slate-800/70"><p class="text-emerald-300 text-sm font-semibold">03</p><h3 class="mt-2 text-lg font-semibold">Inventory workspace</h3><p class="mt-2 text-sm text-slate-300">Availability, transfers, adjustments, counts and low-stock action.</p></div>
-            <div class="border border-slate-700 rounded-xl p-5 bg-slate-800/70"><p class="text-emerald-300 text-sm font-semibold">04</p><h3 class="mt-2 text-lg font-semibold">Customer workspace</h3><p class="mt-2 text-sm text-slate-300">Identity, history, loyalty, credit context and engagement.</p></div>
-          </div>
+        <div class="max-w-2xl mb-12"><p class="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">02 / One Workspace</p><h2 class="mt-3 text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">Everything connects in one operational flow.</h2><p class="mt-4 text-lg text-slate-600">The workspace is designed around business behaviour, not disconnected module names.</p></div>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div class="border border-slate-200 rounded-xl p-6 bg-white shadow-sm"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 text-xl font-bold text-slate-900">POS &amp; Billing</h3><p class="mt-2 text-sm text-slate-600">Designed for checkout, barcode-led workflows and returns. Payment and printing scope varies by deployment.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-white shadow-sm"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 text-xl font-bold text-slate-900">Inventory &amp; Stock</h3><p class="mt-2 text-sm text-slate-600">Built around item identity, variants, stock decisions and store context.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-white shadow-sm"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 text-xl font-bold text-slate-900">Purchasing &amp; Sales</h3><p class="mt-2 text-sm text-slate-600">Designed to connect buying, receiving and selling with operational context.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-white shadow-sm"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 text-xl font-bold text-slate-900">GST &amp; Compliance</h3><p class="mt-2 text-sm text-slate-600">Compliance workflows are deployment and implementation dependent.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="capabilities" class="bg-white border-b border-slate-200 py-20 sm:py-24">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="max-w-2xl mb-12">
+          <p class="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">03 / Core Operations</p>
+          <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">Deep capabilities designed for retail execution.</h2>
+          <p class="mt-4 text-lg text-slate-600">The following capabilities describe the SMRITI Retail OS operating model; availability varies by edition, deployment stage and implementation scope.</p>
+        </div>
+        <div class="grid md:grid-cols-3 gap-6">
+          <div class="border border-slate-200 rounded-xl p-6 bg-slate-50"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 font-bold text-slate-900 text-lg">POS Counter Billing</h3><p class="mt-2 text-sm text-slate-600">Designed for fast item lookup, checkout and return workflows. Payment scope varies by deployment.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-slate-50"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 font-bold text-slate-900 text-lg">Product Variant Matrix</h3><p class="mt-2 text-sm text-slate-600">Designed around category attributes such as size, colour, fit and fabric.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-slate-50"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">EMERGING</p><h3 class="mt-2 font-bold text-slate-900 text-lg">Barcode-led Workflows</h3><p class="mt-2 text-sm text-slate-600">Barcode and label workflows are part of the product direction and deployment conversation.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-slate-50"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 font-bold text-slate-900 text-lg">Multi-Store Direction</h3><p class="mt-2 text-sm text-slate-600">Designed around branches, transfers and store context.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-slate-50"><p class="text-xs font-semibold uppercase tracking-wide text-brand-700">DEPLOYMENT DEPENDENT</p><h3 class="mt-2 font-bold text-slate-900 text-lg">Customer Relationship</h3><p class="mt-2 text-sm text-slate-600">Designed around customer identity, history and relationship context.</p></div>
+          <div class="border border-slate-200 rounded-xl p-6 bg-slate-50"><p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">EMERGING</p><h3 class="mt-2 font-bold text-slate-900 text-lg">Tax &amp; Compliance Direction</h3><p class="mt-2 text-sm text-slate-600">Tax and compliance workflows require confirmation by deployment and implementation scope.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-slate-900 text-white py-20 sm:py-24">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="max-w-2xl mb-10">
+          <p class="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">07 / Product Journey</p>
+          <h2 class="mt-3 text-3xl sm:text-4xl font-bold tracking-tight">From first conversation to everyday confidence.</h2>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 text-center text-sm">
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">01</strong>Discover</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">02</strong>Select</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">03</strong>License</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">04</strong>Deploy</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">05</strong>Run</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">06</strong>Support</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">07</strong>Release</div>
+          <div class="rounded-lg border border-slate-700 p-4"><strong class="block text-emerald-300">08</strong>Grow</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-slate-50 border-b border-slate-200 py-20 sm:py-24">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="max-w-2xl mb-10">
+          <p class="text-sm font-semibold uppercase tracking-[0.2em] text-amber-700">08 / Emerging / Planned</p>
+          <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">The operating model continues to expand.</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">These directions are part of the evolving SMRITI Retail OS roadmap and require confirmation by edition, deployment stage and implementation scope.</p>
+        </div>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="border border-amber-200 rounded-xl p-5 bg-white"><h3 class="font-semibold text-slate-900">Channel synchronization</h3><p class="mt-2 text-sm text-slate-600">Own-store and marketplace workflows are deployment dependent.</p></div>
+          <div class="border border-amber-200 rounded-xl p-5 bg-white"><h3 class="font-semibold text-slate-900">Offline workflows</h3><p class="mt-2 text-sm text-slate-600">Offline synchronization is planned and not presented as generally available.</p></div>
+          <div class="border border-amber-200 rounded-xl p-5 bg-white"><h3 class="font-semibold text-slate-900">Advanced loyalty</h3><p class="mt-2 text-sm text-slate-600">Customer growth and loyalty capabilities vary by edition and rollout.</p></div>
+          <div class="border border-amber-200 rounded-xl p-5 bg-white"><h3 class="font-semibold text-slate-900">Multi-company operations</h3><p class="mt-2 text-sm text-slate-600">Multi-company workflows are planned and require product confirmation.</p></div>
+          <div class="border border-amber-200 rounded-xl p-5 bg-white"><h3 class="font-semibold text-slate-900">Integration program</h3><p class="mt-2 text-sm text-slate-600">Specific connectors are reviewed as part of implementation scope.</p></div>
+          <div class="border border-amber-200 rounded-xl p-5 bg-white"><h3 class="font-semibold text-slate-900">AI capabilities</h3><p class="mt-2 text-sm text-slate-600">AI capabilities are planned and are not currently advertised as available.</p></div>
         </div>
       </div>
     </section>
 
     <section class="bg-white py-20 sm:py-24">
-      <div class="max-w-6xl mx-auto px-4 sm:px-6"><div class="grid md:grid-cols-3 gap-6 text-center"><div><p class="text-2xl font-bold text-slate-900">Discover</p><p class="mt-2 text-slate-600">Public website for product understanding and evaluation.</p></div><div><p class="text-2xl font-bold text-slate-900">Manage</p><p class="mt-2 text-slate-600">Control Plane for licenses, support, releases and relationship workflows.</p></div><div><p class="text-2xl font-bold text-slate-900">Run</p><p class="mt-2 text-slate-600">Retail OS for the daily operational work of the business.</p></div></div></div>
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="grid md:grid-cols-3 gap-6 text-center">
+          <div><p class="text-2xl font-bold text-slate-900">Discover</p><p class="mt-2 text-slate-600">Public website for product understanding and evaluation.</p></div>
+          <div><p class="text-2xl font-bold text-slate-900">Manage</p><p class="mt-2 text-slate-600">Control Plane for licenses, support, releases and relationship workflows.</p></div>
+          <div><p class="text-2xl font-bold text-slate-900">Run</p><p class="mt-2 text-slate-600">Retail OS for the daily operational work of the business.</p></div>
+        </div>
+      </div>
     </section>
 
-    <section class="bg-brand-800 text-white py-20"><div class="max-w-3xl mx-auto px-4 sm:px-6 text-center"><h2 class="text-3xl sm:text-4xl font-bold tracking-tight">See the workspace in your retail context.</h2><p class="mt-4 text-lg text-indigo-200">Bring your stores, catalog and operating model to a focused product conversation.</p><a href="index.html#contact" class="mt-8 inline-flex items-center justify-center px-6 py-3.5 font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">Book a Demo</a></div></section>
+    <section class="bg-slate-50 border-y border-slate-200 py-16">
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 text-center">
+        <p class="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">Choose your path</p>
+        <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">Choose the SMRITI experience that fits your business.</h2>
+        <p class="mt-4 text-lg text-slate-600">Compare the operating depth and relationship support that match your stage.</p>
+        <a href="editions.html" class="mt-7 inline-flex items-center justify-center px-6 py-3.5 rounded-xl bg-brand-700 text-white font-semibold hover:bg-brand-600 transition">Compare Editions</a>
+      </div>
+    </section>
+
+    <section class="bg-brand-800 text-white py-20">
+      <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Ready to see SMRITI in action?</h2>
+        <p class="mt-4 text-lg text-indigo-200">Enterprise power. Retail simplicity. Bring your stores, catalog and operating model to a focused product conversation.</p>
+        <div class="mt-8 flex flex-col sm:flex-row justify-center gap-3">
+          <a href="index.html#contact" class="inline-flex items-center justify-center px-6 py-3.5 font-semibold text-brand-800 bg-white hover:bg-indigo-50 rounded-xl shadow-lg transition">Book a Demo</a>
+          <a href="editions.html" class="inline-flex items-center justify-center px-6 py-3.5 font-semibold text-white border-2 border-white/30 hover:bg-white/10 rounded-xl transition">Explore Editions</a>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <footer class="bg-slate-950 text-slate-400 py-10"><div class="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row justify-between gap-4 text-sm"><p><span class="font-semibold text-white">SMRITISYS</span> / SMRITI Retail OS</p><div class="flex gap-5"><a href="index.html" class="hover:text-white transition">Home</a><a href="portal.html" class="hover:text-white transition">Customer Login</a><a href="index.html#contact" class="hover:text-white transition">Contact</a></div></div></footer>
+  <!-- Global Footer -->
+  <footer class="bg-slate-950 text-slate-400 py-12 border-t border-slate-800">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="flex flex-col md:flex-row justify-between gap-8 mb-8">
+        <div>
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">S</div>
+            <span class="font-bold text-white text-lg tracking-tight">SMRITISYS</span>
+          </div>
+          <p class="text-sm max-w-sm leading-relaxed text-slate-400">
+            SMRITISYS is the discovery and management control plane. SMRITI Retail OS is the transactional execution engine for modern retail.
+          </p>
+          <div class="mt-4 text-xs text-slate-500 font-medium space-y-1">
+            <p><strong class="text-slate-400">SMRITISYS</strong> = Discover + Manage</p>
+            <p><strong class="text-slate-400">SMRITI Retail OS</strong> = Run</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm">
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Product & Editions</h4>
+            <ul class="space-y-2">
+              <li><a href="products.html" class="hover:text-white transition">Product Story</a></li>
+              <li><a href="editions.html" class="hover:text-white transition">Compare Editions</a></li>
+              <li><a href="industries.html" class="hover:text-white transition">Industry Workflows</a></li>
+              <li><a href="security.html" class="hover:text-white transition">Security & Trust</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Portals & Programs</h4>
+            <ul class="space-y-2">
+              <li><a href="portal.html" class="hover:text-white transition">Customer Portal</a></li>
+              <li><a href="partner.html" class="hover:text-white transition">Partner Program</a></li>
+              <li><a href="shoper9.html" class="hover:text-white transition">Shoper 9 Migration</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-semibold text-white mb-3 text-xs uppercase tracking-wider">Company</h4>
+            <ul class="space-y-2">
+              <li><a href="founders.html" class="hover:text-white transition">Founders</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Book a Demo</a></li>
+              <li><a href="index.html#contact" class="hover:text-white transition">Contact Us</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="border-t border-slate-800 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-500">
+        <p>&copy; 2026 SMRITIBooks.com & AITDL Networks. All Rights Reserved. Proprietary Commercial Software.</p>
+        <div class="flex gap-4">
+          <a href="security.html" class="hover:text-slate-400 transition">Security Policy</a>
+          <a href="portal.html" class="hover:text-slate-400 transition">Customer Sign In</a>
+        </div>
+      </div>
+    </div>
+  </footer>
 
   <script>
     const mobileMenuButton = document.getElementById('mobileMenuBtn');
