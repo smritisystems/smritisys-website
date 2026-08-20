@@ -32,10 +32,15 @@
         </a>
         <nav class="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
           <a href="index.html" class="text-brand-700 font-semibold transition">Home</a>
-          <a href="products.html" class="hover:text-brand-700 transition">Product</a>
-          <a href="warehouse.html" class="hover:text-brand-700 transition">Warehouse</a>
-          <a href="distribution.html" class="hover:text-brand-700 transition">Distribution</a>
-          <a href="barcode.html" class="hover:text-brand-700 transition">Barcode</a>
+          <details class="product-menu">
+            <summary class="product-menu-trigger hover:text-brand-700 transition">Product</summary>
+            <div class="product-menu-panel text-slate-600">
+              <a href="products.html#capabilities">Retail POS</a>
+              <a href="distributor.html">Distributor</a>
+              <a href="warehouse.html">Warehouse</a>
+              <a href="barcode.html">Barcode Studio</a>
+            </div>
+          </details>
           <a href="presentations.html" class="hover:text-brand-700 transition">Presentations</a>
           <a href="editions.html" class="hover:text-brand-700 transition">Editions</a>
           <a href="industries.html" class="hover:text-brand-700 transition">Industries</a>
@@ -53,10 +58,15 @@
       <nav id="mobileMenu" class="hidden lg:hidden border-t border-slate-200 py-3" aria-label="Mobile navigation">
         <div class="grid gap-1 text-sm font-medium text-slate-700">
           <a href="index.html" class="rounded-lg px-3 py-2 text-brand-700 font-semibold bg-brand-50">Home</a>
-          <a href="products.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Product</a>
-          <a href="warehouse.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Warehouse</a>
-          <a href="distribution.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Distribution</a>
-          <a href="barcode.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Barcode</a>
+          <details class="product-menu">
+            <summary class="product-menu-trigger rounded-lg px-3 py-2 hover:bg-slate-50">Product</summary>
+            <div class="product-menu-panel text-slate-700">
+              <a href="products.html#capabilities">Retail POS</a>
+              <a href="distributor.html">Distributor</a>
+              <a href="warehouse.html">Warehouse</a>
+              <a href="barcode.html">Barcode Studio</a>
+            </div>
+          </details>
           <a href="presentations.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Presentations</a>
           <a href="editions.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Editions</a>
           <a href="industries.html" class="rounded-lg px-3 py-2 hover:bg-slate-50">Industries</a>
@@ -981,4 +991,5 @@
   </script>
 
 </body>
+  <script src="js/site-nav.js" defer></script>
 </html>
