@@ -26,8 +26,8 @@ test("server authorization uses organization membership permissions", () => {
   assert.match(api, /async function hasPermission/);
   assert.match(api, /JOIN role_permissions/);
   assert.match(api, /organization_id = \?/);
-  assert.match(api, /support\.create/);
   assert.match(api, /admin\.system/);
+  assert.match(schema, /'support\.create'/);
 });
 
 test("fresh schema seeds the same RBAC catalog", () => {

@@ -3,6 +3,7 @@
 SMRITISYS is the relationship, licensing, support, partner, commercial, and control plane. **SMRITI Retail OS is a separate operational application** for POS, billing, inventory, purchases, sales, CRM, accounting, GST, and reports.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the product boundary and experience map.
+See [docs/LICENSE_ARCHITECTURE.md](docs/LICENSE_ARCHITECTURE.md) for the Phase 3 license model and state machine.
 
 Push to GitHub = automatic deploy. No manual `wrangler deploy`.
 
@@ -89,6 +90,30 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | PUT | `/api/profile` | Update customer profile (Bearer token) |
 | GET | `/api/tickets` | List customer support tickets (Bearer token) |
 | POST | `/api/tickets` | Create support ticket (Bearer token) |
+| GET | `/api/tickets/:id` | Read one customer-owned ticket and replies (Bearer token) |
+| POST | `/api/tickets/:id/messages` | Add a customer reply to a customer-owned ticket (Bearer token) |
+| GET | `/api/requirements` | List requirements for the authenticated customer organization (Bearer token) |
+| POST | `/api/requirements` | Submit a custom requirement request (Bearer token) |
+| GET | `/api/requirements/:id` | Read one organization-owned requirement and replies (Bearer token) |
+| POST | `/api/requirements/:id/messages` | Add a customer reply to an organization-owned requirement (Bearer token) |
+| GET | `/api/partner/me` | Read the authenticated partner relationship (Bearer token) |
+| GET | `/api/partner/customers` | List linked customer organizations (partner membership required) |
+| GET | `/api/partner/licenses` | Read licenses for linked customer organizations (partner license permission required) |
+| GET | `/api/partner/releases` | Read releases for linked customer products (partner release permission required) |
+| GET | `/api/products` | List products (Bearer token) |
+| POST | `/api/products` | Create a product (license permission required) |
+| GET | `/api/products/:id` | Read a product and its editions (Bearer token) |
+| GET/POST | `/api/products/:id/editions` | Read or create product editions |
+| GET | `/api/licenses` | List licenses visible to the authenticated organization |
+| POST | `/api/licenses` | Create a draft or active license (admin permission required) |
+| GET | `/api/licenses/:id` | Read a license with calculated validity |
+| PATCH | `/api/licenses/:id` | Update license metadata, not status |
+| GET/POST | `/api/licenses/:id/entitlements` | Read or manage structured entitlements |
+| GET | `/api/licenses/:id/activations` | List license activations |
+| GET | `/api/licenses/:id/events` | Read immutable license event history |
+| POST | `/api/licenses/:id/activate` | Activate a license installation |
+| POST | `/api/licenses/:id/suspend` | Suspend an active license |
+| POST | `/api/licenses/:id/renew` | Explicitly renew a license |
 | GET | `/api/accounting/accounts` | List company accounts (Bearer token) |
 | POST | `/api/accounting/accounts` | Create an account type (Bearer token) |
 | GET/POST | `/api/accounting/contacts` | List or create customers and suppliers (Bearer token) |
@@ -121,6 +146,7 @@ identity migration:
 
 ```bash
 npx wrangler d1 execute smritisys-db --remote --file=./migrations/0002_identity_rbac.sql
+npx wrangler d1 execute smritisys-db --remote --file=./migrations/0003_license_control_plane.sql
 ```
 
 The migration preserves `users`, `customers`, sessions, and existing customer data.
@@ -128,6 +154,10 @@ It backfills `people`, deterministic organizations, memberships, roles, permissi
 and audit storage. Runtime authorization resolves the authenticated account through
 organization membership and role permissions; browser-supplied organization or role
 values are not trusted.
+
+The license migration reuses the existing product and license tables and adds editions,
+entitlements, activations, and immutable license events. It does not move operational
+POS, sales, purchase, inventory, accounting, GST, or reporting data into SMRITISYS.
 
 ## Create first staff user
 

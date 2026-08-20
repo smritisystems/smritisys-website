@@ -36,14 +36,15 @@
     <aside>
       <span class="brand">SMRITISYS</span>
       <nav class="nav" aria-label="Portal sections">
-        <button class="active" data-view="overview">Overview</button>
-        <button data-view="profile">My profile</button>
-        <button data-view="support">Support tickets</button>
-        <button data-view="licenses">Licenses &amp; AMC</button>
-        <button data-view="commerce">Products &amp; orders</button>
-        <a class="nav-link" href="https://app.smritisys.com" target="_blank" rel="noopener">Open SMRITI Retail OS</a>
-        <button data-view="programs">Referral &amp; partner programs</button>
-        <button data-view="implementation">Implementation</button>
+        <button class="active" data-view="overview">Home</button>
+        <button data-view="organization">My organization</button>
+        <button data-view="products">My products</button>
+        <button data-view="licenses">Licenses &amp; entitlements</button>
+        <button data-view="support">Support</button>
+        <button data-view="requirements">Custom requirements</button>
+        <button data-view="releases">Release center</button>
+        <button data-view="commercial">Commercial relationship</button>
+        <button data-view="profile">Account</button>
         <button id="adminNav" class="hidden" data-view="admin">Administration</button>
       </nav>
       <button id="logoutButton" class="logout">Sign out</button>
@@ -55,36 +56,70 @@
       </header>
       <div class="content">
         <section class="view active" data-section="overview">
-          <div class="welcome"><div><span class="eyebrow">Customer workspace</span><h2>Good to see you, <span id="welcomeName">there</span>.</h2><p class="muted">Your account activity and service status at a glance.</p></div><button class="primary" data-go="support">Open a ticket</button></div>
+          <div class="welcome"><div><span class="eyebrow">Customer workspace</span><h2>Good to see you, <span id="welcomeName">there</span>.</h2><p class="muted">Your relationship, products, licenses and service activity at a glance.</p></div></div>
+          <div id="dashboardError" class="state-panel hidden" role="alert"></div>
           <div class="grid stats">
-            <div class="card"><span class="stat-label">Active licenses</span><strong class="stat-value">2</strong><span class="status">Active</span></div>
-            <div class="card"><span class="stat-label">AMC coverage</span><strong class="stat-value">148 days</strong><span class="status">In coverage</span></div>
-            <div class="card"><span class="stat-label">Open tickets</span><strong class="stat-value" id="openTicketCount">0</strong><span class="status">Support</span></div>
-            <div class="card"><span class="stat-label">Referral rewards</span><strong class="stat-value">₹0</strong><span class="status">Available</span></div>
+            <div class="card"><span class="stat-label">Organization</span><strong class="stat-value stat-value-small" id="dashboardOrganization">Loading...</strong><span class="status" id="dashboardOrganizationStatus">Loading</span></div>
+            <div class="card"><span class="stat-label">Active products</span><strong class="stat-value" id="activeProductCount">—</strong><span class="status" id="activeProductState">Loading</span></div>
+            <div class="card"><span class="stat-label">Licenses</span><strong class="stat-value" id="licenseCount">—</strong><span class="status" id="licenseState">Loading</span></div>
+            <div class="card"><span class="stat-label">Open tickets</span><strong class="stat-value" id="openTicketCount">—</strong><span class="status">Support</span></div>
           </div>
-          <div class="grid modules">
-            <article class="card module"><div><span class="eyebrow">Service</span><h3>License management</h3><p>View seats, activation status and renewal dates for every product.</p></div><button class="text-button" data-go="licenses">View licenses →</button></article>
-            <article class="card module"><div><span class="eyebrow">Help desk</span><h3>Support &amp; AMC</h3><p>Raise a request, track replies and see what your AMC covers.</p></div><button class="text-button" data-go="support">Go to support →</button></article>
-            <article class="card module"><div><span class="eyebrow">Growth</span><h3>Partner programs</h3><p>Refer a business, apply as a partner or start reselling SMRITISYS.</p></div><button class="text-button" data-go="programs">Explore programs →</button></article>
-          </div>
-          <div class="card roadmap"><span class="eyebrow">Portal roadmap</span><h3>More control is coming into one workspace.</h3><div class="roadmap-list"><div class="roadmap-item"><strong>Purchases &amp; invoices</strong><span>Catalog, checkout and order history</span></div><div class="roadmap-item"><strong>Renewals &amp; notifications</strong><span>AMC and license reminders</span></div><div class="roadmap-item"><strong>Partner commissions</strong><span>Referrals, reseller sales and payouts</span></div></div></div>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Current products</span><h2>License overview</h2></div><button id="refreshDashboard" class="secondary" type="button">Refresh</button></div>
+          <div id="dashboardLicenses" class="grid modules" aria-live="polite"><p class="muted">Loading licenses...</p></div>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Product updates</span><h2>Latest eligible release</h2></div><button class="secondary" data-go="releases" type="button">View releases</button></div>
+          <div id="dashboardRelease" class="state-panel" aria-live="polite">Loading releases...</div>
+        </section>
+
+        <section class="view" data-section="organization">
+          <div class="section-head"><div><span class="eyebrow">Organization</span><h2>My organization</h2></div><button class="secondary refresh-view" type="button">Refresh</button></div>
+          <div id="organizationState" class="state-panel" aria-live="polite">Loading organization...</div>
+          <div id="organizationDetails" class="grid modules hidden"></div>
+          <div class="card"><div class="section-head compact"><div><span class="eyebrow">Access</span><h3>Authorized members</h3></div></div><div id="memberList"><p class="muted">Loading members...</p></div></div>
+        </section>
+
+        <section class="view" data-section="products">
+          <div class="section-head"><div><span class="eyebrow">Product relationship</span><h2>My products</h2></div><button class="secondary refresh-view" type="button">Refresh</button></div>
+          <div id="productList" class="grid modules" aria-live="polite"><p class="muted">Loading products...</p></div>
+        </section>
+
+        <section class="view" data-section="licenses">
+          <div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Licenses &amp; entitlements</h2></div><button class="secondary refresh-view" type="button">Refresh</button></div>
+          <div id="licenseStatePanel" class="state-panel" aria-live="polite">Loading licenses...</div>
+          <div id="licenseList" class="license-list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" data-section="support">
+          <div class="section-head"><div><span class="eyebrow">Help desk</span><h2>Support Center</h2></div><button id="newTicketButton" class="primary" type="button">New ticket</button></div>
+          <form id="ticketForm" class="card hidden"><div class="form-grid"><div class="full"><label for="ticketSubject">Subject</label><input id="ticketSubject" name="subject" maxlength="200" required /></div><div><label for="ticketPriority">Priority</label><select id="ticketPriority" name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></div><div class="full"><label for="ticketDescription">Describe the issue</label><textarea id="ticketDescription" name="description" maxlength="10000" rows="5" required></textarea></div></div><button class="primary" type="submit">Submit ticket</button><p id="ticketMessage" class="message" role="status"></p></form>
+          <div class="support-layout"><div id="ticketList" class="card" aria-live="polite"><p class="muted">Loading tickets...</p></div><div id="ticketDetail" class="card state-panel" aria-live="polite">Select a ticket to view its details.</div></div>
+        </section>
+
+        <section class="view" data-section="requirements">
+          <div class="section-head"><div><span class="eyebrow">Product relationship</span><h2>Custom Requirements</h2></div><button id="newRequirementButton" class="primary" type="button">New requirement</button></div>
+          <form id="requirementForm" class="card hidden"><div class="form-grid"><div class="full"><label for="requirementTitle">Title</label><input id="requirementTitle" name="title" maxlength="200" required /></div><div><label for="requirementCategory">Category</label><select id="requirementCategory" name="category"><option value="general">General</option><option value="feature">Feature</option><option value="integration">Integration</option><option value="reporting">Reporting</option><option value="workflow">Workflow</option></select></div><div><label for="requirementPriority">Priority</label><select id="requirementPriority" name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></div><div class="full"><label for="requirementDescription">Describe the requirement</label><textarea id="requirementDescription" name="description" maxlength="10000" rows="5" required></textarea></div></div><button class="primary" type="submit">Submit requirement</button><p id="requirementMessage" class="message" role="status"></p></form>
+          <div class="support-layout"><div id="requirementList" class="card" aria-live="polite"><p class="muted">Loading requirements...</p></div><div id="requirementDetail" class="card state-panel" aria-live="polite">Select a requirement to view its details.</div></div>
+        </section>
+
+        <section class="view" data-section="releases">
+          <div class="section-head"><div><span class="eyebrow">Product updates</span><h2>Release Center</h2></div><button class="secondary refresh-view" type="button">Refresh</button></div>
+          <div id="releaseState" class="state-panel" aria-live="polite">Loading releases...</div>
+          <div id="releaseList" class="license-list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" data-section="commercial">
+          <div class="section-head"><div><span class="eyebrow">Relationship</span><h2>Commercial relationship</h2></div><button class="secondary refresh-view" type="button">Refresh</button></div>
+          <div id="commercialState" class="state-panel" aria-live="polite">Loading commercial relationship...</div>
+          <div id="commercialSummary" class="grid modules hidden"></div>
+          <div id="commercialOrders" class="card hidden"></div>
         </section>
 
         <section class="view" data-section="profile">
           <div class="section-head"><div><span class="eyebrow">Account</span><h2>My profile</h2></div></div>
-          <form id="profileForm" class="card"><div class="form-grid"><div><label for="profileName">Full name</label><input id="profileName" name="name" required /></div><div><label for="profileEmail">Email</label><input id="profileEmail" name="email" type="email" readonly /></div><div><label for="profilePhone">Phone</label><input id="profilePhone" name="phone" /></div><div><label for="profileCompany">Company</label><input id="profileCompany" name="company" required /></div><div><label for="profileGst">GST number</label><input id="profileGst" name="gst_number" /></div><div><label for="profileWebsite">Website</label><input id="profileWebsite" name="website" type="url" /></div><div class="full"><label for="profileBio">About your business</label><textarea id="profileBio" name="bio" rows="4"></textarea></div></div><button class="primary" type="submit">Save profile</button><p id="profileMessage" class="message" role="status"></p></form>
+          <form id="profileForm" class="card"><div class="form-grid"><div><label for="profileName">Full name</label><input id="profileName" name="name" required /></div><div><label for="profileEmail">Email</label><input id="profileEmail" name="email" type="email" readonly /></div><div><label for="profilePhone">Phone</label><input id="profilePhone" name="phone" /></div></div><button class="primary" type="submit">Save profile</button><p id="profileMessage" class="message" role="status"></p></form>
+          <form id="passwordForm" class="card"><div class="section-head compact"><div><span class="eyebrow">Security</span><h3>Change password</h3></div></div><label for="currentPassword">Current password</label><input id="currentPassword" name="current_password" type="password" autocomplete="current-password" required /><label for="newPassword">New password</label><input id="newPassword" name="new_password" type="password" autocomplete="new-password" minlength="8" required /><button class="secondary" type="submit">Change password</button><p id="passwordMessage" class="message" role="status"></p></form>
+          <div id="sessionDetails" class="card"><div class="section-head compact"><div><span class="eyebrow">Session</span><h3>Current session</h3></div></div><p class="muted">Authenticated customer session</p><button id="accountLogoutButton" class="secondary" type="button">Sign out</button></div>
         </section>
 
-        <section class="view" data-section="support">
-          <div class="section-head"><div><span class="eyebrow">Help desk</span><h2>Support tickets</h2></div><button id="newTicketButton" class="primary">New ticket</button></div>
-          <form id="ticketForm" class="card hidden"><div class="form-grid"><div class="full"><label for="ticketSubject">Subject</label><input id="ticketSubject" name="subject" required /></div><div><label for="ticketPriority">Priority</label><select id="ticketPriority" name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></div><div class="full"><label for="ticketDescription">Describe the issue</label><textarea id="ticketDescription" name="description" rows="5" required></textarea></div></div><button class="primary" type="submit">Submit ticket</button><p id="ticketMessage" class="message" role="status"></p></form>
-          <div id="ticketList" class="card"><p class="muted">Loading tickets...</p></div>
-        </section>
-
-        <section class="view" data-section="licenses"><div class="section-head"><div><span class="eyebrow">Service portfolio</span><h2>Licenses &amp; AMC</h2></div></div><div class="grid modules"><article class="card module"><div><span class="eyebrow">SMRITI Retail OS</span><h3>Professional edition</h3><p>12 seats · Renews 16 January 2027</p></div><span class="status">Active</span></article><article class="card module"><div><span class="eyebrow">AMC contract AMC-1042</span><h3>Annual maintenance</h3><p>Support, updates and remote assistance · Expires 16 January 2027</p></div><span class="status">Covered</span></article></div></section>
-        <section class="view" data-section="commerce"><div class="section-head"><div><span class="eyebrow">Commerce</span><h2>Products &amp; orders</h2></div><button class="primary">Browse products</button></div><div class="card"><h3>New product purchase</h3><p class="muted">Product catalog and online checkout will appear here. Your orders, invoices and upgrades will stay connected to your licenses.</p></div></section>
-        <section class="view" data-section="programs"><div class="section-head"><div><span class="eyebrow">Growth network</span><h2>Referral &amp; partner programs</h2></div></div><div class="grid modules"><article class="card module"><div><span class="eyebrow">Referral program</span><h3>Share SMRITISYS</h3><p>Get a referral link and earn rewards when a referred business becomes a customer.</p></div><button class="primary">Get referral link</button></article><article class="card module"><div><span class="eyebrow">Partner program</span><h3>Grow with us</h3><p>Apply for implementation, consulting and technology partnership benefits.</p></div><button class="primary">Apply as partner</button></article><article class="card module"><div><span class="eyebrow">Reseller program</span><h3>Sell SMRITISYS</h3><p>Access reseller pricing, commissions and a workspace for your sales pipeline.</p></div><button class="primary">Apply as reseller</button></article></div></section>
-        <section class="view" data-section="implementation"><div class="section-head"><div><span class="eyebrow">Delivery</span><h2>Implementation</h2></div></div><div class="card"><h3>Retail rollout</h3><p class="muted">Project planning, data import, staff training and go-live milestones will be tracked here.</p><div style="margin-top:1.2rem;background:var(--mint);height:8px"><div style="width:62%;height:100%;background:var(--turquoise)"></div></div><p style="margin:.6rem 0 0;font-size:.85rem" class="muted">62% complete · Target go-live 04 September 2026</p></div></section>
         <section class="view" data-section="admin"><div class="section-head"><div><span class="eyebrow">Super admin</span><h2>User administration</h2></div><span class="status">Full control</span></div><div id="adminUserList" class="card"><p class="muted">Loading users...</p></div><p id="adminMessage" class="message" role="status"></p></section>
       </div>
     </main>

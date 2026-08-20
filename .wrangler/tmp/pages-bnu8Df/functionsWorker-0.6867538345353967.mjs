@@ -1,22 +1,17 @@
-/**
- * SMRITISYS Pages Functions
- * Handles account, profile, support ticket, and demo APIs.
- * Auto-deploys with Cloudflare Pages on every GitHub push
- */
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
+// api/[[path]].js
 function isTrustedOrigin(request, env) {
   const origin = request.headers.get("Origin");
   if (!origin) return null;
-  const allowedOrigins = (env.ALLOWED_ORIGINS || "https://smritisys.com,http://localhost:8788,http://127.0.0.1:8788")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const allowedOrigins = (env.ALLOWED_ORIGINS || "https://smritisys.com,http://localhost:8788,http://127.0.0.1:8788").split(",").map((value) => value.trim()).filter(Boolean);
   return allowedOrigins.includes(origin) ? origin : null;
 }
-
+__name(isTrustedOrigin, "isTrustedOrigin");
 function json(data, status = 200, origin = null) {
   const headers = {
-    "Content-Type": "application/json",
+    "Content-Type": "application/json"
   };
   if (origin) {
     headers["Access-Control-Allow-Origin"] = origin;
@@ -24,29 +19,29 @@ function json(data, status = 200, origin = null) {
   }
   return new Response(JSON.stringify(data), {
     status,
-    headers,
+    headers
   });
 }
-
+__name(json, "json");
 function cors(origin) {
   return new Response(null, {
     status: 204,
     headers: {
-      ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
+      ...origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {},
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    },
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+    }
   });
 }
-
+__name(cors, "cors");
 async function hashLegacyPassword(password) {
   const data = new TextEncoder().encode(password + "smritisys-salt-v1");
   const hash = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-
+__name(hashLegacyPassword, "hashLegacyPassword");
 async function hashPassword(password) {
-  const iterations = 120000;
+  const iterations = 12e4;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
@@ -54,12 +49,11 @@ async function hashPassword(password) {
   const hashHex = [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `pbkdf2-sha256$${iterations}$${saltHex}$${hashHex}`;
 }
-
+__name(hashPassword, "hashPassword");
 async function verifyPassword(password, storedHash) {
   if (!storedHash?.startsWith("pbkdf2-sha256$")) {
-    return (await hashLegacyPassword(password)) === storedHash;
+    return await hashLegacyPassword(password) === storedHash;
   }
-
   const [, prefix, algorithm, iterationsText, saltHex, expectedHash] = storedHash.match(/^(pbkdf2)-(sha256)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/) || [];
   if (!prefix || !algorithm || !iterationsText || !saltHex || !expectedHash) return false;
   const salt = new Uint8Array(saltHex.match(/.{2}/g).map((value) => parseInt(value, 16)));
@@ -68,24 +62,23 @@ async function verifyPassword(password, storedHash) {
   const actualHash = [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return actualHash === expectedHash;
 }
-
+__name(verifyPassword, "verifyPassword");
 function makeToken() {
   const arr = new Uint8Array(24);
   crypto.getRandomValues(arr);
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-
+__name(makeToken, "makeToken");
 async function getCustomerSession(request, env) {
   const principal = await getIdentitySession(request, env);
   if (!principal || principal.account_type !== "customer") return null;
   return principal;
 }
-
+__name(getCustomerSession, "getCustomerSession");
 async function getIdentitySession(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.replace("Bearer ", "").trim();
   if (!token) return null;
-
   return await env.DB.prepare(
     `SELECT s.account_type, s.account_id, p.id AS person_id, p.email, p.name,
             p.status AS person_status, m.organization_id, m.member_role,
@@ -97,11 +90,9 @@ async function getIdentitySession(request, env) {
      WHERE s.token = ? AND s.expires_at > datetime('now')
        AND p.status = 'active' AND m.status = 'active' AND o.status = 'active'
      ORDER BY m.id LIMIT 1`
-  )
-    .bind(token)
-    .first();
+  ).bind(token).first();
 }
-
+__name(getIdentitySession, "getIdentitySession");
 async function hasPermission(env, principal, permission) {
   if (!principal) return false;
   const row = await env.DB.prepare(
@@ -111,12 +102,10 @@ async function hasPermission(env, principal, permission) {
      JOIN permissions p ON p.id = rp.permission_id
      WHERE m.organization_id = ? AND m.account_type = ? AND m.account_id = ?
        AND m.status = 'active' AND p.name = ?`
-  )
-    .bind(principal.organization_id, principal.account_type, principal.account_id, permission)
-    .first();
+  ).bind(principal.organization_id, principal.account_type, principal.account_id, permission).first();
   return Boolean(row);
 }
-
+__name(hasPermission, "hasPermission");
 async function getPartnerSession(request, env) {
   const principal = await getIdentitySession(request, env);
   if (!principal) return null;
@@ -131,7 +120,7 @@ async function getPartnerSession(request, env) {
   if (!membership) return null;
   return { ...principal, ...membership };
 }
-
+__name(getPartnerSession, "getPartnerSession");
 async function hasPartnerPermission(env, principal, permission) {
   if (!principal) return false;
   const row = await env.DB.prepare(
@@ -144,57 +133,44 @@ async function hasPartnerPermission(env, principal, permission) {
   ).bind(principal.partner_organization_id, principal.account_type, principal.account_id, permission).first();
   return Boolean(row);
 }
-
+__name(hasPartnerPermission, "hasPartnerPermission");
 async function requirePermission(request, env, permission) {
   const principal = await getIdentitySession(request, env);
-  if (!principal || !(await hasPermission(env, principal, permission))) return null;
+  if (!principal || !await hasPermission(env, principal, permission)) return null;
   return principal;
 }
-
+__name(requirePermission, "requirePermission");
 async function writeAudit(env, request, principal, action, resourceType, resourceId, oldValue = null, newValue = null) {
   await env.DB.prepare(
     `INSERT INTO audit_logs
      (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
-      principal?.person_id || null,
-      principal?.organization_id || null,
-      action,
-      resourceType || null,
-      resourceId == null ? null : String(resourceId),
-      oldValue == null ? null : JSON.stringify(oldValue),
-      newValue == null ? null : JSON.stringify(newValue),
-      request.headers.get("CF-Connecting-IP") || null,
-    )
-    .run();
+  ).bind(
+    principal?.person_id || null,
+    principal?.organization_id || null,
+    action,
+    resourceType || null,
+    resourceId == null ? null : String(resourceId),
+    oldValue == null ? null : JSON.stringify(oldValue),
+    newValue == null ? null : JSON.stringify(newValue),
+    request.headers.get("CF-Connecting-IP") || null
+  ).run();
 }
-
-const LICENSE_STATUSES = ["DRAFT", "ACTIVE", "SUSPENDED", "EXPIRED", "CANCELLED", "PENDING_RENEWAL"];
-const LICENSE_TRANSITIONS = {
-  DRAFT: ["ACTIVE", "CANCELLED"],
-  ACTIVE: ["SUSPENDED", "PENDING_RENEWAL", "EXPIRED", "CANCELLED"],
-  SUSPENDED: ["ACTIVE", "CANCELLED"],
-  PENDING_RENEWAL: ["ACTIVE", "EXPIRED"],
-  EXPIRED: ["ACTIVE"],
-  CANCELLED: [],
-};
-
+__name(writeAudit, "writeAudit");
+var LICENSE_STATUSES = ["DRAFT", "ACTIVE", "SUSPENDED", "EXPIRED", "CANCELLED", "PENDING_RENEWAL"];
 function numericId(value) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 }
-
+__name(numericId, "numericId");
 function licenseValidity(status, startsAt, expiresAt) {
-  const today = new Date().toISOString().slice(0, 10);
-  const isExpired = status === "EXPIRED" || (expiresAt && expiresAt < today);
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const isExpired = status === "EXPIRED" || expiresAt && expiresAt < today;
   const isValid = status === "ACTIVE" && (!startsAt || startsAt <= today) && (!expiresAt || expiresAt >= today);
-  const daysRemaining = expiresAt
-    ? Math.max(0, Math.ceil((Date.parse(`${expiresAt}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000))
-    : null;
+  const daysRemaining = expiresAt ? Math.max(0, Math.ceil((Date.parse(`${expiresAt}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 864e5)) : null;
   return { is_valid: isValid, is_expired: Boolean(isExpired), days_remaining: daysRemaining };
 }
-
+__name(licenseValidity, "licenseValidity");
 function licenseResponse(record) {
   return {
     id: record.id,
@@ -208,10 +184,10 @@ function licenseResponse(record) {
     expiry_date: record.expires_at,
     validity: licenseValidity(record.status, record.starts_at, record.expires_at),
     created_at: record.created_at || null,
-    updated_at: record.updated_at || record.created_at || null,
+    updated_at: record.updated_at || record.created_at || null
   };
 }
-
+__name(licenseResponse, "licenseResponse");
 async function getLicenseRecord(env, licenseId) {
   return await env.DB.prepare(
     `SELECT l.id, l.license_key, l.customer_id, l.product_id, l.status,
@@ -229,7 +205,7 @@ async function getLicenseRecord(env, licenseId) {
      WHERE l.id = ? ORDER BY om.id LIMIT 1`
   ).bind(licenseId).first();
 }
-
+__name(getLicenseRecord, "getLicenseRecord");
 async function requireLicenseAccess(request, env, licenseId, permission = "license.view") {
   const principal = await requirePermission(request, env, permission);
   if (!principal) return { error: json({ ok: false, error: "License permission required" }, 403) };
@@ -240,7 +216,7 @@ async function requireLicenseAccess(request, env, licenseId, permission = "licen
   }
   return { principal, license };
 }
-
+__name(requireLicenseAccess, "requireLicenseAccess");
 async function recordLicenseEvent(env, license, principal, eventType, previousStatus, newStatus, metadata = null) {
   await env.DB.prepare(
     `INSERT INTO license_events
@@ -253,10 +229,10 @@ async function recordLicenseEvent(env, license, principal, eventType, previousSt
     eventType,
     previousStatus || null,
     newStatus || null,
-    metadata == null ? null : JSON.stringify(metadata),
+    metadata == null ? null : JSON.stringify(metadata)
   ).run();
 }
-
+__name(recordLicenseEvent, "recordLicenseEvent");
 function normalizeEntitlements(value) {
   if (!Array.isArray(value) || value.length > 50) return null;
   const allowedTypes = ["number", "text", "boolean", "json"];
@@ -268,33 +244,36 @@ function normalizeEntitlements(value) {
       key: item.key,
       value_type: item.value_type,
       value_text: item.value_type === "number" ? null : item.value_type === "json" ? JSON.stringify(item.value) : String(item.value),
-      value_number: item.value_type === "number" ? Number(item.value) : null,
+      value_number: item.value_type === "number" ? Number(item.value) : null
     });
   }
   return normalized;
 }
-
+__name(normalizeEntitlements, "normalizeEntitlements");
 function parseEntitlement(row) {
   let value = row.value_text;
   if (row.value_type === "number") value = row.value_number;
   if (row.value_type === "boolean") value = row.value_text === "true";
   if (row.value_type === "json") {
-    try { value = JSON.parse(row.value_text); } catch { value = null; }
+    try {
+      value = JSON.parse(row.value_text);
+    } catch {
+      value = null;
+    }
   }
   return { key: row.entitlement_key, value_type: row.value_type, value };
 }
-
+__name(parseEntitlement, "parseEntitlement");
 async function requireSuperAdmin(request, env) {
   const session = await requirePermission(request, env, "admin.system");
   if (!session || session.account_type !== "user" || session.member_role !== "super_admin") return null;
   return session;
 }
-
+__name(requireSuperAdmin, "requireSuperAdmin");
 async function handleProducts(request, env, productId = null) {
   const permission = request.method === "GET" ? "license.view" : "license.create";
   const principal = await requirePermission(request, env, permission);
   if (!principal) return json({ ok: false, error: "Product permission required" }, 403);
-
   if (productId && request.method === "GET") {
     const product = await env.DB.prepare(
       `SELECT id, slug AS code, name, description, status, created_at
@@ -307,14 +286,12 @@ async function handleProducts(request, env, productId = null) {
     ).bind(productId).all();
     return json({ ok: true, product: { ...product, editions } });
   }
-
   if (request.method === "GET") {
     const { results } = await env.DB.prepare(
       `SELECT id, slug AS code, name, description, status, created_at FROM products ORDER BY name`
     ).all();
     return json({ ok: true, products: results });
   }
-
   const body = await request.json();
   const code = typeof body.code === "string" ? body.code.trim().toLowerCase() : "";
   const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -325,7 +302,7 @@ async function handleProducts(request, env, productId = null) {
     const result = await env.DB.prepare(
       `INSERT INTO products (slug, name, description, price, billing_period, status)
        VALUES (?, ?, ?, 0, 'one_time', 'active')`
-    ).bind(code, name, String(body.description || "").slice(0, 2000) || null).run();
+    ).bind(code, name, String(body.description || "").slice(0, 2e3) || null).run();
     await writeAudit(env, request, principal, "PRODUCT_CREATED", "product", result.meta.last_row_id, null, { code, name });
     return json({ ok: true, product_id: result.meta.last_row_id }, 201);
   } catch (error) {
@@ -333,7 +310,7 @@ async function handleProducts(request, env, productId = null) {
     throw error;
   }
 }
-
+__name(handleProducts, "handleProducts");
 async function handleEditions(request, env, productId) {
   const id = numericId(productId);
   if (!id) return json({ ok: false, error: "A valid product id is required" }, 400);
@@ -359,7 +336,7 @@ async function handleEditions(request, env, productId) {
     const result = await env.DB.prepare(
       `INSERT INTO product_editions (product_id, code, name, description)
        VALUES (?, ?, ?, ?)`
-    ).bind(id, code, name, String(body.description || "").slice(0, 2000) || null).run();
+    ).bind(id, code, name, String(body.description || "").slice(0, 2e3) || null).run();
     await writeAudit(env, request, principal, "EDITION_CREATED", "product_edition", result.meta.last_row_id, null, { product_id: id, code, name });
     return json({ ok: true, edition_id: result.meta.last_row_id }, 201);
   } catch (error) {
@@ -367,7 +344,7 @@ async function handleEditions(request, env, productId) {
     throw error;
   }
 }
-
+__name(handleEditions, "handleEditions");
 async function listLicenses(request, env) {
   const principal = await requirePermission(request, env, "license.view");
   if (!principal) return json({ ok: false, error: "License permission required" }, 403);
@@ -387,7 +364,7 @@ async function listLicenses(request, env) {
   ).bind(...bindings).all();
   return json({ ok: true, licenses: results.map(licenseResponse) });
 }
-
+__name(listLicenses, "listLicenses");
 async function createLicense(request, env) {
   const principal = await requirePermission(request, env, "license.create");
   if (!principal) return json({ ok: false, error: "License creation permission required" }, 403);
@@ -396,7 +373,7 @@ async function createLicense(request, env) {
   const productId = numericId(body.product_id);
   const editionId = numericId(body.edition_id);
   const status = body.status || "DRAFT";
-  const startsAt = body.start_date || new Date().toISOString().slice(0, 10);
+  const startsAt = body.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const expiresAt = body.expiry_date || null;
   if (!organizationId || !productId || !editionId || !LICENSE_STATUSES.includes(status) || !["DRAFT", "ACTIVE"].includes(status)) {
     return json({ ok: false, error: "Organization, product, edition, and a valid initial status are required" }, 400);
@@ -412,9 +389,7 @@ async function createLicense(request, env) {
      WHERE organization_id = ? AND account_type = 'customer' AND status = 'active' ORDER BY id LIMIT 1`
   ).bind(organizationId).first();
   if (!customer) return json({ ok: false, error: "Organization has no active customer relationship" }, 400);
-  const licenseKey = typeof body.license_key === "string" && body.license_key.trim()
-    ? body.license_key.trim()
-    : `LIC-${makeToken().slice(0, 24).toUpperCase()}`;
+  const licenseKey = typeof body.license_key === "string" && body.license_key.trim() ? body.license_key.trim() : `LIC-${makeToken().slice(0, 24).toUpperCase()}`;
   const entitlements = normalizeEntitlements(body.entitlements || []);
   if (!entitlements) return json({ ok: false, error: "Invalid entitlement values" }, 400);
   try {
@@ -426,7 +401,7 @@ async function createLicense(request, env) {
       env.DB.prepare(
         `INSERT INTO license_editions (license_id, edition_id)
          SELECT id, ? FROM licenses WHERE license_key = ?`
-      ).bind(editionId, licenseKey),
+      ).bind(editionId, licenseKey)
     ];
     for (const entitlement of entitlements) {
       statements.push(env.DB.prepare(
@@ -447,7 +422,7 @@ async function createLicense(request, env) {
     throw error;
   }
 }
-
+__name(createLicense, "createLicense");
 async function handleLicenseEntitlements(request, env, licenseId) {
   const access = await requireLicenseAccess(request, env, licenseId, request.method === "GET" ? "license.view" : "license.manage_entitlements");
   if (access.error) return access.error;
@@ -473,7 +448,7 @@ async function handleLicenseEntitlements(request, env, licenseId) {
   await writeAudit(env, request, access.principal, "ENTITLEMENT_CHANGED", "license", access.license.id, null, entitlement);
   return json({ ok: true, message: "Entitlement saved" });
 }
-
+__name(handleLicenseEntitlements, "handleLicenseEntitlements");
 async function handleLicenseActivations(request, env, licenseId) {
   const access = await requireLicenseAccess(request, env, licenseId, "license.view");
   if (access.error) return access.error;
@@ -484,10 +459,10 @@ async function handleLicenseActivations(request, env, licenseId) {
   ).bind(access.license.id).all();
   return json({ ok: true, activations: results.map((activation) => ({
     ...activation,
-    metadata: activation.metadata_json ? JSON.parse(activation.metadata_json) : null,
+    metadata: activation.metadata_json ? JSON.parse(activation.metadata_json) : null
   })) });
 }
-
+__name(handleLicenseActivations, "handleLicenseActivations");
 async function handleLicenseEvents(request, env, licenseId) {
   const access = await requireLicenseAccess(request, env, licenseId, "license.view");
   if (access.error) return access.error;
@@ -498,10 +473,10 @@ async function handleLicenseEvents(request, env, licenseId) {
   ).bind(access.license.id).all();
   return json({ ok: true, events: results.map((event) => ({
     ...event,
-    metadata: event.metadata_json ? JSON.parse(event.metadata_json) : null,
+    metadata: event.metadata_json ? JSON.parse(event.metadata_json) : null
   })) });
 }
-
+__name(handleLicenseEvents, "handleLicenseEvents");
 async function handleLicenseRequest(request, env, licenseId) {
   const access = await requireLicenseAccess(request, env, licenseId, "license.view");
   if (access.error) return access.error;
@@ -516,7 +491,7 @@ async function handleLicenseRequest(request, env, licenseId) {
   await writeAudit(env, request, access.principal, "LICENSE_REQUESTED", "license", access.license.id, null, { request_type: body.request_type });
   return json({ ok: true, message: "Your request has been sent to SMRITISYS." }, 201);
 }
-
+__name(handleLicenseRequest, "handleLicenseRequest");
 async function transitionLicense(request, env, licenseId, action) {
   const permissionByAction = { activate: "license.activate", suspend: "license.suspend", renew: "license.renew" };
   const access = await requireLicenseAccess(request, env, licenseId, permissionByAction[action]);
@@ -526,7 +501,6 @@ async function transitionLicense(request, env, licenseId, action) {
   let nextStatus;
   let eventType;
   let update = null;
-
   if (action === "activate") {
     if (!body.installation_id || !body.activation_identifier || !["DRAFT", "ACTIVE", "SUSPENDED", "PENDING_RENEWAL"].includes(currentStatus)) {
       return json({ ok: false, error: "A valid activation and transition are required" }, 400);
@@ -544,7 +518,7 @@ async function transitionLicense(request, env, licenseId, action) {
         `UPDATE license_activations SET last_seen_at = datetime('now')
          WHERE license_id = ? AND activation_identifier = ? AND status = 'active'`
       ).bind(access.license.id, String(body.activation_identifier).slice(0, 200)),
-      ...(currentStatus === "ACTIVE" ? [] : [env.DB.prepare("UPDATE licenses SET status = ? WHERE id = ?").bind(nextStatus, access.license.id)]),
+      ...currentStatus === "ACTIVE" ? [] : [env.DB.prepare("UPDATE licenses SET status = ? WHERE id = ?").bind(nextStatus, access.license.id)]
     ]);
     const activation = await env.DB.prepare(
       "SELECT id FROM license_activations WHERE license_id = ? AND activation_identifier = ?"
@@ -561,17 +535,15 @@ async function transitionLicense(request, env, licenseId, action) {
     update = {};
   } else {
     if (!["ACTIVE", "PENDING_RENEWAL", "EXPIRED"].includes(currentStatus)) return json({ ok: false, error: "License cannot be renewed from its current state" }, 409);
-    const startsAt = body.start_date || new Date().toISOString().slice(0, 10);
+    const startsAt = body.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const expiresAt = body.expiry_date;
     if (!expiresAt || expiresAt < startsAt) return json({ ok: false, error: "A valid renewal expiry date is required" }, 400);
     nextStatus = "ACTIVE";
     eventType = "LICENSE_RENEWED";
     update = { startsAt, expiresAt };
   }
-
   if (action !== "activate") {
-    const statements = [env.DB.prepare("UPDATE licenses SET status = ?, starts_at = COALESCE(?, starts_at), expires_at = COALESCE(?, expires_at) WHERE id = ?")
-      .bind(nextStatus, update?.startsAt || null, update?.expiresAt || null, access.license.id)];
+    const statements = [env.DB.prepare("UPDATE licenses SET status = ?, starts_at = COALESCE(?, starts_at), expires_at = COALESCE(?, expires_at) WHERE id = ?").bind(nextStatus, update?.startsAt || null, update?.expiresAt || null, access.license.id)];
     await env.DB.batch(statements);
   }
   if (eventType) {
@@ -583,7 +555,7 @@ async function transitionLicense(request, env, licenseId, action) {
   const license = await getLicenseRecord(env, access.license.id);
   return json({ ok: true, license: licenseResponse(license) });
 }
-
+__name(transitionLicense, "transitionLicense");
 async function patchLicense(request, env, licenseId) {
   const access = await requireLicenseAccess(request, env, licenseId, "license.update");
   if (access.error) return access.error;
@@ -600,14 +572,14 @@ async function patchLicense(request, env, licenseId) {
   }
   await env.DB.batch([
     env.DB.prepare("UPDATE licenses SET starts_at = COALESCE(?, starts_at), expires_at = COALESCE(?, expires_at) WHERE id = ?").bind(startsAt, expiresAt, access.license.id),
-    ...(editionId ? [env.DB.prepare("UPDATE license_editions SET edition_id = ?, updated_at = datetime('now') WHERE license_id = ?").bind(editionId, access.license.id)] : []),
+    ...editionId ? [env.DB.prepare("UPDATE license_editions SET edition_id = ?, updated_at = datetime('now') WHERE license_id = ?").bind(editionId, access.license.id)] : []
   ]);
   await recordLicenseEvent(env, access.license, access.principal, "LICENSE_UPDATED", access.license.status, access.license.status, { start_date: startsAt, expiry_date: expiresAt, edition_id: editionId });
   await writeAudit(env, request, access.principal, "LICENSE_UPDATED", "license", access.license.id, licenseResponse(access.license), { start_date: startsAt, expiry_date: expiresAt, edition_id: editionId });
   const license = await getLicenseRecord(env, access.license.id);
   return json({ ok: true, license: licenseResponse(license) });
 }
-
+__name(patchLicense, "patchLicense");
 async function handleLicenses(request, env, segments) {
   if (!segments.length) return request.method === "GET" ? listLicenses(request, env) : createLicense(request, env);
   const licenseId = numericId(segments[0]);
@@ -626,11 +598,10 @@ async function handleLicenses(request, env, segments) {
   if (!child && request.method === "PATCH") return patchLicense(request, env, licenseId);
   return json({ ok: false, error: "Unsupported license operation" }, 405);
 }
-
+__name(handleLicenses, "handleLicenses");
 async function handleAdminUsers(request, env) {
   const session = await requireSuperAdmin(request, env);
   if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
-
   if (request.method === "GET") {
     const { results } = await env.DB.prepare(
       `SELECT id, email, name, role, status, created_at
@@ -638,7 +609,6 @@ async function handleAdminUsers(request, env) {
     ).all();
     return json({ ok: true, users: results });
   }
-
   const userId = Number(request.params?.id);
   if (!Number.isInteger(userId) || userId < 1) {
     return json({ ok: false, error: "A valid user id is required" }, 400);
@@ -658,10 +628,8 @@ async function handleAdminUsers(request, env) {
   if (userId === session.account_id && body.role && body.role !== "super_admin") {
     return json({ ok: false, error: "You cannot remove your own super admin role" }, 400);
   }
-
   const target = await env.DB.prepare("SELECT role, status FROM users WHERE id = ?").bind(userId).first();
   if (!target) return json({ ok: false, error: "User not found" }, 404);
-
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE users
@@ -676,23 +644,21 @@ async function handleAdminUsers(request, env) {
       `UPDATE organization_members
        SET member_role = COALESCE(?, member_role), status = COALESCE(?, status)
        WHERE account_type = 'user' AND account_id = ?`
-    ).bind(body.role || null, body.status || null, userId),
+    ).bind(body.role || null, body.status || null, userId)
   ]);
   await writeAudit(env, request, session, "MEMBER_ROLE_OR_STATUS_CHANGED", "user", userId, target, {
     role: body.role || target.role,
-    status: body.status || target.status,
+    status: body.status || target.status
   });
-
   return json({ ok: true, message: "User updated" });
 }
-
+__name(handleAdminUsers, "handleAdminUsers");
 async function handleProfile(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
-  if (!(await hasPermission(env, session, "organization.view"))) {
+  if (!await hasPermission(env, session, "organization.view")) {
     return json({ ok: false, error: "Organization access required" }, 403);
   }
-
   if (request.method === "GET") {
     const profile = await env.DB.prepare(
       `SELECT c.id, c.email, c.name, c.phone, c.company, c.status,
@@ -700,27 +666,22 @@ async function handleProfile(request, env) {
        FROM customers c
        LEFT JOIN customer_profiles p ON p.customer_id = c.id
        WHERE c.id = ?`
-    )
-      .bind(session.account_id)
-      .first();
+    ).bind(session.account_id).first();
     return json({ ok: true, profile });
   }
-
   const body = await request.json();
   const { name, phone } = body;
   if (!name) {
     return json({ ok: false, error: "Name is required" }, 400);
   }
-
   await env.DB.prepare(`UPDATE customers SET name = ?, phone = ? WHERE id = ?`).bind(name, phone || null, session.account_id).run();
-
   return json({ ok: true, message: "Profile updated" });
 }
-
+__name(handleProfile, "handleProfile");
 async function handleOrganization(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
-  if (!(await hasPermission(env, session, "organization.view"))) {
+  if (!await hasPermission(env, session, "organization.view")) {
     return json({ ok: false, error: "Organization access required" }, 403);
   }
   const organization = await env.DB.prepare(
@@ -741,14 +702,14 @@ async function handleOrganization(request, env) {
   ).bind(session.organization_id).all();
   return json({ ok: true, organization, members });
 }
-
+__name(handleOrganization, "handleOrganization");
 async function ensureDefaultAccounts(env, customerId) {
   const defaults = [
     ["1000", "Cash", "asset"],
     ["1100", "Accounts Receivable", "asset"],
     ["2000", "Accounts Payable", "liability"],
     ["4000", "Sales", "income"],
-    ["5000", "Purchases", "expense"],
+    ["5000", "Purchases", "expense"]
   ];
   const statements = defaults.map(([code, name, accountType]) => env.DB.prepare(
     `INSERT OR IGNORE INTO accounting_accounts (customer_id, code, name, account_type)
@@ -756,14 +717,13 @@ async function ensureDefaultAccounts(env, customerId) {
   ).bind(customerId, code, name, accountType));
   await env.DB.batch(statements);
 }
-
+__name(ensureDefaultAccounts, "ensureDefaultAccounts");
 async function handleAccounting(request, env, resource) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
   return json({ ok: false, error: "Operational accounting belongs to SMRITI Retail OS" }, 403);
   const customerId = session.account_id;
   await ensureDefaultAccounts(env, customerId);
-
   if (resource === "accounts") {
     if (request.method === "GET") {
       const { results } = await env.DB.prepare(
@@ -772,7 +732,6 @@ async function handleAccounting(request, env, resource) {
       ).bind(customerId).all();
       return json({ ok: true, accounts: results });
     }
-
     const body = await request.json();
     const allowedTypes = ["asset", "liability", "income", "expense", "equity"];
     if (!body.code || !body.name || !allowedTypes.includes(body.account_type)) {
@@ -790,7 +749,6 @@ async function handleAccounting(request, env, resource) {
       throw error;
     }
   }
-
   if (resource === "contacts") {
     if (request.method === "GET") {
       const { results } = await env.DB.prepare(
@@ -810,11 +768,10 @@ async function handleAccounting(request, env, resource) {
     ).bind(customerId, body.contact_type, body.name, body.email || null, body.phone || null, body.gst_number || null, Number(body.opening_balance) || 0).run();
     return json({ ok: true, message: `${body.contact_type === "customer" ? "Customer" : "Supplier"} created` }, 201);
   }
-
   const simpleDocuments = {
     receipts: { table: "accounting_receipts", number: "receipt_number", contact: "contact_id", reference: "invoice_reference", date: "receipt_date" },
     payments: { table: "accounting_supplier_payments", number: "payment_number", contact: "contact_id", reference: "bill_reference", date: "payment_date" },
-    notes: { table: "accounting_notes", number: "note_number", contact: "contact_id", reference: "document_reference", date: "note_date" },
+    notes: { table: "accounting_notes", number: "note_number", contact: "contact_id", reference: "document_reference", date: "note_date" }
   };
   if (simpleDocuments[resource]) {
     const config = simpleDocuments[resource];
@@ -825,9 +782,7 @@ async function handleAccounting(request, env, resource) {
       return json({ ok: true, [resource]: results });
     }
     const body = await request.json();
-    const required = resource === "notes"
-      ? [config.number, "note_type", "party_type", config.date, "amount", "reason"]
-      : [config.number, config.date, "amount", "payment_mode"];
+    const required = resource === "notes" ? [config.number, "note_type", "party_type", config.date, "amount", "reason"] : [config.number, config.date, "amount", "payment_mode"];
     if (required.some((field) => !body[field])) {
       return json({ ok: false, error: "Complete the required document fields" }, 400);
     }
@@ -852,17 +807,15 @@ async function handleAccounting(request, env, resource) {
       throw error;
     }
   }
-
   if (resource === "invoices" || resource === "purchases") {
     if (request.method === "GET") {
-      const table = resource === "invoices" ? "accounting_invoices" : "accounting_purchases";
+      const table2 = resource === "invoices" ? "accounting_invoices" : "accounting_purchases";
       const orderField = resource === "invoices" ? "invoice_date" : "purchase_date";
       const { results } = await env.DB.prepare(
-        `SELECT * FROM ${table} WHERE customer_id = ? ORDER BY ${orderField} DESC, id DESC`
+        `SELECT * FROM ${table2} WHERE customer_id = ? ORDER BY ${orderField} DESC, id DESC`
       ).bind(customerId).all();
       return json({ ok: true, [resource]: results });
     }
-
     const body = await request.json();
     const items = Array.isArray(body.items) ? body.items : [];
     const isInvoice = resource === "invoices";
@@ -872,13 +825,12 @@ async function handleAccounting(request, env, resource) {
     if (!number || !partyName || !date || !items.length) {
       return json({ ok: false, error: "Document number, party name, date, and at least one item are required" }, 400);
     }
-
     const normalizedItems = items.map((item) => {
       const quantity = Number(item.quantity) || 0;
       const unitPrice = Number(item.unit_price) || 0;
       const taxRate = Number(item.tax_rate) || 0;
       const base = quantity * unitPrice;
-      return { description: item.description, quantity, unitPrice, taxRate, lineTotal: base + (base * taxRate / 100) };
+      return { description: item.description, quantity, unitPrice, taxRate, lineTotal: base + base * taxRate / 100 };
     });
     if (normalizedItems.some((item) => !item.description || item.quantity <= 0 || item.unitPrice < 0)) {
       return json({ ok: false, error: "Each item needs a description, positive quantity, and valid price" }, 400);
@@ -896,16 +848,12 @@ async function handleAccounting(request, env, resource) {
       const parent = await env.DB.prepare(
         `INSERT INTO ${table} (customer_id, ${numberColumn}, ${partyColumn}, ${isInvoice ? "buyer_email, " : ""}${dateColumn}, ${isInvoice ? "due_date, " : ""}subtotal, tax_amount, total_amount)
          VALUES (?, ?, ?, ${isInvoice ? "?, " : ""}?, ${isInvoice ? "?, " : ""}?, ?, ?)`
-      ).bind(...(isInvoice
-        ? [customerId, number, partyName, body.buyer_email || null, date, body.due_date || null, subtotal, tax, total]
-        : [customerId, number, partyName, date, subtotal, tax, total])).run();
+      ).bind(...isInvoice ? [customerId, number, partyName, body.buyer_email || null, date, body.due_date || null, subtotal, tax, total] : [customerId, number, partyName, date, subtotal, tax, total]).run();
       const itemStatements = normalizedItems.map((item) => env.DB.prepare(
         `INSERT INTO ${itemTable} (${parentColumn}, description, quantity, unit_price, tax_rate, line_total)
          VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(parent.meta.last_row_id, item.description, item.quantity, item.unitPrice, item.taxRate, item.lineTotal));
-      const accountTypes = isInvoice
-        ? { debit: "asset", credit: "income" }
-        : { debit: "expense", credit: "liability" };
+      const accountTypes = isInvoice ? { debit: "asset", credit: "income" } : { debit: "expense", credit: "liability" };
       const accountRows = await env.DB.prepare(
         `SELECT id, account_type FROM accounting_accounts
          WHERE customer_id = ? AND account_type IN (?, ?)`
@@ -921,7 +869,7 @@ async function handleAccounting(request, env, resource) {
           `INSERT INTO accounting_ledger_entries
            (customer_id, account_id, entry_date, reference_type, reference_id, description, debit, credit)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(customerId, accountIds[accountTypes.credit], date, resource, parent.meta.last_row_id, `${number} total`, 0, total),
+        ).bind(customerId, accountIds[accountTypes.credit], date, resource, parent.meta.last_row_id, `${number} total`, 0, total)
       );
       await env.DB.batch(itemStatements);
       return json({ ok: true, id: parent.meta.last_row_id, message: `${isInvoice ? "Invoice" : "Purchase"} recorded` }, 201);
@@ -930,7 +878,6 @@ async function handleAccounting(request, env, resource) {
       throw error;
     }
   }
-
   if (resource === "ledger" && request.method === "GET") {
     const { results } = await env.DB.prepare(
       `SELECT l.id, l.entry_date, l.description, l.debit, l.credit,
@@ -941,15 +888,13 @@ async function handleAccounting(request, env, resource) {
     ).bind(customerId).all();
     return json({ ok: true, ledger: results });
   }
-
   return json({ ok: false, error: "Unsupported accounting operation" }, 405);
 }
-
+__name(handleAccounting, "handleAccounting");
 async function handleCommercial(request, env, resource, recordId = null) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
-  if (!(await hasPermission(env, session, "commercial.view"))) return json({ ok: false, error: "Commercial access required" }, 403);
-
+  if (!await hasPermission(env, session, "commercial.view")) return json({ ok: false, error: "Commercial access required" }, 403);
   if (resource === "summary") {
     const { results: orders } = await env.DB.prepare(
       `SELECT id, order_number, total_amount, status, created_at
@@ -961,7 +906,6 @@ async function handleCommercial(request, env, resource, recordId = null) {
     ).bind(session.account_id).all();
     return json({ ok: true, summary: { orders, amc_contracts: amcContracts } });
   }
-
   if (resource === "orders" && recordId) {
     const order = await env.DB.prepare(
       `SELECT id, order_number, total_amount, status, created_at
@@ -970,7 +914,6 @@ async function handleCommercial(request, env, resource, recordId = null) {
     if (!order) return json({ ok: false, error: "Order not found" }, 404);
     return json({ ok: true, order });
   }
-
   if (resource === "orders") {
     const { results } = await env.DB.prepare(
       `SELECT id, order_number, total_amount, status, created_at
@@ -978,24 +921,22 @@ async function handleCommercial(request, env, resource, recordId = null) {
     ).bind(session.account_id).all();
     return json({ ok: true, orders: results });
   }
-
   return json({ ok: false, error: "Unsupported commercial operation" }, 405);
 }
-
+__name(handleCommercial, "handleCommercial");
 async function handleTickets(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
   const permission = request.method === "POST" ? "support.create" : "support.view";
-  if (!(await hasPermission(env, session, permission))) {
+  if (!await hasPermission(env, session, permission)) {
     return json({ ok: false, error: "Support access required" }, 403);
   }
-
   if (request.method === "POST") {
     const body = await request.json();
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const allowedPriorities = ["low", "normal", "high", "urgent"];
-    if (!subject || subject.length > 200 || !description || description.length > 10000) {
+    if (!subject || subject.length > 200 || !description || description.length > 1e4) {
       return json({ ok: false, error: "Subject and description are required" }, 400);
     }
     const priority = allowedPriorities.includes(body.priority) ? body.priority : "normal";
@@ -1005,42 +946,36 @@ async function handleTickets(request, env) {
     ).bind(session.account_id, subject, description, priority).run();
     return json({ ok: true, ticket_id: result.meta.last_row_id, message: "Support ticket created" }, 201);
   }
-
   const { results } = await env.DB.prepare(
     `SELECT id, subject, description, priority, status, created_at, updated_at
      FROM support_tickets WHERE customer_id = ? ORDER BY created_at DESC`
-  )
-    .bind(session.account_id)
-    .all();
+  ).bind(session.account_id).all();
   return json({ ok: true, tickets: results });
 }
-
+__name(handleTickets, "handleTickets");
 async function handleTicketResource(request, env, ticketId, resource) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
   const permission = request.method === "GET" ? "support.view" : "support.create";
-  if (!(await hasPermission(env, session, permission))) return json({ ok: false, error: "Support access required" }, 403);
-
+  if (!await hasPermission(env, session, permission)) return json({ ok: false, error: "Support access required" }, 403);
   const ticket = await env.DB.prepare(
     `SELECT id, subject, description, priority, status, created_at, updated_at
      FROM support_tickets WHERE id = ? AND customer_id = ?`
   ).bind(ticketId, session.account_id).first();
   if (!ticket) return json({ ok: false, error: "Ticket not found" }, 404);
-
   if (resource === "messages" && request.method === "POST") {
     const body = await request.json();
     const message = typeof body.message === "string" ? body.message.trim() : "";
-    if (!message || message.length > 10000) return json({ ok: false, error: "Message is required" }, 400);
+    if (!message || message.length > 1e4) return json({ ok: false, error: "Message is required" }, 400);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO support_ticket_messages (ticket_id, author_type, author_id, message)
          VALUES (?, 'customer', ?, ?)`
       ).bind(ticket.id, session.account_id, message),
-      env.DB.prepare("UPDATE support_tickets SET updated_at = datetime('now') WHERE id = ?").bind(ticket.id),
+      env.DB.prepare("UPDATE support_tickets SET updated_at = datetime('now') WHERE id = ?").bind(ticket.id)
     ]);
     return json({ ok: true, message: "Reply added" }, 201);
   }
-
   if (resource || request.method !== "GET") return json({ ok: false, error: "Unsupported ticket operation" }, 405);
   const { results: messages } = await env.DB.prepare(
     `SELECT id, author_type, author_id, message, created_at
@@ -1048,20 +983,19 @@ async function handleTicketResource(request, env, ticketId, resource) {
   ).bind(ticket.id).all();
   return json({ ok: true, ticket: { ...ticket, messages } });
 }
-
+__name(handleTicketResource, "handleTicketResource");
 async function handleRequirements(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
   const permission = request.method === "POST" ? "requirement.create" : "requirement.view";
-  if (!(await hasPermission(env, session, permission))) return json({ ok: false, error: "Requirements access required" }, 403);
-
+  if (!await hasPermission(env, session, permission)) return json({ ok: false, error: "Requirements access required" }, 403);
   if (request.method === "POST") {
     const body = await request.json();
     const title = typeof body.title === "string" ? body.title.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const categories = ["general", "feature", "integration", "reporting", "workflow"];
     const priorities = ["low", "normal", "high", "urgent"];
-    if (!title || title.length > 200 || !description || description.length > 10000) {
+    if (!title || title.length > 200 || !description || description.length > 1e4) {
       return json({ ok: false, error: "Title and description are required" }, 400);
     }
     const category = categories.includes(body.category) ? body.category : "general";
@@ -1072,39 +1006,36 @@ async function handleRequirements(request, env) {
     ).bind(session.account_id, session.organization_id, title, description, category, priority).run();
     return json({ ok: true, requirement_id: result.meta.last_row_id, message: "Requirement submitted" }, 201);
   }
-
   const { results } = await env.DB.prepare(
     `SELECT id, title, description, category, priority, status, created_at, updated_at
      FROM custom_requirements WHERE organization_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(session.organization_id).all();
   return json({ ok: true, requirements: results });
 }
-
+__name(handleRequirements, "handleRequirements");
 async function handleRequirementResource(request, env, requirementId, resource) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
   const permission = request.method === "GET" ? "requirement.view" : "requirement.create";
-  if (!(await hasPermission(env, session, permission))) return json({ ok: false, error: "Requirements access required" }, 403);
+  if (!await hasPermission(env, session, permission)) return json({ ok: false, error: "Requirements access required" }, 403);
   const requirement = await env.DB.prepare(
     `SELECT id, title, description, category, priority, status, created_at, updated_at
      FROM custom_requirements WHERE id = ? AND organization_id = ?`
   ).bind(requirementId, session.organization_id).first();
   if (!requirement) return json({ ok: false, error: "Requirement not found" }, 404);
-
   if (resource === "messages" && request.method === "POST") {
     const body = await request.json();
     const message = typeof body.message === "string" ? body.message.trim() : "";
-    if (!message || message.length > 10000) return json({ ok: false, error: "Message is required" }, 400);
+    if (!message || message.length > 1e4) return json({ ok: false, error: "Message is required" }, 400);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO custom_requirement_messages (requirement_id, author_type, author_id, message)
          VALUES (?, 'customer', ?, ?)`
       ).bind(requirement.id, session.account_id, message),
-      env.DB.prepare("UPDATE custom_requirements SET updated_at = datetime('now') WHERE id = ?").bind(requirement.id),
+      env.DB.prepare("UPDATE custom_requirements SET updated_at = datetime('now') WHERE id = ?").bind(requirement.id)
     ]);
     return json({ ok: true, message: "Reply added" }, 201);
   }
-
   if (resource || request.method !== "GET") return json({ ok: false, error: "Unsupported requirement operation" }, 405);
   const { results: messages } = await env.DB.prepare(
     `SELECT id, author_type, author_id, message, created_at
@@ -1112,7 +1043,7 @@ async function handleRequirementResource(request, env, requirementId, resource) 
   ).bind(requirement.id).all();
   return json({ ok: true, requirement: { ...requirement, messages } });
 }
-
+__name(handleRequirementResource, "handleRequirementResource");
 function releaseResponse(release, assets = []) {
   return {
     id: release.id,
@@ -1122,15 +1053,14 @@ function releaseResponse(release, assets = []) {
     release_notes: release.release_notes,
     published_at: release.published_at,
     product: { id: release.product_id, code: release.product_code, name: release.product_name },
-    assets,
+    assets
   };
 }
-
+__name(releaseResponse, "releaseResponse");
 async function handleReleases(request, env, releaseId = null) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
-  if (!(await hasPermission(env, session, "release.view"))) return json({ ok: false, error: "Release access required" }, 403);
-
+  if (!await hasPermission(env, session, "release.view")) return json({ ok: false, error: "Release access required" }, 403);
   const baseQuery = `SELECT DISTINCT r.id, r.product_id, r.version, r.title, r.summary,
            r.release_notes, r.published_at, p.slug AS product_code, p.name AS product_name
     FROM releases r
@@ -1139,17 +1069,14 @@ async function handleReleases(request, env, releaseId = null) {
     JOIN organization_members om ON om.account_type = 'customer'
       AND om.account_id = l.customer_id AND om.organization_id = ? AND om.status = 'active'
     WHERE r.status = 'published' AND r.published_at IS NOT NULL`;
-
   if (releaseId) {
-    const release = await env.DB.prepare(`${baseQuery} AND r.id = ? ORDER BY r.published_at DESC LIMIT 1`)
-      .bind(session.organization_id, releaseId).first();
+    const release = await env.DB.prepare(`${baseQuery} AND r.id = ? ORDER BY r.published_at DESC LIMIT 1`).bind(session.organization_id, releaseId).first();
     if (!release) return json({ ok: false, error: "Release not found" }, 404);
     const { results: assets } = await env.DB.prepare(
       `SELECT id, name, platform, download_url, checksum FROM release_assets WHERE release_id = ? ORDER BY name`
     ).bind(release.id).all();
     return json({ ok: true, release: releaseResponse(release, assets) });
   }
-
   const { results } = await env.DB.prepare(`${baseQuery} ORDER BY r.published_at DESC, r.id DESC`).bind(session.organization_id).all();
   const releases = await Promise.all(results.map(async (release) => {
     const { results: assets } = await env.DB.prepare(
@@ -1159,19 +1086,17 @@ async function handleReleases(request, env, releaseId = null) {
   }));
   return json({ ok: true, releases });
 }
-
+__name(handleReleases, "handleReleases");
 async function handlePartner(request, env, resource) {
   const session = await getPartnerSession(request, env);
   if (!session) return json({ ok: false, error: "Partner access required" }, 403);
-  if (!(await hasPartnerPermission(env, session, "partner.view"))) return json({ ok: false, error: "Partner access required" }, 403);
-
+  if (!await hasPartnerPermission(env, session, "partner.view")) return json({ ok: false, error: "Partner access required" }, 403);
   if (resource === "me") {
     const organization = await env.DB.prepare(
       `SELECT id, name, legal_name, gst_number, status, created_at FROM organizations WHERE id = ?`
     ).bind(session.partner_organization_id).first();
     return json({ ok: true, account_type: session.account_type, user: { id: session.account_id, name: session.name, email: session.email }, partner: { ...organization, partner_role: session.partner_role, partner_type: session.partner_type } });
   }
-
   if (resource === "customers") {
     const { results } = await env.DB.prepare(
       `SELECT o.id, o.name, o.legal_name, o.status, pcl.created_at
@@ -1182,9 +1107,8 @@ async function handlePartner(request, env, resource) {
     ).bind(session.partner_organization_id).all();
     return json({ ok: true, customers: results });
   }
-
   if (resource === "licenses") {
-    if (!(await hasPartnerPermission(env, session, "license.view"))) return json({ ok: false, error: "Partner license access required" }, 403);
+    if (!await hasPartnerPermission(env, session, "license.view")) return json({ ok: false, error: "Partner license access required" }, 403);
     const { results } = await env.DB.prepare(
       `SELECT l.id, l.license_key, l.customer_id, l.product_id, l.status, l.starts_at, l.expires_at,
               om.organization_id, customer_org.name AS customer_organization_name,
@@ -1202,9 +1126,8 @@ async function handlePartner(request, env, resource) {
     ).bind(session.partner_organization_id).all();
     return json({ ok: true, licenses: results.map((license) => ({ ...licenseResponse(license), customer_organization_name: license.customer_organization_name })) });
   }
-
   if (resource === "releases") {
-    if (!(await hasPartnerPermission(env, session, "release.view"))) return json({ ok: false, error: "Partner release access required" }, 403);
+    if (!await hasPartnerPermission(env, session, "release.view")) return json({ ok: false, error: "Partner release access required" }, 403);
     const { results } = await env.DB.prepare(
       `SELECT DISTINCT r.id, r.version, r.title, r.summary, r.release_notes, r.published_at,
               p.slug AS product_code, p.name AS product_name
@@ -1219,64 +1142,48 @@ async function handlePartner(request, env, resource) {
     ).bind(session.partner_organization_id).all();
     return json({ ok: true, releases: results });
   }
-
   return json({ ok: false, error: "Unsupported partner operation" }, 405);
 }
-
+__name(handlePartner, "handlePartner");
 async function handleDemo(request, env) {
   const body = await request.json();
   const { name, email, phone, stores, message } = body;
   if (!name || !email) return json({ ok: false, error: "Name and email are required" }, 400);
-
   await env.DB.prepare(
     `INSERT INTO demo_requests (name, email, phone, stores, message) VALUES (?, ?, ?, ?, ?)`
-  )
-    .bind(name, email, phone || null, stores || null, message || null)
-    .run();
-
+  ).bind(name, email, phone || null, stores || null, message || null).run();
   return json({ ok: true, message: "Demo request received. We will contact you soon." });
 }
-
+__name(handleDemo, "handleDemo");
 async function ensureIdentityForAccount(env, accountType, accountId, email, name, status, company = null, role = null) {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO people (email, name, source_type, source_id, status)
      VALUES (?, ?, ?, ?, ?)`
-  )
-    .bind(email, name || null, accountType, accountId, status || "active")
-    .run();
-
-  const organizationName = accountType === "customer"
-    ? `${company || name || "Customer"} #${accountId}`
-    : "SMRITISYS Internal";
+  ).bind(email, name || null, accountType, accountId, status || "active").run();
+  const organizationName = accountType === "customer" ? `${company || name || "Customer"} #${accountId}` : "SMRITISYS Internal";
   await env.DB.prepare(
     `INSERT INTO organizations (name, legal_name, status)
      SELECT ?, ?, 'active'
      WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE name = ?)`
-  )
-    .bind(organizationName, company || name || organizationName, organizationName)
-    .run();
+  ).bind(organizationName, company || name || organizationName, organizationName).run();
   const organization = await env.DB.prepare("SELECT id FROM organizations WHERE name = ? LIMIT 1").bind(organizationName).first();
   const memberRole = role || (accountType === "customer" ? "customer" : "staff");
   await env.DB.prepare(
     `INSERT OR IGNORE INTO organization_members
      (organization_id, account_type, account_id, member_role, status)
      VALUES (?, ?, ?, ?, ?)`
-  )
-    .bind(organization.id, accountType, accountId, memberRole, status === "inactive" ? "inactive" : "active")
-    .run();
+  ).bind(organization.id, accountType, accountId, memberRole, status === "inactive" ? "inactive" : "active").run();
 }
-
+__name(ensureIdentityForAccount, "ensureIdentityForAccount");
 async function handleSignup(request, env) {
   const body = await request.json();
   const { type, email, password, name, phone, company } = body;
-
   if (!email || !password || !type) {
     return json({ ok: false, error: "type, email and password are required" }, 400);
   }
   if (!["user", "customer"].includes(type)) {
     return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
   }
-
   if (type === "user") {
     const bootstrapToken = request.headers.get("X-Staff-Bootstrap");
     if (!env.STAFF_BOOTSTRAP_TOKEN || bootstrapToken !== env.STAFF_BOOTSTRAP_TOKEN) {
@@ -1287,9 +1194,7 @@ async function handleSignup(request, env) {
        VALUES ('staff_bootstrap_consumed', '0')`
     ).run();
   }
-
   const password_hash = await hashPassword(password);
-
   try {
     if (type === "user") {
       const [claim, result] = await env.DB.batch([
@@ -1300,7 +1205,7 @@ async function handleSignup(request, env) {
         env.DB.prepare(
           `INSERT INTO users (email, password_hash, name, role)
            SELECT ?, ?, ?, ? WHERE changes() = 1`
-        ).bind(email.toLowerCase(), password_hash, name || null, "super_admin"),
+        ).bind(email.toLowerCase(), password_hash, name || null, "super_admin")
       ]);
       if (claim.meta.changes !== 1 || result.meta.changes !== 1) {
         return json({ ok: false, error: "Staff bootstrap has already been consumed" }, 403);
@@ -1309,9 +1214,7 @@ async function handleSignup(request, env) {
     } else {
       const result = await env.DB.prepare(
         `INSERT INTO customers (email, password_hash, name, phone, company) VALUES (?, ?, ?, ?, ?)`
-      )
-        .bind(email.toLowerCase(), password_hash, name || null, phone || null, company || null)
-        .run();
+      ).bind(email.toLowerCase(), password_hash, name || null, phone || null, company || null).run();
       await ensureIdentityForAccount(env, "customer", result.meta.last_row_id, email.toLowerCase(), name, "active", company, "customer");
     }
     return json({ ok: true, message: "Account created successfully" });
@@ -1322,93 +1225,73 @@ async function handleSignup(request, env) {
     return json({ ok: false, error: "Signup failed" }, 500);
   }
 }
-
+__name(handleSignup, "handleSignup");
 async function handleLogin(request, env) {
   const body = await request.json();
   const { type, email, password } = body;
-
   if (!email || !password) {
     return json({ ok: false, error: "email and password are required" }, 400);
   }
   if (type && !["user", "customer"].includes(type)) {
     return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
   }
-
   let row = null;
   let accountType = type;
-
   if (!type || type === "user") {
     row = await env.DB.prepare(
       `SELECT id, email, password_hash, name, role, status FROM users WHERE email = ?`
-    )
-      .bind(email.toLowerCase())
-      .first();
-    if (row && !(await verifyPassword(password, row.password_hash))) row = null;
+    ).bind(email.toLowerCase()).first();
+    if (row && !await verifyPassword(password, row.password_hash)) row = null;
     if (row) accountType = "user";
   }
   if (!row && (!type || type === "customer")) {
     row = await env.DB.prepare(
       `SELECT id, email, password_hash, name, phone, company, status FROM customers WHERE email = ?`
-    )
-      .bind(email.toLowerCase())
-      .first();
-    if (row && !(await verifyPassword(password, row.password_hash))) row = null;
+    ).bind(email.toLowerCase()).first();
+    if (row && !await verifyPassword(password, row.password_hash)) row = null;
     if (row) accountType = "customer";
   }
-
   if (!row) return json({ ok: false, error: "Invalid email or password" }, 401);
   if (row.status !== "active" && row.status !== "trial") {
     return json({ ok: false, error: "Account is not active" }, 403);
   }
-
   if (!row.password_hash.startsWith("pbkdf2-sha256$")) {
     const upgradedHash = await hashPassword(password);
     const table = accountType === "user" ? "users" : "customers";
     await env.DB.prepare(`UPDATE ${table} SET password_hash = ? WHERE id = ?`).bind(upgradedHash, row.id).run();
   }
-
   const token = makeToken();
-  const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
+  const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1e3).toISOString();
   await env.DB.prepare(
     `INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, ?, ?, ?)`
-  )
-    .bind(token, accountType, row.id, expires)
-    .run();
-
+  ).bind(token, accountType, row.id, expires).run();
   const { password_hash: _passwordHash, ...safeRow } = row;
   return json({ ok: true, token, account_type: accountType, user: safeRow });
 }
-
+__name(handleLogin, "handleLogin");
 async function handleMe(request, env) {
   const principal = await getIdentitySession(request, env);
   if (!principal) return json({ ok: false, error: "Invalid or expired session" }, 401);
-
   let account;
   if (principal.account_type === "user") {
     account = await env.DB.prepare(
       `SELECT id, email, name, role, status FROM users WHERE id = ?`
-    )
-      .bind(principal.account_id)
-      .first();
+    ).bind(principal.account_id).first();
   } else {
     account = await env.DB.prepare(
       `SELECT id, email, name, phone, company, status FROM customers WHERE id = ?`
-    )
-      .bind(principal.account_id)
-      .first();
+    ).bind(principal.account_id).first();
   }
-
   const { person_id: _personId, person_status: _personStatus, membership_status: _membershipStatus, organization_status: _organizationStatus, ...identity } = principal;
   return json({ ok: true, account_type: principal.account_type, user: account, identity });
 }
-
+__name(handleMe, "handleMe");
 async function handleLogout(request, env) {
   const token = (request.headers.get("Authorization") || "").replace("Bearer ", "").trim();
   if (token) await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
   return json({ ok: true, message: "Signed out" });
 }
-
+__name(handleLogout, "handleLogout");
 async function handlePasswordChange(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
@@ -1417,36 +1300,32 @@ async function handlePasswordChange(request, env) {
     return json({ ok: false, error: "Current password and a new password of at least 8 characters are required" }, 400);
   }
   const customer = await env.DB.prepare("SELECT password_hash FROM customers WHERE id = ? AND status IN ('active', 'trial')").bind(session.account_id).first();
-  if (!customer || !(await verifyPassword(body.current_password, customer.password_hash))) {
+  if (!customer || !await verifyPassword(body.current_password, customer.password_hash)) {
     return json({ ok: false, error: "Current password is incorrect" }, 403);
   }
   const passwordHash = await hashPassword(body.new_password);
   await env.DB.batch([
     env.DB.prepare("UPDATE customers SET password_hash = ? WHERE id = ?").bind(passwordHash, session.account_id),
-    env.DB.prepare("DELETE FROM sessions WHERE account_type = 'customer' AND account_id = ?").bind(session.account_id),
+    env.DB.prepare("DELETE FROM sessions WHERE account_type = 'customer' AND account_id = ?").bind(session.account_id)
   ]);
   return json({ ok: true, message: "Password changed. Please sign in again." });
 }
-
+__name(handlePasswordChange, "handlePasswordChange");
 async function handleListDemos(request, env) {
   const session = await requireSuperAdmin(request, env);
   if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
-
   const { results } = await env.DB.prepare(
     `SELECT id, name, email, phone, stores, status, created_at FROM demo_requests ORDER BY created_at DESC LIMIT 100`
   ).all();
-
   return json({ ok: true, demos: results });
 }
-
-export async function onRequest(context) {
+__name(handleListDemos, "handleListDemos");
+async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/?/, "").replace(/\/$/, "") || "";
   const origin = isTrustedOrigin(request, env);
-
   if (request.method === "OPTIONS") return cors(origin);
-
   try {
     if (path === "demo" && request.method === "POST") return await handleDemo(request, env);
     if (path === "signup" && request.method === "POST") return await handleSignup(request, env);
@@ -1519,5 +1398,644 @@ export async function onRequest(context) {
     return json({ ok: false, error: "Server error" }, 500);
   }
 }
+__name(onRequest, "onRequest");
 
-export { LICENSE_TRANSITIONS, licenseValidity };
+// ../.wrangler/tmp/pages-bnu8Df/functionsRoutes-0.24872666981526892.mjs
+var routes = [
+  {
+    routePath: "/api/:path*",
+    mountPath: "/api",
+    method: "",
+    middlewares: [],
+    modules: [onRequest]
+  }
+];
+
+// C:/Users/netma/AppData/Local/npm-cache/_npx/32026684e21afda6/node_modules/path-to-regexp/dist.es2015/index.js
+function lexer(str) {
+  var tokens = [];
+  var i = 0;
+  while (i < str.length) {
+    var char = str[i];
+    if (char === "*" || char === "+" || char === "?") {
+      tokens.push({ type: "MODIFIER", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === "\\") {
+      tokens.push({ type: "ESCAPED_CHAR", index: i++, value: str[i++] });
+      continue;
+    }
+    if (char === "{") {
+      tokens.push({ type: "OPEN", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === "}") {
+      tokens.push({ type: "CLOSE", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === ":") {
+      var name = "";
+      var j = i + 1;
+      while (j < str.length) {
+        var code = str.charCodeAt(j);
+        if (
+          // `0-9`
+          code >= 48 && code <= 57 || // `A-Z`
+          code >= 65 && code <= 90 || // `a-z`
+          code >= 97 && code <= 122 || // `_`
+          code === 95
+        ) {
+          name += str[j++];
+          continue;
+        }
+        break;
+      }
+      if (!name)
+        throw new TypeError("Missing parameter name at ".concat(i));
+      tokens.push({ type: "NAME", index: i, value: name });
+      i = j;
+      continue;
+    }
+    if (char === "(") {
+      var count = 1;
+      var pattern = "";
+      var j = i + 1;
+      if (str[j] === "?") {
+        throw new TypeError('Pattern cannot start with "?" at '.concat(j));
+      }
+      while (j < str.length) {
+        if (str[j] === "\\") {
+          pattern += str[j++] + str[j++];
+          continue;
+        }
+        if (str[j] === ")") {
+          count--;
+          if (count === 0) {
+            j++;
+            break;
+          }
+        } else if (str[j] === "(") {
+          count++;
+          if (str[j + 1] !== "?") {
+            throw new TypeError("Capturing groups are not allowed at ".concat(j));
+          }
+        }
+        pattern += str[j++];
+      }
+      if (count)
+        throw new TypeError("Unbalanced pattern at ".concat(i));
+      if (!pattern)
+        throw new TypeError("Missing pattern at ".concat(i));
+      tokens.push({ type: "PATTERN", index: i, value: pattern });
+      i = j;
+      continue;
+    }
+    tokens.push({ type: "CHAR", index: i, value: str[i++] });
+  }
+  tokens.push({ type: "END", index: i, value: "" });
+  return tokens;
+}
+__name(lexer, "lexer");
+function parse(str, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var tokens = lexer(str);
+  var _a = options.prefixes, prefixes = _a === void 0 ? "./" : _a, _b = options.delimiter, delimiter = _b === void 0 ? "/#?" : _b;
+  var result = [];
+  var key = 0;
+  var i = 0;
+  var path = "";
+  var tryConsume = /* @__PURE__ */ __name(function(type) {
+    if (i < tokens.length && tokens[i].type === type)
+      return tokens[i++].value;
+  }, "tryConsume");
+  var mustConsume = /* @__PURE__ */ __name(function(type) {
+    var value2 = tryConsume(type);
+    if (value2 !== void 0)
+      return value2;
+    var _a2 = tokens[i], nextType = _a2.type, index = _a2.index;
+    throw new TypeError("Unexpected ".concat(nextType, " at ").concat(index, ", expected ").concat(type));
+  }, "mustConsume");
+  var consumeText = /* @__PURE__ */ __name(function() {
+    var result2 = "";
+    var value2;
+    while (value2 = tryConsume("CHAR") || tryConsume("ESCAPED_CHAR")) {
+      result2 += value2;
+    }
+    return result2;
+  }, "consumeText");
+  var isSafe = /* @__PURE__ */ __name(function(value2) {
+    for (var _i = 0, delimiter_1 = delimiter; _i < delimiter_1.length; _i++) {
+      var char2 = delimiter_1[_i];
+      if (value2.indexOf(char2) > -1)
+        return true;
+    }
+    return false;
+  }, "isSafe");
+  var safePattern = /* @__PURE__ */ __name(function(prefix2) {
+    var prev = result[result.length - 1];
+    var prevText = prefix2 || (prev && typeof prev === "string" ? prev : "");
+    if (prev && !prevText) {
+      throw new TypeError('Must have text between two parameters, missing text after "'.concat(prev.name, '"'));
+    }
+    if (!prevText || isSafe(prevText))
+      return "[^".concat(escapeString(delimiter), "]+?");
+    return "(?:(?!".concat(escapeString(prevText), ")[^").concat(escapeString(delimiter), "])+?");
+  }, "safePattern");
+  while (i < tokens.length) {
+    var char = tryConsume("CHAR");
+    var name = tryConsume("NAME");
+    var pattern = tryConsume("PATTERN");
+    if (name || pattern) {
+      var prefix = char || "";
+      if (prefixes.indexOf(prefix) === -1) {
+        path += prefix;
+        prefix = "";
+      }
+      if (path) {
+        result.push(path);
+        path = "";
+      }
+      result.push({
+        name: name || key++,
+        prefix,
+        suffix: "",
+        pattern: pattern || safePattern(prefix),
+        modifier: tryConsume("MODIFIER") || ""
+      });
+      continue;
+    }
+    var value = char || tryConsume("ESCAPED_CHAR");
+    if (value) {
+      path += value;
+      continue;
+    }
+    if (path) {
+      result.push(path);
+      path = "";
+    }
+    var open = tryConsume("OPEN");
+    if (open) {
+      var prefix = consumeText();
+      var name_1 = tryConsume("NAME") || "";
+      var pattern_1 = tryConsume("PATTERN") || "";
+      var suffix = consumeText();
+      mustConsume("CLOSE");
+      result.push({
+        name: name_1 || (pattern_1 ? key++ : ""),
+        pattern: name_1 && !pattern_1 ? safePattern(prefix) : pattern_1,
+        prefix,
+        suffix,
+        modifier: tryConsume("MODIFIER") || ""
+      });
+      continue;
+    }
+    mustConsume("END");
+  }
+  return result;
+}
+__name(parse, "parse");
+function match(str, options) {
+  var keys = [];
+  var re = pathToRegexp(str, keys, options);
+  return regexpToFunction(re, keys, options);
+}
+__name(match, "match");
+function regexpToFunction(re, keys, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _a = options.decode, decode = _a === void 0 ? function(x) {
+    return x;
+  } : _a;
+  return function(pathname) {
+    var m = re.exec(pathname);
+    if (!m)
+      return false;
+    var path = m[0], index = m.index;
+    var params = /* @__PURE__ */ Object.create(null);
+    var _loop_1 = /* @__PURE__ */ __name(function(i2) {
+      if (m[i2] === void 0)
+        return "continue";
+      var key = keys[i2 - 1];
+      if (key.modifier === "*" || key.modifier === "+") {
+        params[key.name] = m[i2].split(key.prefix + key.suffix).map(function(value) {
+          return decode(value, key);
+        });
+      } else {
+        params[key.name] = decode(m[i2], key);
+      }
+    }, "_loop_1");
+    for (var i = 1; i < m.length; i++) {
+      _loop_1(i);
+    }
+    return { path, index, params };
+  };
+}
+__name(regexpToFunction, "regexpToFunction");
+function escapeString(str) {
+  return str.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
+}
+__name(escapeString, "escapeString");
+function flags(options) {
+  return options && options.sensitive ? "" : "i";
+}
+__name(flags, "flags");
+function regexpToRegexp(path, keys) {
+  if (!keys)
+    return path;
+  var groupsRegex = /\((?:\?<(.*?)>)?(?!\?)/g;
+  var index = 0;
+  var execResult = groupsRegex.exec(path.source);
+  while (execResult) {
+    keys.push({
+      // Use parenthesized substring match if available, index otherwise
+      name: execResult[1] || index++,
+      prefix: "",
+      suffix: "",
+      modifier: "",
+      pattern: ""
+    });
+    execResult = groupsRegex.exec(path.source);
+  }
+  return path;
+}
+__name(regexpToRegexp, "regexpToRegexp");
+function arrayToRegexp(paths, keys, options) {
+  var parts = paths.map(function(path) {
+    return pathToRegexp(path, keys, options).source;
+  });
+  return new RegExp("(?:".concat(parts.join("|"), ")"), flags(options));
+}
+__name(arrayToRegexp, "arrayToRegexp");
+function stringToRegexp(path, keys, options) {
+  return tokensToRegexp(parse(path, options), keys, options);
+}
+__name(stringToRegexp, "stringToRegexp");
+function tokensToRegexp(tokens, keys, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _a = options.strict, strict = _a === void 0 ? false : _a, _b = options.start, start = _b === void 0 ? true : _b, _c = options.end, end = _c === void 0 ? true : _c, _d = options.encode, encode = _d === void 0 ? function(x) {
+    return x;
+  } : _d, _e = options.delimiter, delimiter = _e === void 0 ? "/#?" : _e, _f = options.endsWith, endsWith = _f === void 0 ? "" : _f;
+  var endsWithRe = "[".concat(escapeString(endsWith), "]|$");
+  var delimiterRe = "[".concat(escapeString(delimiter), "]");
+  var route = start ? "^" : "";
+  for (var _i = 0, tokens_1 = tokens; _i < tokens_1.length; _i++) {
+    var token = tokens_1[_i];
+    if (typeof token === "string") {
+      route += escapeString(encode(token));
+    } else {
+      var prefix = escapeString(encode(token.prefix));
+      var suffix = escapeString(encode(token.suffix));
+      if (token.pattern) {
+        if (keys)
+          keys.push(token);
+        if (prefix || suffix) {
+          if (token.modifier === "+" || token.modifier === "*") {
+            var mod = token.modifier === "*" ? "?" : "";
+            route += "(?:".concat(prefix, "((?:").concat(token.pattern, ")(?:").concat(suffix).concat(prefix, "(?:").concat(token.pattern, "))*)").concat(suffix, ")").concat(mod);
+          } else {
+            route += "(?:".concat(prefix, "(").concat(token.pattern, ")").concat(suffix, ")").concat(token.modifier);
+          }
+        } else {
+          if (token.modifier === "+" || token.modifier === "*") {
+            throw new TypeError('Can not repeat "'.concat(token.name, '" without a prefix and suffix'));
+          }
+          route += "(".concat(token.pattern, ")").concat(token.modifier);
+        }
+      } else {
+        route += "(?:".concat(prefix).concat(suffix, ")").concat(token.modifier);
+      }
+    }
+  }
+  if (end) {
+    if (!strict)
+      route += "".concat(delimiterRe, "?");
+    route += !options.endsWith ? "$" : "(?=".concat(endsWithRe, ")");
+  } else {
+    var endToken = tokens[tokens.length - 1];
+    var isEndDelimited = typeof endToken === "string" ? delimiterRe.indexOf(endToken[endToken.length - 1]) > -1 : endToken === void 0;
+    if (!strict) {
+      route += "(?:".concat(delimiterRe, "(?=").concat(endsWithRe, "))?");
+    }
+    if (!isEndDelimited) {
+      route += "(?=".concat(delimiterRe, "|").concat(endsWithRe, ")");
+    }
+  }
+  return new RegExp(route, flags(options));
+}
+__name(tokensToRegexp, "tokensToRegexp");
+function pathToRegexp(path, keys, options) {
+  if (path instanceof RegExp)
+    return regexpToRegexp(path, keys);
+  if (Array.isArray(path))
+    return arrayToRegexp(path, keys, options);
+  return stringToRegexp(path, keys, options);
+}
+__name(pathToRegexp, "pathToRegexp");
+
+// C:/Users/netma/AppData/Local/npm-cache/_npx/32026684e21afda6/node_modules/wrangler/templates/pages-template-worker.ts
+var escapeRegex = /[.+?^${}()|[\]\\]/g;
+function* executeRequest(request) {
+  const requestPath = new URL(request.url).pathname;
+  for (const route of [...routes].reverse()) {
+    if (route.method && route.method !== request.method) {
+      continue;
+    }
+    const routeMatcher = match(route.routePath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const mountMatcher = match(route.mountPath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const matchResult = routeMatcher(requestPath);
+    const mountMatchResult = mountMatcher(requestPath);
+    if (matchResult && mountMatchResult) {
+      for (const handler of route.middlewares.flat()) {
+        yield {
+          handler,
+          params: matchResult.params,
+          path: mountMatchResult.path
+        };
+      }
+    }
+  }
+  for (const route of routes) {
+    if (route.method && route.method !== request.method) {
+      continue;
+    }
+    const routeMatcher = match(route.routePath.replace(escapeRegex, "\\$&"), {
+      end: true
+    });
+    const mountMatcher = match(route.mountPath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const matchResult = routeMatcher(requestPath);
+    const mountMatchResult = mountMatcher(requestPath);
+    if (matchResult && mountMatchResult && route.modules.length) {
+      for (const handler of route.modules.flat()) {
+        yield {
+          handler,
+          params: matchResult.params,
+          path: matchResult.path
+        };
+      }
+      break;
+    }
+  }
+}
+__name(executeRequest, "executeRequest");
+var pages_template_worker_default = {
+  async fetch(originalRequest, env, workerContext) {
+    let request = originalRequest;
+    const handlerIterator = executeRequest(request);
+    let data = {};
+    let isFailOpen = false;
+    const next = /* @__PURE__ */ __name(async (input, init) => {
+      if (input !== void 0) {
+        let url = input;
+        if (typeof input === "string") {
+          url = new URL(input, request.url).toString();
+        }
+        request = new Request(url, init);
+      }
+      const result = handlerIterator.next();
+      if (result.done === false) {
+        const { handler, params, path } = result.value;
+        const context = {
+          request: new Request(request.clone()),
+          functionPath: path,
+          next,
+          params,
+          get data() {
+            return data;
+          },
+          set data(value) {
+            if (typeof value !== "object" || value === null) {
+              throw new Error("context.data must be an object");
+            }
+            data = value;
+          },
+          env,
+          waitUntil: workerContext.waitUntil.bind(workerContext),
+          passThroughOnException: /* @__PURE__ */ __name(() => {
+            isFailOpen = true;
+          }, "passThroughOnException")
+        };
+        const response = await handler(context);
+        if (!(response instanceof Response)) {
+          throw new Error("Your Pages function should return a Response");
+        }
+        return cloneResponse(response);
+      } else if ("ASSETS") {
+        const response = await env["ASSETS"].fetch(request);
+        return cloneResponse(response);
+      } else {
+        const response = await fetch(request);
+        return cloneResponse(response);
+      }
+    }, "next");
+    try {
+      return await next();
+    } catch (error) {
+      if (isFailOpen) {
+        const response = await env["ASSETS"].fetch(request);
+        return cloneResponse(response);
+      }
+      throw error;
+    }
+  }
+};
+var cloneResponse = /* @__PURE__ */ __name((response) => (
+  // https://fetch.spec.whatwg.org/#null-body-status
+  new Response(
+    [101, 204, 205, 304].includes(response.status) ? null : response.body,
+    response
+  )
+), "cloneResponse");
+
+// C:/Users/netma/AppData/Local/npm-cache/_npx/32026684e21afda6/node_modules/wrangler/templates/middleware/middleware-ensure-req-body-drained.ts
+var drainBody = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx) => {
+  try {
+    return await middlewareCtx.next(request, env);
+  } finally {
+    try {
+      if (request.body !== null && !request.bodyUsed) {
+        const reader = request.body.getReader();
+        while (!(await reader.read()).done) {
+        }
+      }
+    } catch (e) {
+      console.error("Failed to drain the unused request body.", e);
+    }
+  }
+}, "drainBody");
+var middleware_ensure_req_body_drained_default = drainBody;
+
+// C:/Users/netma/AppData/Local/npm-cache/_npx/32026684e21afda6/node_modules/wrangler/templates/middleware/middleware-miniflare3-json-error.ts
+function reduceError(e) {
+  return {
+    name: e?.name,
+    message: e?.message ?? String(e),
+    stack: e?.stack,
+    cause: e?.cause === void 0 ? void 0 : reduceError(e.cause)
+  };
+}
+__name(reduceError, "reduceError");
+var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx) => {
+  try {
+    return await middlewareCtx.next(request, env);
+  } catch (e) {
+    const error = reduceError(e);
+    const body = JSON.stringify(error);
+    const headers = {
+      "Content-Type": "application/json",
+      "MF-Experimental-Error-Stack": "true"
+    };
+    const encoded = encodeURIComponent(body);
+    if (encoded.length <= 8192) {
+      headers["MF-Experimental-Error-Stack-Payload"] = encoded;
+    }
+    return new Response(body, { status: 500, headers });
+  }
+}, "jsonError");
+var middleware_miniflare3_json_error_default = jsonError;
+
+// ../.wrangler/tmp/bundle-b8KGbB/middleware-insertion-facade.js
+var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
+  middleware_ensure_req_body_drained_default,
+  middleware_miniflare3_json_error_default
+];
+var middleware_insertion_facade_default = pages_template_worker_default;
+
+// C:/Users/netma/AppData/Local/npm-cache/_npx/32026684e21afda6/node_modules/wrangler/templates/middleware/common.ts
+var __facade_middleware__ = [];
+function __facade_register__(...args) {
+  __facade_middleware__.push(...args.flat());
+}
+__name(__facade_register__, "__facade_register__");
+function __facade_invokeChain__(request, env, ctx, dispatch, middlewareChain) {
+  const [head, ...tail] = middlewareChain;
+  const middlewareCtx = {
+    dispatch,
+    next(newRequest, newEnv) {
+      return __facade_invokeChain__(newRequest, newEnv, ctx, dispatch, tail);
+    }
+  };
+  return head(request, env, ctx, middlewareCtx);
+}
+__name(__facade_invokeChain__, "__facade_invokeChain__");
+function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
+  return __facade_invokeChain__(request, env, ctx, dispatch, [
+    ...__facade_middleware__,
+    finalMiddleware
+  ]);
+}
+__name(__facade_invoke__, "__facade_invoke__");
+
+// ../.wrangler/tmp/bundle-b8KGbB/middleware-loader.entry.ts
+var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
+  constructor(scheduledTime, cron, noRetry) {
+    this.scheduledTime = scheduledTime;
+    this.cron = cron;
+    this.#noRetry = noRetry;
+  }
+  scheduledTime;
+  cron;
+  static {
+    __name(this, "__Facade_ScheduledController__");
+  }
+  #noRetry;
+  noRetry() {
+    if (!(this instanceof ___Facade_ScheduledController__)) {
+      throw new TypeError("Illegal invocation");
+    }
+    this.#noRetry();
+  }
+};
+function wrapExportedHandler(worker) {
+  if (__INTERNAL_WRANGLER_MIDDLEWARE__ === void 0 || __INTERNAL_WRANGLER_MIDDLEWARE__.length === 0) {
+    return worker;
+  }
+  for (const middleware of __INTERNAL_WRANGLER_MIDDLEWARE__) {
+    __facade_register__(middleware);
+  }
+  const fetchDispatcher = /* @__PURE__ */ __name(function(request, env, ctx) {
+    if (worker.fetch === void 0) {
+      throw new Error("Handler does not export a fetch() function.");
+    }
+    return worker.fetch(request, env, ctx);
+  }, "fetchDispatcher");
+  return {
+    ...worker,
+    fetch(request, env, ctx) {
+      const dispatcher = /* @__PURE__ */ __name(function(type, init) {
+        if (type === "scheduled" && worker.scheduled !== void 0) {
+          const controller = new __Facade_ScheduledController__(
+            Date.now(),
+            init.cron ?? "",
+            () => {
+            }
+          );
+          return worker.scheduled(controller, env, ctx);
+        }
+      }, "dispatcher");
+      return __facade_invoke__(request, env, ctx, dispatcher, fetchDispatcher);
+    }
+  };
+}
+__name(wrapExportedHandler, "wrapExportedHandler");
+function wrapWorkerEntrypoint(klass) {
+  if (__INTERNAL_WRANGLER_MIDDLEWARE__ === void 0 || __INTERNAL_WRANGLER_MIDDLEWARE__.length === 0) {
+    return klass;
+  }
+  for (const middleware of __INTERNAL_WRANGLER_MIDDLEWARE__) {
+    __facade_register__(middleware);
+  }
+  return class extends klass {
+    #fetchDispatcher = /* @__PURE__ */ __name((request, env, ctx) => {
+      this.env = env;
+      this.ctx = ctx;
+      if (super.fetch === void 0) {
+        throw new Error("Entrypoint class does not define a fetch() function.");
+      }
+      return super.fetch(request);
+    }, "#fetchDispatcher");
+    #dispatcher = /* @__PURE__ */ __name((type, init) => {
+      if (type === "scheduled" && super.scheduled !== void 0) {
+        const controller = new __Facade_ScheduledController__(
+          Date.now(),
+          init.cron ?? "",
+          () => {
+          }
+        );
+        return super.scheduled(controller);
+      }
+    }, "#dispatcher");
+    fetch(request) {
+      return __facade_invoke__(
+        request,
+        this.env,
+        this.ctx,
+        this.#dispatcher,
+        this.#fetchDispatcher
+      );
+    }
+  };
+}
+__name(wrapWorkerEntrypoint, "wrapWorkerEntrypoint");
+var WRAPPED_ENTRY;
+if (typeof middleware_insertion_facade_default === "object") {
+  WRAPPED_ENTRY = wrapExportedHandler(middleware_insertion_facade_default);
+} else if (typeof middleware_insertion_facade_default === "function") {
+  WRAPPED_ENTRY = wrapWorkerEntrypoint(middleware_insertion_facade_default);
+}
+var middleware_loader_entry_default = WRAPPED_ENTRY;
+export {
+  __INTERNAL_WRANGLER_MIDDLEWARE__,
+  middleware_loader_entry_default as default
+};
+//# sourceMappingURL=functionsWorker-0.6867538345353967.mjs.map

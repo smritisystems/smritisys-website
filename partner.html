@@ -4,39 +4,48 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Partner Portal | SMRITISYS</title>
-  <meta name="description" content="SMRITISYS partner portal for customers, opportunities, licenses and commissions." />
+  <meta name="description" content="Authenticated SMRITISYS partner workspace." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/portal.css" />
   <style>
-    .partner-shell { min-height:100vh; background:var(--paper); }
-    .partner-header { background:#134e4a; color:#d4faf4; padding:1.5rem clamp(1rem,5vw,5rem); display:flex; justify-content:space-between; align-items:center; gap:1rem; }
-    .partner-header h1 { color:#fff; margin:.3rem 0 0; font:700 clamp(1.5rem,3vw,2.4rem) 'Space Grotesk',sans-serif; }
-    .partner-main { max-width:1200px; margin:auto; padding:clamp(1rem,5vw,4rem); }
-    .partner-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
-    .partner-action { min-height:150px; display:flex; flex-direction:column; justify-content:space-between; }
-    .partner-action h2 { font-size:1.1rem; margin:.4rem 0; }
-    .partner-action p { color:var(--muted); margin:0; line-height:1.5; font-size:.9rem; }
-    @media (max-width:700px) { .partner-header { align-items:flex-start; flex-direction:column; } .partner-grid { grid-template-columns:1fr; } }
+    .partner-shell { min-height:100vh; display:grid; grid-template-columns:245px 1fr; background:var(--paper); }
+    .partner-aside { background:#134e4a; color:#d4faf4; padding:1.5rem 1rem; display:flex; flex-direction:column; }
+    .partner-aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
+    .partner-nav { display:grid; gap:.25rem; }
+    .partner-nav button { text-align:left; border:0; color:#a7e4dc; background:transparent; padding:.75rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .partner-nav button:hover,.partner-nav button.active { color:#fff; background:#ffffff18; }
+    .partner-logout { margin-top:auto; border:1px solid #5eead433; color:#a7e4dc; background:transparent; padding:.7rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .partner-main { min-width:0; }
+    .partner-content { max-width:1440px; padding:clamp(1.2rem,4vw,3rem); }
+    .partner-grid { display:grid; gap:1rem; grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .partner-card { min-height:150px; display:flex; flex-direction:column; justify-content:space-between; }
+    .partner-card h3 { margin:.3rem 0 .45rem; }
+    .partner-card p { margin:0; color:var(--muted); line-height:1.5; }
+    .partner-table { width:100%; border-collapse:collapse; }
+    .partner-table th,.partner-table td { text-align:left; padding:.8rem .5rem; border-bottom:1px solid var(--line); }
+    .partner-table th { color:var(--muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; }
+    @media (max-width:850px) { .partner-shell { grid-template-columns:1fr; } .partner-aside { padding:.8rem; } .partner-aside .brand { padding:.5rem .75rem 1rem; } .partner-nav { display:flex; overflow:auto; } .partner-nav button { white-space:nowrap; } .partner-logout { margin-top:.7rem; } }
+    @media (max-width:560px) { .partner-content { padding:1rem; } .partner-grid { grid-template-columns:1fr; } .partner-table { display:block; overflow-x:auto; white-space:nowrap; } }
   </style>
 </head>
 <body>
-  <div class="partner-shell">
-    <header class="partner-header"><div><div class="brand">SMRITISYS / PARTNER PORTAL</div><h1>Build the channel with confidence.</h1></div><a class="primary" href="portal.html">Customer Portal</a></header>
-    <main class="partner-main">
-      <span class="eyebrow">Channel ecosystem</span>
-      <h2>One partner workspace, policy-driven access.</h2>
-      <p class="muted">Manage the commercial relationship around SMRITI Retail OS. Operational customer data remains in the customer's product application.</p>
-      <div class="partner-grid" style="margin-top:2rem">
-        <article class="card partner-action"><div><span class="eyebrow">Pipeline</span><h2>Customers &amp; leads</h2><p>Register customers, capture leads and track opportunities.</p></div><button class="primary">Register customer</button></article>
-        <article class="card partner-action"><div><span class="eyebrow">Commercial</span><h2>Licenses &amp; renewals</h2><p>Request licenses, monitor renewals and manage customer entitlements.</p></div><button class="primary">View licenses</button></article>
-        <article class="card partner-action"><div><span class="eyebrow">Earnings</span><h2>Commissions</h2><p>See pending commissions, payout history and partner tier benefits.</p></div><button class="primary">View commissions</button></article>
-        <article class="card partner-action"><div><span class="eyebrow">Enablement</span><h2>Resources &amp; training</h2><p>Access product resources, release notes and training paths.</p></div><button class="primary">Open resources</button></article>
-        <article class="card partner-action"><div><span class="eyebrow">Service</span><h2>Partner support</h2><p>Raise channel requests and coordinate customer escalations.</p></div><button class="primary">Contact support</button></article>
-        <article class="card partner-action"><div><span class="eyebrow">Identity</span><h2>Partner profile</h2><p>Manage your organization, partner type and authorized contacts.</p></div><button class="primary">Manage profile</button></article>
-      </div>
-    </main>
-  </div>
+  <section id="partnerLoginView" class="login-shell">
+    <div class="login-art"><div class="brand">SMRITISYS / PARTNER PORTAL</div><h1>Build the channel with confidence.</h1><p>See your partner relationship, linked customers, licenses and product releases in one workspace.</p></div>
+    <div class="login-panel"><form id="partnerLoginForm" class="login-box"><span class="eyebrow">Partner access</span><h2>Welcome back</h2><p class="muted">Sign in with your authorized SMRITISYS account.</p><label for="partnerEmail">Email address</label><input id="partnerEmail" name="email" type="email" autocomplete="email" required /><label for="partnerPassword">Password</label><input id="partnerPassword" name="password" type="password" autocomplete="current-password" required /><button class="primary" type="submit">Sign in</button><p id="partnerLoginMessage" class="message" role="alert"></p></form></div>
+  </section>
+  <section id="partnerPortalView" class="partner-shell hidden">
+    <aside class="partner-aside"><span class="brand">SMRITISYS</span><nav class="partner-nav" aria-label="Partner sections"><button class="active" data-partner-view="overview">Home</button><button data-partner-view="organization">Partner organization</button><button data-partner-view="customers">Linked customers</button><button data-partner-view="licenses">Customer licenses</button><button data-partner-view="releases">Product releases</button></nav><button id="partnerLogout" class="partner-logout">Sign out</button></aside>
+    <main class="partner-main"><header class="topbar"><h1 id="partnerPageTitle">Overview</h1><div class="user-chip"><span id="partnerUserName">Partner</span><span id="partnerAvatar" class="avatar">P</span></div></header><div class="partner-content">
+      <div id="partnerError" class="state-panel hidden" role="alert"></div>
+      <section class="partner-view active" data-partner-section="overview"><div class="welcome"><div><span class="eyebrow">Partner workspace</span><h2>Welcome, <span id="partnerWelcomeName">there</span>.</h2><p class="muted">Your authorized channel relationship at a glance.</p></div></div><div class="partner-grid"><article class="card partner-card"><span class="eyebrow">Partner organization</span><h3 id="partnerOrganizationName">Loading...</h3><p id="partnerType">Loading partner profile...</p></article><article class="card partner-card"><span class="eyebrow">Linked customers</span><strong class="stat-value" id="partnerCustomerCount">—</strong><p>Customer organizations linked to your partner relationship.</p></article><article class="card partner-card"><span class="eyebrow">Customer licenses</span><strong class="stat-value" id="partnerLicenseCount">—</strong><p>Read-only license visibility for linked customers.</p></article><article class="card partner-card"><span class="eyebrow">Product releases</span><strong class="stat-value" id="partnerReleaseCount">—</strong><p>Published releases for linked customer products.</p></article></div></section>
+      <section class="partner-view" data-partner-section="organization"><div class="section-head"><div><span class="eyebrow">Identity</span><h2>Partner organization</h2></div></div><div id="partnerOrganizationDetails" class="card state-panel">Loading organization...</div></section>
+      <section class="partner-view" data-partner-section="customers"><div class="section-head"><div><span class="eyebrow">Relationship</span><h2>Linked customers</h2></div><button class="secondary partner-refresh" data-refresh="customers" type="button">Refresh</button></div><div id="partnerCustomerState" class="state-panel">Loading customers...</div><div id="partnerCustomerList" class="card hidden"></div></section>
+      <section class="partner-view" data-partner-section="licenses"><div class="section-head"><div><span class="eyebrow">Read-only visibility</span><h2>Customer licenses</h2></div><button class="secondary partner-refresh" data-refresh="licenses" type="button">Refresh</button></div><div id="partnerLicenseState" class="state-panel">Loading licenses...</div><div id="partnerLicenseList" class="card hidden"></div></section>
+      <section class="partner-view" data-partner-section="releases"><div class="section-head"><div><span class="eyebrow">Enablement</span><h2>Product releases</h2></div><button class="secondary partner-refresh" data-refresh="releases" type="button">Refresh</button></div><div id="partnerReleaseState" class="state-panel">Loading releases...</div><div id="partnerReleaseList" class="grid modules"></div></section>
+    </div></main>
+  </section>
+  <script src="js/partner.js" defer></script>
 </body>
 </html>

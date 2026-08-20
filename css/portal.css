@@ -53,6 +53,8 @@ main { min-width:0; }
 .text-button { border:0; padding:0; color:var(--turquoise); background:transparent; font-weight:700; text-align:left; }
 .view { display:none; }
 .view.active { display:block; }
+.partner-view { display:none; }
+.partner-view.active { display:block; }
 .section-head { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin-bottom:1rem; }
 .section-head h2 { margin:.3rem 0 0; font-size:1.8rem; }
 .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 1rem; }
@@ -61,6 +63,15 @@ main { min-width:0; }
 .ticket:first-child { border-top:0; }
 .ticket h3 { margin:0 0 .3rem; font-size:1rem; }
 .ticket p { margin:0; color:var(--muted); font-size:.85rem; }
+.support-layout { display:grid; grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr); gap:1rem; }
+.ticket-button { width:100%; text-align:left; align-items:flex-start; background:transparent; border:0; color:var(--ink); }
+.ticket-button:hover,.ticket-button:focus-visible { background:#f0fbfa; }
+.ticket-button strong,.ticket-button small { display:block; }
+.ticket-button small { color:var(--muted); margin-top:.35rem; line-height:1.45; }
+.ticket-messages { border-top:1px solid var(--line); margin-top:1rem; }
+.ticket-message { border-bottom:1px solid var(--line); padding:.85rem 0; }
+.ticket-message p { margin:.3rem 0 0; color:var(--muted); white-space:pre-wrap; }
+.ticket-reply { margin-top:1rem; }
 .admin-user { display:grid; grid-template-columns:1.3fr 1fr 130px 120px; gap:1rem; align-items:center; border-top:1px solid var(--line); padding:1rem 0; }
 .admin-user:first-child { border-top:0; }
 .admin-user strong { display:block; }
@@ -71,5 +82,43 @@ main { min-width:0; }
 .roadmap-item { padding:.9rem; background:#f0fbfa; border-left:3px solid var(--turquoise); }
 .roadmap-item strong { display:block; font-size:.9rem; }
 .roadmap-item span { color:var(--muted); font-size:.8rem; }
+.secondary { border:1px solid var(--line); color:var(--turquoise); background:var(--white); padding:.68rem .9rem; font-weight:700; border-radius:4px; }
+.secondary:hover { border-color:var(--turquoise); background:var(--mint); }
+.state-panel { border:1px dashed var(--line); background:#fbfefd; color:var(--muted); padding:1.2rem; border-radius:6px; }
+.state-panel h3 { color:var(--ink); margin:.1rem 0 .35rem; }
+.error-state { border-color:#e9b1a8; color:var(--red); background:#fff8f6; }
+.stat-value-small { font-size:1.25rem; overflow-wrap:anywhere; }
+.dashboard-head { margin-top:2rem; }
+.compact { margin-bottom:.5rem; }
+.member-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; border-top:1px solid var(--line); padding:1rem 0; }
+.member-row:first-child { border-top:0; }
+.member-row strong,.member-row small { display:block; }
+.member-row small { color:var(--muted); margin-top:.2rem; }
+.license-list { display:grid; gap:1rem; }
+.license-card { padding:1.5rem; }
+.license-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+.license-card h3 { margin:.3rem 0; font-size:1.35rem; }
+.license-card p { margin:.3rem 0; }
+.license-message { color:var(--ink); font-weight:700; }
+.license-meta { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin:1.2rem 0; padding:1rem 0; }
+.license-meta span,.license-meta strong { display:block; }
+.license-meta span { color:var(--muted); font-size:.78rem; }
+.license-meta strong { margin-top:.25rem; font-family:'Space Grotesk',sans-serif; }
+.entitlement-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.6rem; margin:.8rem 0 0; }
+.entitlement-list div { background:#f0fbfa; padding:.7rem; }
+.entitlement-list dt { color:var(--muted); font-size:.78rem; text-transform:capitalize; }
+.entitlement-list dd { margin:.25rem 0 0; font-weight:700; overflow-wrap:anywhere; }
+.request-note { border-left:3px solid var(--amber); padding-left:.7rem; margin-top:1.2rem !important; }
+.release-card { display:grid; gap:1rem; }
+.release-card p { margin:0; color:var(--muted); line-height:1.5; }
+.release-notes { border-top:1px solid var(--line); padding-top:1rem; }
+.release-notes p { white-space:pre-wrap; margin-top:.45rem; }
+.release-assets { display:flex; flex-wrap:wrap; align-items:center; gap:.55rem; border-top:1px solid var(--line); padding-top:1rem; }
+.release-assets .eyebrow { width:100%; }
+.release-assets a { text-decoration:none; }
+.commercial-subhead { margin-top:1.5rem; }
+.status-suspended,.status-expired,.status-cancelled { background:#fff0ed; color:var(--red); }
+.status-pending_renewal { background:#fff7e8; color:#8a5d14; }
 @media (max-width:850px) { .login-shell { grid-template-columns:1fr; } .login-art { min-height:300px; padding:2rem; } .login-art h1 { margin:4rem 0 1rem; font-size:3rem; } .portal { grid-template-columns:1fr; } aside { padding:.8rem; } aside .brand { padding:.5rem .75rem 1rem; } .nav { display:flex; overflow:auto; } .nav button { white-space:nowrap; } .logout { margin-top:.7rem; } .stats,.modules,.roadmap-list { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-user { grid-template-columns:1fr 1fr; } }
-@media (max-width:560px) { .login-art { display:none; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } }
+@media (max-width:850px) { .support-layout { grid-template-columns:1fr; } }
+@media (max-width:560px) { .login-art { display:none; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid,.license-meta,.entitlement-list { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } .license-card-head { display:block; } .license-card-head .status { margin-top:.7rem; } .section-head { align-items:flex-start; flex-wrap:wrap; } }
