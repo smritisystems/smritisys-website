@@ -4,33 +4,69 @@
  * Auto-deploys with Cloudflare Pages on every GitHub push
  */
 
-function json(data, status = 200) {
+function isTrustedOrigin(request, env) {
+  const origin = request.headers.get("Origin");
+  if (!origin) return null;
+  const allowedOrigins = (env.ALLOWED_ORIGINS || "https://smritisys.com,http://localhost:8788,http://127.0.0.1:8788")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return allowedOrigins.includes(origin) ? origin : null;
+}
+
+function json(data, status = 200, origin = null) {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (origin) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers.Vary = "Origin";
+  }
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    },
+    headers,
   });
 }
 
-function cors() {
+function cors(origin) {
   return new Response(null, {
     status: 204,
     headers: {
-      "Access-Control-Allow-Origin": "*",
+      ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     },
   });
 }
 
-async function hashPassword(password) {
+async function hashLegacyPassword(password) {
   const data = new TextEncoder().encode(password + "smritisys-salt-v1");
   const hash = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashPassword(password) {
+  const iterations = 120000;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
+  const saltHex = [...salt].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hashHex = [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `pbkdf2-sha256$${iterations}$${saltHex}$${hashHex}`;
+}
+
+async function verifyPassword(password, storedHash) {
+  if (!storedHash?.startsWith("pbkdf2-sha256$")) {
+    return (await hashLegacyPassword(password)) === storedHash;
+  }
+
+  const [, prefix, algorithm, iterationsText, saltHex, expectedHash] = storedHash.match(/^(pbkdf2)-(sha256)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/) || [];
+  if (!prefix || !algorithm || !iterationsText || !saltHex || !expectedHash) return false;
+  const salt = new Uint8Array(saltHex.match(/.{2}/g).map((value) => parseInt(value, 16)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: Number(iterationsText), hash: "SHA-256" }, key, 256);
+  const actualHash = [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return actualHash === expectedHash;
 }
 
 function makeToken() {
@@ -40,37 +76,75 @@ function makeToken() {
 }
 
 async function getCustomerSession(request, env) {
+  const principal = await getIdentitySession(request, env);
+  if (!principal || principal.account_type !== "customer") return null;
+  return principal;
+}
+
+async function getIdentitySession(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.replace("Bearer ", "").trim();
   if (!token) return null;
 
   return await env.DB.prepare(
-    `SELECT account_id FROM sessions
-     WHERE token = ? AND account_type = 'customer' AND expires_at > datetime('now')`
+    `SELECT s.account_type, s.account_id, p.id AS person_id, p.email, p.name,
+            p.status AS person_status, m.organization_id, m.member_role,
+            m.status AS membership_status, o.status AS organization_status
+     FROM sessions s
+     JOIN people p ON p.source_type = s.account_type AND p.source_id = s.account_id
+     JOIN organization_members m ON m.account_type = s.account_type AND m.account_id = s.account_id
+     JOIN organizations o ON o.id = m.organization_id
+     WHERE s.token = ? AND s.expires_at > datetime('now')
+       AND p.status = 'active' AND m.status = 'active' AND o.status = 'active'
+     ORDER BY m.id LIMIT 1`
   )
     .bind(token)
     .first();
 }
 
-async function getStaffSession(request, env) {
-  const auth = request.headers.get("Authorization") || "";
-  const token = auth.replace("Bearer ", "").trim();
-  if (!token) return null;
-
-  return await env.DB.prepare(
-    `SELECT s.account_id, u.email, u.name, u.role, u.status
-     FROM sessions s
-     JOIN users u ON u.id = s.account_id
-     WHERE s.token = ? AND s.account_type = 'user'
-       AND s.expires_at > datetime('now')`
+async function hasPermission(env, principal, permission) {
+  if (!principal) return false;
+  const row = await env.DB.prepare(
+    `SELECT 1 FROM organization_members m
+     JOIN roles r ON r.name = m.member_role
+     JOIN role_permissions rp ON rp.role_id = r.id
+     JOIN permissions p ON p.id = rp.permission_id
+     WHERE m.organization_id = ? AND m.account_type = ? AND m.account_id = ?
+       AND m.status = 'active' AND p.name = ?`
   )
-    .bind(token)
+    .bind(principal.organization_id, principal.account_type, principal.account_id, permission)
     .first();
+  return Boolean(row);
+}
+
+async function requirePermission(request, env, permission) {
+  const principal = await getIdentitySession(request, env);
+  if (!principal || !(await hasPermission(env, principal, permission))) return null;
+  return principal;
+}
+
+async function writeAudit(env, request, principal, action, resourceType, resourceId, oldValue = null, newValue = null) {
+  await env.DB.prepare(
+    `INSERT INTO audit_logs
+     (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      principal?.person_id || null,
+      principal?.organization_id || null,
+      action,
+      resourceType || null,
+      resourceId == null ? null : String(resourceId),
+      oldValue == null ? null : JSON.stringify(oldValue),
+      newValue == null ? null : JSON.stringify(newValue),
+      request.headers.get("CF-Connecting-IP") || null,
+    )
+    .run();
 }
 
 async function requireSuperAdmin(request, env) {
-  const session = await getStaffSession(request, env);
-  if (!session || session.status !== "active" || session.role !== "super_admin") return null;
+  const session = await requirePermission(request, env, "admin.system");
+  if (!session || session.account_type !== "user" || session.member_role !== "super_admin") return null;
   return session;
 }
 
@@ -102,14 +176,33 @@ async function handleAdminUsers(request, env) {
   if (userId === session.account_id && body.status === "inactive") {
     return json({ ok: false, error: "You cannot deactivate your own account" }, 400);
   }
+  if (userId === session.account_id && body.role && body.role !== "super_admin") {
+    return json({ ok: false, error: "You cannot remove your own super admin role" }, 400);
+  }
 
-  await env.DB.prepare(
-    `UPDATE users
-     SET name = COALESCE(?, name), role = COALESCE(?, role), status = COALESCE(?, status)
-     WHERE id = ?`
-  )
-    .bind(body.name || null, body.role || null, body.status || null, userId)
-    .run();
+  const target = await env.DB.prepare("SELECT role, status FROM users WHERE id = ?").bind(userId).first();
+  if (!target) return json({ ok: false, error: "User not found" }, 404);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE users
+       SET name = COALESCE(?, name), role = COALESCE(?, role), status = COALESCE(?, status)
+       WHERE id = ?`
+    ).bind(body.name || null, body.role || null, body.status || null, userId),
+    env.DB.prepare(
+      `UPDATE people SET name = COALESCE(?, name), status = COALESCE(?, status)
+       WHERE source_type = 'user' AND source_id = ?`
+    ).bind(body.name || null, body.status || null, userId),
+    env.DB.prepare(
+      `UPDATE organization_members
+       SET member_role = COALESCE(?, member_role), status = COALESCE(?, status)
+       WHERE account_type = 'user' AND account_id = ?`
+    ).bind(body.role || null, body.status || null, userId),
+  ]);
+  await writeAudit(env, request, session, "MEMBER_ROLE_OR_STATUS_CHANGED", "user", userId, target, {
+    role: body.role || target.role,
+    status: body.status || target.status,
+  });
 
   return json({ ok: true, message: "User updated" });
 }
@@ -117,6 +210,9 @@ async function handleAdminUsers(request, env) {
 async function handleProfile(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+  if (!(await hasPermission(env, session, "organization.view"))) {
+    return json({ ok: false, error: "Organization access required" }, 403);
+  }
 
   if (request.method === "GET") {
     const profile = await env.DB.prepare(
@@ -362,6 +458,10 @@ async function handleAccounting(request, env, resource) {
 async function handleTickets(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+  const ticketPermission = request.method === "POST" ? "support.create" : "support.view";
+  if (!(await hasPermission(env, session, ticketPermission))) {
+    return json({ ok: false, error: "Support access required" }, 403);
+  }
 
   if (request.method === "GET") {
     const { results } = await env.DB.prepare(
@@ -405,6 +505,35 @@ async function handleDemo(request, env) {
   return json({ ok: true, message: "Demo request received. We will contact you soon." });
 }
 
+async function ensureIdentityForAccount(env, accountType, accountId, email, name, status, company = null, role = null) {
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO people (email, name, source_type, source_id, status)
+     VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(email, name || null, accountType, accountId, status || "active")
+    .run();
+
+  const organizationName = accountType === "customer"
+    ? `${company || name || "Customer"} #${accountId}`
+    : "SMRITISYS Internal";
+  await env.DB.prepare(
+    `INSERT INTO organizations (name, legal_name, status)
+     SELECT ?, ?, 'active'
+     WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE name = ?)`
+  )
+    .bind(organizationName, company || name || organizationName, organizationName)
+    .run();
+  const organization = await env.DB.prepare("SELECT id FROM organizations WHERE name = ? LIMIT 1").bind(organizationName).first();
+  const memberRole = role || (accountType === "customer" ? "customer" : "staff");
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO organization_members
+     (organization_id, account_type, account_id, member_role, status)
+     VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(organization.id, accountType, accountId, memberRole, status === "inactive" ? "inactive" : "active")
+    .run();
+}
+
 async function handleSignup(request, env) {
   const body = await request.json();
   const { type, email, password, name, phone, company } = body;
@@ -416,21 +545,42 @@ async function handleSignup(request, env) {
     return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
   }
 
+  if (type === "user") {
+    const bootstrapToken = request.headers.get("X-Staff-Bootstrap");
+    if (!env.STAFF_BOOTSTRAP_TOKEN || bootstrapToken !== env.STAFF_BOOTSTRAP_TOKEN) {
+      return json({ ok: false, error: "Staff accounts require an authorized bootstrap" }, 403);
+    }
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO system_settings (setting_key, setting_value)
+       VALUES ('staff_bootstrap_consumed', '0')`
+    ).run();
+  }
+
   const password_hash = await hashPassword(password);
 
   try {
     if (type === "user") {
-      await env.DB.prepare(
-        `INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)`
-      )
-        .bind(email.toLowerCase(), password_hash, name || null, "staff")
-        .run();
+      const [claim, result] = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE system_settings SET setting_value = '1', updated_at = datetime('now')
+           WHERE setting_key = 'staff_bootstrap_consumed' AND setting_value = '0'`
+        ),
+        env.DB.prepare(
+          `INSERT INTO users (email, password_hash, name, role)
+           SELECT ?, ?, ?, ? WHERE changes() = 1`
+        ).bind(email.toLowerCase(), password_hash, name || null, "super_admin"),
+      ]);
+      if (claim.meta.changes !== 1 || result.meta.changes !== 1) {
+        return json({ ok: false, error: "Staff bootstrap has already been consumed" }, 403);
+      }
+      await ensureIdentityForAccount(env, "user", result.meta.last_row_id, email.toLowerCase(), name, "active", null, "super_admin");
     } else {
-      await env.DB.prepare(
+      const result = await env.DB.prepare(
         `INSERT INTO customers (email, password_hash, name, phone, company) VALUES (?, ?, ?, ?, ?)`
       )
         .bind(email.toLowerCase(), password_hash, name || null, phone || null, company || null)
         .run();
+      await ensureIdentityForAccount(env, "customer", result.meta.last_row_id, email.toLowerCase(), name, "active", company, "customer");
     }
     return json({ ok: true, message: "Account created successfully" });
   } catch (e) {
@@ -452,30 +602,37 @@ async function handleLogin(request, env) {
     return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
   }
 
-  const password_hash = await hashPassword(password);
   let row = null;
   let accountType = type;
 
   if (!type || type === "user") {
     row = await env.DB.prepare(
-      `SELECT id, email, name, role, status FROM users WHERE email = ? AND password_hash = ?`
+      `SELECT id, email, password_hash, name, role, status FROM users WHERE email = ?`
     )
-      .bind(email.toLowerCase(), password_hash)
+      .bind(email.toLowerCase())
       .first();
+    if (row && !(await verifyPassword(password, row.password_hash))) row = null;
     if (row) accountType = "user";
   }
   if (!row && (!type || type === "customer")) {
     row = await env.DB.prepare(
-      `SELECT id, email, name, phone, company, status FROM customers WHERE email = ? AND password_hash = ?`
+      `SELECT id, email, password_hash, name, phone, company, status FROM customers WHERE email = ?`
     )
-      .bind(email.toLowerCase(), password_hash)
+      .bind(email.toLowerCase())
       .first();
+    if (row && !(await verifyPassword(password, row.password_hash))) row = null;
     if (row) accountType = "customer";
   }
 
   if (!row) return json({ ok: false, error: "Invalid email or password" }, 401);
   if (row.status !== "active" && row.status !== "trial") {
     return json({ ok: false, error: "Account is not active" }, 403);
+  }
+
+  if (!row.password_hash.startsWith("pbkdf2-sha256$")) {
+    const upgradedHash = await hashPassword(password);
+    const table = accountType === "user" ? "users" : "customers";
+    await env.DB.prepare(`UPDATE ${table} SET password_hash = ? WHERE id = ?`).bind(upgradedHash, row.id).run();
   }
 
   const token = makeToken();
@@ -487,38 +644,31 @@ async function handleLogin(request, env) {
     .bind(token, accountType, row.id, expires)
     .run();
 
-  return json({ ok: true, token, account_type: accountType, user: row });
+  const { password_hash: _passwordHash, ...safeRow } = row;
+  return json({ ok: true, token, account_type: accountType, user: safeRow });
 }
 
 async function handleMe(request, env) {
-  const auth = request.headers.get("Authorization") || "";
-  const token = auth.replace("Bearer ", "").trim();
-  if (!token) return json({ ok: false, error: "No token" }, 401);
+  const principal = await getIdentitySession(request, env);
+  if (!principal) return json({ ok: false, error: "Invalid or expired session" }, 401);
 
-  const session = await env.DB.prepare(
-    `SELECT * FROM sessions WHERE token = ? AND expires_at > datetime('now')`
-  )
-    .bind(token)
-    .first();
-
-  if (!session) return json({ ok: false, error: "Invalid or expired session" }, 401);
-
-  let account = null;
-  if (session.account_type === "user") {
+  let account;
+  if (principal.account_type === "user") {
     account = await env.DB.prepare(
       `SELECT id, email, name, role, status FROM users WHERE id = ?`
     )
-      .bind(session.account_id)
+      .bind(principal.account_id)
       .first();
   } else {
     account = await env.DB.prepare(
       `SELECT id, email, name, phone, company, status FROM customers WHERE id = ?`
     )
-      .bind(session.account_id)
+      .bind(principal.account_id)
       .first();
   }
 
-  return json({ ok: true, account_type: session.account_type, user: account });
+  const { person_id: _personId, person_status: _personStatus, membership_status: _membershipStatus, organization_status: _organizationStatus, ...identity } = principal;
+  return json({ ok: true, account_type: principal.account_type, user: account, identity });
 }
 
 async function handleListDemos(request, env) {
@@ -536,8 +686,9 @@ export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/?/, "").replace(/\/$/, "") || "";
+  const origin = isTrustedOrigin(request, env);
 
-  if (request.method === "OPTIONS") return cors();
+  if (request.method === "OPTIONS") return cors(origin);
 
   try {
     if (path === "demo" && request.method === "POST") return await handleDemo(request, env);

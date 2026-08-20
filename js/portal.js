@@ -196,18 +196,6 @@ $('#ticketForm').addEventListener('submit', async (event) => {
   }
 });
 
-$('#accountForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const form = Object.fromEntries(new FormData(event.target));
-  try {
-    const data = await api('accounting/accounts', { method: 'POST', body: JSON.stringify(form) });
-    setMessage($('#accountingMessage'), data.message, true);
-    event.target.reset();
-  } catch (error) {
-    setMessage($('#accountingMessage'), error.message, false);
-  }
-});
-
 async function submitAccountingDocument(event, resource, numberField, partyField, dateField) {
   event.preventDefault();
   const form = Object.fromEntries(new FormData(event.target));
@@ -231,9 +219,6 @@ async function submitAccountingDocument(event, resource, numberField, partyField
     setMessage($('#accountingMessage'), error.message, false);
   }
 }
-
-$('#invoiceForm').addEventListener('submit', (event) => submitAccountingDocument(event, 'invoices', 'invoice_number', 'buyer_name', 'invoice_date'));
-$('#purchaseForm').addEventListener('submit', (event) => submitAccountingDocument(event, 'purchases', 'bill_number', 'supplier_name', 'purchase_date'));
 
 $('#logoutButton').addEventListener('click', () => {
   localStorage.removeItem('smritisys_token');

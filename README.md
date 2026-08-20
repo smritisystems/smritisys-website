@@ -82,7 +82,7 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/demo` | Save demo request |
-| POST | `/api/signup` | `{ type: "user"\|"customer", email, password, name }` |
+| POST | `/api/signup` | Customer signup; staff signup is one-time bootstrap only |
 | POST | `/api/login` | `{ email, password }` → token; account type is detected automatically. Optional `type` remains supported. |
 | GET | `/api/me` | Current user (Bearer token) |
 | GET | `/api/profile` | Current customer profile (Bearer token) |
@@ -107,6 +107,28 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 `super_admin` is the full-control administrative role. Administrative endpoints must
 call the super-admin guard; ordinary `staff` accounts cannot manage users or demos.
 
+Staff signup is not public. The one-time bootstrap request must include the
+`X-Staff-Bootstrap` header, match the `STAFF_BOOTSTRAP_TOKEN` Pages secret, and run
+before the first staff user exists. Remove or rotate the secret after bootstrapping.
+
+Set `ALLOWED_ORIGINS` as a comma-separated Pages environment variable for production
+and local development. The API does not allow wildcard CORS.
+
+## Phase 2 identity migration
+
+Before deploying the Phase 2 API to an existing D1 database, run the repeatable
+identity migration:
+
+```bash
+npx wrangler d1 execute smritisys-db --remote --file=./migrations/0002_identity_rbac.sql
+```
+
+The migration preserves `users`, `customers`, sessions, and existing customer data.
+It backfills `people`, deterministic organizations, memberships, roles, permissions,
+and audit storage. Runtime authorization resolves the authenticated account through
+organization membership and role permissions; browser-supplied organization or role
+values are not trusted.
+
 ## Create first staff user
 
 After deploy:
@@ -114,6 +136,7 @@ After deploy:
 ```bash
 curl -X POST https://YOUR_PROJECT.pages.dev/api/signup \
   -H "Content-Type: application/json" \
+  -H "X-Staff-Bootstrap: $STAFF_BOOTSTRAP_TOKEN" \
   -d "{\"type\":\"user\",\"email\":\"admin@smritisys.com\",\"password\":\"change-me\",\"name\":\"Admin\"}"
 ```
 
