@@ -23,7 +23,7 @@ smritisys-auto/
 Operational application boundary:
 
 ```text
-smritisys.com             Corporate website and control plane
+https://smritisys.com      Corporate website and control plane
 smritisys.com/portal.html Customer portal
 smritisys.com/partner.html Partner portal
 app.smritisys.com         SMRITI Retail OS operational application
