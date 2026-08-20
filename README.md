@@ -75,6 +75,11 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | GET | `/api/tickets` | List customer support tickets (Bearer token) |
 | POST | `/api/tickets` | Create support ticket (Bearer token) |
 | GET | `/api/demos` | List demos (staff token only) |
+| GET | `/api/admin/users` | List staff users (super admin token only) |
+| PATCH | `/api/admin/users/:id` | Update user role, status, or name (super admin token only) |
+
+`super_admin` is the full-control administrative role. Administrative endpoints must
+call the super-admin guard; ordinary `staff` accounts cannot manage users or demos.
 
 ## Create first staff user
 

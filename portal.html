@@ -90,6 +90,11 @@
         <input id="email" name="email" type="email" autocomplete="email" required />
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <label for="accountType">Account type</label>
+        <select id="accountType" name="type">
+          <option value="customer">Customer</option>
+          <option value="user">Staff / Super Admin</option>
+        </select>
         <button class="primary" type="submit">Sign in</button>
         <p id="loginMessage" class="message" role="alert"></p>
       </form>
@@ -151,7 +156,7 @@
   </section>
 
   <script>
-    const state = { token: localStorage.getItem('smritisys_token'), profile: null };
+    const state = { token: localStorage.getItem('smritisys_token'), accountType: localStorage.getItem('smritisys_account_type') || 'customer', profile: null };
     const $ = (selector) => document.querySelector(selector);
     const $$ = (selector) => [...document.querySelectorAll(selector)];
     const setMessage = (element, text, ok) => { element.textContent = text; element.style.color = ok ? 'var(--green)' : 'var(--red)'; };
@@ -166,7 +171,21 @@
     function showPortal() { $('#loginView').classList.add('hidden'); $('#portalView').classList.remove('hidden'); loadPortal(); }
     function showLogin(message = '') { $('#portalView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); if (message) setMessage($('#loginMessage'), message, false); }
     async function loadPortal() {
-      try { const data = await api('profile'); state.profile = data.profile; fillProfile(data.profile); updateIdentity(data.profile); await loadTickets(); }
+      try {
+        if (state.accountType === 'user') {
+          const data = await api('me');
+          updateIdentity(data.user);
+          $('#profileForm').querySelectorAll('input, textarea, select, button').forEach((control) => { control.disabled = true; });
+          $('#profileMessage').textContent = 'Staff profile editing is managed by the administration area.';
+          $('#openTicketCount').textContent = '—';
+          return;
+        }
+        const data = await api('profile');
+        state.profile = data.profile;
+        fillProfile(data.profile);
+        updateIdentity(data.profile);
+        await loadTickets();
+      }
       catch (error) { localStorage.removeItem('smritisys_token'); state.token = null; showLogin(error.message); }
     }
     function fillProfile(profile) { ['name','email','phone','company','gst_number','website','bio'].forEach((key) => { const input = $(`#profile${key === 'gst_number' ? 'Gst' : key[0].toUpperCase() + key.slice(1)}`); if (input) input.value = profile[key] || ''; }); }
@@ -175,11 +194,11 @@
     function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[character])); }
     $$('.nav button').forEach((button) => button.addEventListener('click', () => { $$('.nav button').forEach((item) => item.classList.remove('active')); button.classList.add('active'); $$('.view').forEach((view) => view.classList.toggle('active', view.dataset.section === button.dataset.view)); $('#pageTitle').textContent = button.textContent; }));
     $$('[data-go]').forEach((button) => button.addEventListener('click', () => $(`button[data-view="${button.dataset.go}"]`).click()));
-    $('#loginForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); const button = event.target.querySelector('button'); button.disabled = true; setMessage($('#loginMessage'), 'Signing in...', true); try { const data = await api('login', { method:'POST', body:JSON.stringify({ type:'customer', email:form.get('email'), password:form.get('password') }) }); state.token = data.token; localStorage.setItem('smritisys_token', state.token); showPortal(); } catch (error) { setMessage($('#loginMessage'), error.message, false); } button.disabled = false; });
+    $('#loginForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); const button = event.target.querySelector('button'); button.disabled = true; setMessage($('#loginMessage'), 'Signing in...', true); try { const accountType = form.get('type'); const data = await api('login', { method:'POST', body:JSON.stringify({ type:accountType, email:form.get('email'), password:form.get('password') }) }); state.token = data.token; state.accountType = accountType; localStorage.setItem('smritisys_token', state.token); localStorage.setItem('smritisys_account_type', accountType); showPortal(); } catch (error) { setMessage($('#loginMessage'), error.message, false); } button.disabled = false; });
     $('#profileForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); try { const data = await api('profile', { method:'PUT', body:JSON.stringify(Object.fromEntries(form)) }); setMessage($('#profileMessage'), data.message, true); updateIdentity(Object.fromEntries(form)); } catch (error) { setMessage($('#profileMessage'), error.message, false); } });
     $('#newTicketButton').addEventListener('click', () => $('#ticketForm').classList.toggle('hidden'));
     $('#ticketForm').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.target); try { const data = await api('tickets', { method:'POST', body:JSON.stringify(Object.fromEntries(form)) }); setMessage($('#ticketMessage'), `Ticket #${data.ticket_id} created`, true); event.target.reset(); $('#ticketForm').classList.add('hidden'); await loadTickets(); } catch (error) { setMessage($('#ticketMessage'), error.message, false); } });
-    $('#logoutButton').addEventListener('click', () => { localStorage.removeItem('smritisys_token'); state.token = null; showLogin(); });
+    $('#logoutButton').addEventListener('click', () => { localStorage.removeItem('smritisys_token'); localStorage.removeItem('smritisys_account_type'); state.token = null; showLogin(); });
     if (state.token) showPortal();
   </script>
 </body>

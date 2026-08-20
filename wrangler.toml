@@ -8,4 +8,4 @@ compatibility_date = "2024-09-23"
 [[d1_databases]]
 binding = "DB"
 database_name = "smritisys-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+ database_id = "19066da9-8183-42cb-92e3-c64d1ee799de"

@@ -52,6 +52,68 @@ async function getCustomerSession(request, env) {
     .first();
 }
 
+async function getStaffSession(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.replace("Bearer ", "").trim();
+  if (!token) return null;
+
+  return await env.DB.prepare(
+    `SELECT s.account_id, u.email, u.name, u.role, u.status
+     FROM sessions s
+     JOIN users u ON u.id = s.account_id
+     WHERE s.token = ? AND s.account_type = 'user'
+       AND s.expires_at > datetime('now')`
+  )
+    .bind(token)
+    .first();
+}
+
+async function requireSuperAdmin(request, env) {
+  const session = await getStaffSession(request, env);
+  if (!session || session.status !== "active" || session.role !== "super_admin") return null;
+  return session;
+}
+
+async function handleAdminUsers(request, env) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (request.method === "GET") {
+    const { results } = await env.DB.prepare(
+      `SELECT id, email, name, role, status, created_at
+       FROM users ORDER BY created_at DESC`
+    ).all();
+    return json({ ok: true, users: results });
+  }
+
+  const userId = Number(request.params?.id);
+  if (!Number.isInteger(userId) || userId < 1) {
+    return json({ ok: false, error: "A valid user id is required" }, 400);
+  }
+  const body = await request.json();
+  const allowedRoles = ["staff", "admin", "super_admin"];
+  const allowedStatuses = ["active", "inactive"];
+  if (body.role && !allowedRoles.includes(body.role)) {
+    return json({ ok: false, error: "Invalid role" }, 400);
+  }
+  if (body.status && !allowedStatuses.includes(body.status)) {
+    return json({ ok: false, error: "Invalid status" }, 400);
+  }
+  if (userId === session.account_id && body.status === "inactive") {
+    return json({ ok: false, error: "You cannot deactivate your own account" }, 400);
+  }
+
+  await env.DB.prepare(
+    `UPDATE users
+     SET name = COALESCE(?, name), role = COALESCE(?, role), status = COALESCE(?, status)
+     WHERE id = ?`
+  )
+    .bind(body.name || null, body.role || null, body.status || null, userId)
+    .run();
+
+  return json({ ok: true, message: "User updated" });
+}
+
 async function handleProfile(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
@@ -253,17 +315,8 @@ async function handleMe(request, env) {
 }
 
 async function handleListDemos(request, env) {
-  const auth = request.headers.get("Authorization") || "";
-  const token = auth.replace("Bearer ", "").trim();
-  if (!token) return json({ ok: false, error: "Login required" }, 401);
-
-  const session = await env.DB.prepare(
-    `SELECT * FROM sessions WHERE token = ? AND account_type = 'user' AND expires_at > datetime('now')`
-  )
-    .bind(token)
-    .first();
-
-  if (!session) return json({ ok: false, error: "Staff login required" }, 403);
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
 
   const { results } = await env.DB.prepare(
     `SELECT id, name, email, phone, stores, status, created_at FROM demo_requests ORDER BY created_at DESC LIMIT 100`
@@ -287,6 +340,11 @@ export async function onRequest(context) {
     if (path === "profile" && ["GET", "PUT"].includes(request.method)) return await handleProfile(request, env);
     if (path === "tickets" && ["GET", "POST"].includes(request.method)) return await handleTickets(request, env);
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
+    if (path === "admin/users" && request.method === "GET") return await handleAdminUsers(request, env);
+    if (path.startsWith("admin/users/") && request.method === "PATCH") {
+      request.params = { id: path.split("/")[2] };
+      return await handleAdminUsers(request, env);
+    }
     return json({ ok: false, error: "Not found" }, 404);
   } catch (err) {
     console.error(err);

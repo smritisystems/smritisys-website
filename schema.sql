@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   name TEXT,
-  role TEXT DEFAULT 'staff',          -- staff | admin
+  role TEXT DEFAULT 'staff',          -- staff | admin | super_admin
   status TEXT DEFAULT 'active',       -- active | inactive
   created_at TEXT DEFAULT (datetime('now'))
 );
