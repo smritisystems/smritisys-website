@@ -243,27 +243,32 @@ async function handleLogin(request, env) {
   const body = await request.json();
   const { type, email, password } = body;
 
-  if (!email || !password || !type) {
-    return json({ ok: false, error: "type, email and password are required" }, 400);
+  if (!email || !password) {
+    return json({ ok: false, error: "email and password are required" }, 400);
+  }
+  if (type && !["user", "customer"].includes(type)) {
+    return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
   }
 
   const password_hash = await hashPassword(password);
   let row = null;
+  let accountType = type;
 
-  if (type === "user") {
+  if (!type || type === "user") {
     row = await env.DB.prepare(
       `SELECT id, email, name, role, status FROM users WHERE email = ? AND password_hash = ?`
     )
       .bind(email.toLowerCase(), password_hash)
       .first();
-  } else if (type === "customer") {
+    if (row) accountType = "user";
+  }
+  if (!row && (!type || type === "customer")) {
     row = await env.DB.prepare(
       `SELECT id, email, name, phone, company, status FROM customers WHERE email = ? AND password_hash = ?`
     )
       .bind(email.toLowerCase(), password_hash)
       .first();
-  } else {
-    return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
+    if (row) accountType = "customer";
   }
 
   if (!row) return json({ ok: false, error: "Invalid email or password" }, 401);
@@ -277,10 +282,10 @@ async function handleLogin(request, env) {
   await env.DB.prepare(
     `INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, ?, ?, ?)`
   )
-    .bind(token, type, row.id, expires)
+    .bind(token, accountType, row.id, expires)
     .run();
 
-  return json({ ok: true, token, account_type: type, user: row });
+  return json({ ok: true, token, account_type: accountType, user: row });
 }
 
 async function handleMe(request, env) {

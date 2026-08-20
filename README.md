@@ -68,7 +68,7 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 |--------|------|-------------|
 | POST | `/api/demo` | Save demo request |
 | POST | `/api/signup` | `{ type: "user"\|"customer", email, password, name }` |
-| POST | `/api/login` | `{ type: "user"\|"customer", email, password }` → token |
+| POST | `/api/login` | `{ email, password }` → token; account type is detected automatically. Optional `type` remains supported. |
 | GET | `/api/me` | Current user (Bearer token) |
 | GET | `/api/profile` | Current customer profile (Bearer token) |
 | PUT | `/api/profile` | Update customer profile (Bearer token) |
