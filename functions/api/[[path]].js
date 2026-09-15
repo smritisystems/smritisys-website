@@ -16,9 +16,79 @@ function isTrustedOrigin(request, env) {
   return allowedOrigins.includes(origin) ? origin : null;
 }
 
-function json(data, status = 200, origin = null) {
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+};
+
+function boundedString(value, maxLength) {
+  return typeof value === "string" && value.trim().length <= maxLength ? value.trim() : null;
+}
+
+function validEmail(value) {
+  const email = boundedString(value, 254);
+  return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.toLowerCase() : null;
+}
+
+function getCookie(request, name) {
+  const cookies = request.headers.get("Cookie") || "";
+  const match = cookies.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+function requestSessionToken(request) {
+  const auth = request.headers.get("Authorization") || "";
+  const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  return bearer || getCookie(request, "smritisys_session");
+}
+
+function sessionCookie(token, maxAge = 7 * 24 * 60 * 60) {
+  return `smritisys_session=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearedSessionCookie() {
+  return sessionCookie("", 0);
+}
+
+async function enforceRateLimit(env, request, scope, limit, windowSeconds, identity = "") {
+  const client = request.headers.get("CF-Connecting-IP") || "unknown";
+  const suffix = identity ? `:${identity}` : "";
+  const bucketKey = `${scope}:${client}${suffix}`.slice(0, 240);
+  const now = Math.floor(Date.now() / 1000);
+  const windowStart = now - (now % windowSeconds);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, request_count)
+       VALUES (?, ?, 1)
+       ON CONFLICT(bucket_key) DO UPDATE SET
+         request_count = CASE WHEN window_started_at < ? THEN 1 ELSE request_count + 1 END,
+         window_started_at = CASE WHEN window_started_at < ? THEN ? ELSE window_started_at END,
+         updated_at = datetime('now')`
+    ).bind(bucketKey, windowStart, windowStart, windowStart, windowStart).run();
+    const row = await env.DB.prepare(
+      "SELECT window_started_at, request_count FROM rate_limit_buckets WHERE bucket_key = ?"
+    ).bind(bucketKey).first();
+    const retryAfter = Math.max(1, windowSeconds - (now - Number(row?.window_started_at || windowStart)));
+    return { allowed: Number(row?.request_count || 0) <= limit, retryAfter };
+  } catch (error) {
+    console.error("Rate-limit storage unavailable", error);
+    return { allowed: true, retryAfter: windowSeconds };
+  }
+}
+
+async function requireRateLimit(env, request, scope, limit, windowSeconds, identity = "") {
+  const result = await enforceRateLimit(env, request, scope, limit, windowSeconds, identity);
+  return result.allowed ? null : json({ ok: false, error: "Too many requests. Please try again later." }, 429, null, { "Retry-After": String(result.retryAfter) });
+}
+
+function json(data, status = 200, origin = null, extraHeaders = {}) {
   const headers = {
+    ...SECURITY_HEADERS,
     "Content-Type": "application/json",
+    ...extraHeaders,
   };
   if (origin) {
     headers["Access-Control-Allow-Origin"] = origin;
@@ -34,6 +104,7 @@ function cors(origin) {
   return new Response(null, {
     status: 204,
     headers: {
+      ...SECURITY_HEADERS,
       ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -84,8 +155,7 @@ async function getCustomerSession(request, env) {
 }
 
 async function getIdentitySession(request, env) {
-  const auth = request.headers.get("Authorization") || "";
-  const token = auth.replace("Bearer ", "").trim();
+  const token = requestSessionToken(request);
   if (!token) return null;
 
   return await env.DB.prepare(
@@ -747,12 +817,14 @@ async function handleProfile(request, env) {
   }
 
   const body = await request.json();
-  const { name, phone } = body;
+  const name = boundedString(body.name, 120);
+  const phone = boundedString(body.phone, 40);
   if (!name) {
     return json({ ok: false, error: "Name is required" }, 400);
   }
 
   await env.DB.prepare(`UPDATE customers SET name = ?, phone = ? WHERE id = ?`).bind(name, phone || null, session.account_id).run();
+  await writeAudit(env, request, session, "CUSTOMER_PROFILE_UPDATED", "customer", session.account_id, null, { name, phone });
 
   return json({ ok: true, message: "Profile updated" });
 }
@@ -1043,6 +1115,7 @@ async function handleTickets(request, env) {
       `INSERT INTO support_tickets (customer_id, subject, description, priority)
        VALUES (?, ?, ?, ?)`
     ).bind(session.account_id, subject, description, priority).run();
+    await writeAudit(env, request, session, "SUPPORT_TICKET_CREATED", "support_ticket", result.meta.last_row_id, null, { priority });
     return json({ ok: true, ticket_id: result.meta.last_row_id, message: "Support ticket created" }, 201);
   }
 
@@ -1110,6 +1183,7 @@ async function handleRequirements(request, env) {
       `INSERT INTO custom_requirements (customer_id, organization_id, title, description, category, priority)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(session.account_id, session.organization_id, title, description, category, priority).run();
+    await writeAudit(env, request, session, "CUSTOM_REQUIREMENT_CREATED", "custom_requirement", result.meta.last_row_id, null, { category, priority });
     return json({ ok: true, requirement_id: result.meta.last_row_id, message: "Requirement submitted" }, 201);
   }
 
@@ -1264,8 +1338,14 @@ async function handlePartner(request, env, resource) {
 }
 
 async function handleDemo(request, env) {
+  const limited = await requireRateLimit(env, request, "demo", 5, 3600);
+  if (limited) return limited;
   const body = await request.json();
-  const { name, email, phone, stores, message } = body;
+  const name = boundedString(body.name, 120);
+  const email = validEmail(body.email);
+  const phone = boundedString(body.phone, 40);
+  const stores = boundedString(body.stores, 20);
+  const message = boundedString(body.message, 5000);
   if (!name || !email) return json({ ok: false, error: "Name and email are required" }, 400);
 
   await env.DB.prepare(
@@ -1307,11 +1387,18 @@ async function ensureIdentityForAccount(env, accountType, accountId, email, name
 }
 
 async function handleSignup(request, env) {
+  const limited = await requireRateLimit(env, request, "signup", 5, 3600);
+  if (limited) return limited;
   const body = await request.json();
-  const { type, email, password, name, phone, company } = body;
+  const type = body.type;
+  const email = validEmail(body.email);
+  const password = boundedString(body.password, 128);
+  const name = boundedString(body.name, 120);
+  const phone = boundedString(body.phone, 40);
+  const company = boundedString(body.company, 200);
 
-  if (!email || !password || !type) {
-    return json({ ok: false, error: "type, email and password are required" }, 400);
+  if (!email || !password || password.length < 12 || !type) {
+    return json({ ok: false, error: "A valid email, a password of at least 12 characters, and an account type are required" }, 400);
   }
   if (!["user", "customer"].includes(type)) {
     return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
@@ -1365,7 +1452,12 @@ async function handleSignup(request, env) {
 
 async function handleLogin(request, env) {
   const body = await request.json();
-  const { type, email, password } = body;
+  const type = body.type;
+  const email = validEmail(body.email);
+  const password = boundedString(body.password, 128);
+
+  const limited = await requireRateLimit(env, request, "login", 10, 900, email || "invalid");
+  if (limited) return limited;
 
   if (!email || !password) {
     return json({ ok: false, error: "email and password are required" }, 400);
@@ -1417,7 +1509,7 @@ async function handleLogin(request, env) {
     .run();
 
   const { password_hash: _passwordHash, ...safeRow } = row;
-  return json({ ok: true, token, account_type: accountType, user: safeRow });
+  return json({ ok: true, token, account_type: accountType, user: safeRow }, 200, null, { "Set-Cookie": sessionCookie(token) });
 }
 
 async function handleMe(request, env) {
@@ -1444,27 +1536,32 @@ async function handleMe(request, env) {
 }
 
 async function handleLogout(request, env) {
-  const token = (request.headers.get("Authorization") || "").replace("Bearer ", "").trim();
+  const token = requestSessionToken(request);
   if (token) await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
-  return json({ ok: true, message: "Signed out" });
+  return json({ ok: true, message: "Signed out" }, 200, null, { "Set-Cookie": clearedSessionCookie() });
 }
 
 async function handlePasswordChange(request, env) {
   const session = await getCustomerSession(request, env);
   if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+  const limited = await requireRateLimit(env, request, "password", 5, 900, String(session.account_id));
+  if (limited) return limited;
   const body = await request.json();
-  if (typeof body.current_password !== "string" || typeof body.new_password !== "string" || body.new_password.length < 8) {
-    return json({ ok: false, error: "Current password and a new password of at least 8 characters are required" }, 400);
+  const currentPassword = boundedString(body.current_password, 128);
+  const newPassword = boundedString(body.new_password, 128);
+  if (!currentPassword || !newPassword || newPassword.length < 12) {
+    return json({ ok: false, error: "Current password and a new password of at least 12 characters are required" }, 400);
   }
   const customer = await env.DB.prepare("SELECT password_hash FROM customers WHERE id = ? AND status IN ('active', 'trial')").bind(session.account_id).first();
-  if (!customer || !(await verifyPassword(body.current_password, customer.password_hash))) {
+  if (!customer || !(await verifyPassword(currentPassword, customer.password_hash))) {
     return json({ ok: false, error: "Current password is incorrect" }, 403);
   }
-  const passwordHash = await hashPassword(body.new_password);
+  const passwordHash = await hashPassword(newPassword);
   await env.DB.batch([
     env.DB.prepare("UPDATE customers SET password_hash = ? WHERE id = ?").bind(passwordHash, session.account_id),
     env.DB.prepare("DELETE FROM sessions WHERE account_type = 'customer' AND account_id = ?").bind(session.account_id),
   ]);
+  await writeAudit(env, request, session, "CUSTOMER_PASSWORD_CHANGED", "customer", session.account_id);
   return json({ ok: true, message: "Password changed. Please sign in again." });
 }
 

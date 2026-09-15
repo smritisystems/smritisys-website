@@ -1,6 +1,6 @@
 const state = {
-  token: localStorage.getItem('smritisys_token'),
-  accountType: localStorage.getItem('smritisys_account_type') || 'customer',
+  token: null,
+  accountType: 'customer',
   profile: null,
   organization: null,
   licenses: [],
@@ -18,7 +18,7 @@ function setMessage(element, text, ok) {
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  const response = await fetch(`/api/${path}`, { ...options, headers });
+  const response = await fetch(`/api/${path}`, { ...options, headers, credentials: 'same-origin' });
   const data = await response.json().catch(() => ({ error: 'Invalid server response' }));
   if (!response.ok) {
     const error = new Error(data.error || 'Request failed');
@@ -283,8 +283,6 @@ async function loadCustomerWorkspace() {
     $('#dashboardError').textContent = error.status === 403 ? 'This account is not authorized for the customer workspace.' : 'Some workspace data could not be loaded.';
     $('#dashboardError').className = 'state-panel error-state';
     if (error.status === 401) {
-      localStorage.removeItem('smritisys_token');
-      localStorage.removeItem('smritisys_account_type');
       state.token = null;
       showLogin('Your session has expired. Please sign in again.');
     }
@@ -294,6 +292,7 @@ async function loadCustomerWorkspace() {
 async function loadPortal() {
   try {
     const identity = await api('me');
+    state.accountType = identity.account_type;
     updateIdentity(identity.user);
     if (state.accountType === 'user') {
       $('#adminNav').classList.remove('hidden');
@@ -303,8 +302,6 @@ async function loadPortal() {
     }
     await loadCustomerWorkspace();
   } catch (error) {
-    localStorage.removeItem('smritisys_token');
-    localStorage.removeItem('smritisys_account_type');
     state.token = null;
     showLogin(error.status === 401 ? 'Your session has expired. Please sign in again.' : 'Unable to load your workspace.');
   }
@@ -366,10 +363,8 @@ $('#loginForm').addEventListener('submit', async (event) => {
   setMessage($('#loginMessage'), 'Signing in...', true);
   try {
     const data = await api('login', { method: 'POST', body: JSON.stringify({ email: form.get('email'), password: form.get('password') }) });
-    state.token = data.token;
     state.accountType = data.account_type;
-    localStorage.setItem('smritisys_token', state.token);
-    localStorage.setItem('smritisys_account_type', state.accountType);
+    state.token = null;
     showPortal();
   } catch (error) {
     setMessage($('#loginMessage'), error.message, false);
@@ -430,8 +425,6 @@ $('#passwordForm').addEventListener('submit', async (event) => {
 
 async function logout() {
   try { await api('logout', { method: 'POST' }); } catch {}
-  localStorage.removeItem('smritisys_token');
-  localStorage.removeItem('smritisys_account_type');
   state.token = null;
   showLogin();
 }

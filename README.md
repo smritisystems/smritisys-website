@@ -122,6 +122,8 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | GET | `/api/admin/users` | List staff users (super admin token only) |
 | PATCH | `/api/admin/users/:id` | Update user role, status, or name (super admin token only) |
 
+Browser logins receive an `HttpOnly`, `Secure`, `SameSite=Lax` `smritisys_session` cookie and the portal clients send same-origin credentials automatically. The API continues to accept `Authorization: Bearer <token>` for existing non-browser integrations during the migration period. Logout invalidates the server session and clears the browser cookie.
+
 `super_admin` is the full-control administrative role. Administrative endpoints must
 call the super-admin guard; ordinary `staff` accounts cannot manage users or demos.
 
@@ -137,12 +139,12 @@ and local development. The API does not allow wildcard CORS.
 Before deploying the completed control plane:
 
 1. Back up the remote D1 database.
-2. Apply migrations `0002_identity_rbac.sql` through `0011_admin_staging_seed.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production.
+2. Apply migrations `0002_identity_rbac.sql` through `0012_rate_limits.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production.
 3. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
 4. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
 5. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.
 6. Verify customer, partner, and admin login, tenant isolation, logout invalidation, and the accounting boundary after deployment.
-7. Enable rate limiting, error monitoring, backups, and alerting before inviting production users.
+7. Verify D1-backed throttling for login, signup, demo, and password endpoints, then enable Cloudflare WAF rate limiting, error monitoring, backups, and alerting before inviting production users.
 
 ## Phase 2 identity migration
 

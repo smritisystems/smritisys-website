@@ -763,3 +763,12 @@ CREATE INDEX IF NOT EXISTS idx_accounting_contacts_customer ON accounting_contac
 CREATE INDEX IF NOT EXISTS idx_accounting_receipts_customer ON accounting_receipts(customer_id);
 CREATE INDEX IF NOT EXISTS idx_accounting_payments_customer ON accounting_supplier_payments(customer_id);
 CREATE INDEX IF NOT EXISTS idx_accounting_notes_customer ON accounting_notes(customer_id);
+
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+  bucket_key TEXT PRIMARY KEY,
+  window_started_at INTEGER NOT NULL,
+  request_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limit_updated ON rate_limit_buckets(updated_at);

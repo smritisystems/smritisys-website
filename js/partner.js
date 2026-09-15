@@ -1,4 +1,4 @@
-const partnerState = { token: localStorage.getItem('smritisys_partner_token') };
+const partnerState = { token: null };
 const partner$ = (selector) => document.querySelector(selector);
 const partner$$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -9,7 +9,7 @@ function partnerEscape(value) {
 async function partnerApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (partnerState.token) headers.Authorization = `Bearer ${partnerState.token}`;
-  const response = await fetch(`/api/${path}`, { ...options, headers });
+  const response = await fetch(`/api/${path}`, { ...options, headers, credentials: 'same-origin' });
   const data = await response.json().catch(() => ({ error: 'Invalid server response' }));
   if (!response.ok) {
     const error = new Error(data.error || 'Request failed');
@@ -105,7 +105,6 @@ async function loadPartnerWorkspace() {
     partner$('#partnerError').textContent = error.status === 403 ? 'This account is not authorized for the partner workspace.' : 'Partner workspace data could not be loaded.';
     partner$('#partnerError').className = 'state-panel error-state';
     if (error.status === 401 || error.status === 403) {
-      localStorage.removeItem('smritisys_partner_token');
       partnerState.token = null;
       showPartnerLogin('Partner access is unavailable for this account.');
     }
@@ -139,8 +138,7 @@ partner$('#partnerLoginForm').addEventListener('submit', async (event) => {
   partnerMessage(partner$('#partnerLoginMessage'), 'Signing in...', true);
   try {
     const data = await partnerApi('login', { method: 'POST', body: JSON.stringify({ email: form.get('email'), password: form.get('password') }) });
-    partnerState.token = data.token;
-    localStorage.setItem('smritisys_partner_token', data.token);
+    partnerState.token = null;
     showPartnerPortal();
   } catch (error) {
     partnerMessage(partner$('#partnerLoginMessage'), error.status === 401 ? 'Invalid email or password.' : error.message, false);
@@ -151,9 +149,8 @@ partner$('#partnerLoginForm').addEventListener('submit', async (event) => {
 
 partner$('#partnerLogout').addEventListener('click', async () => {
   try { await partnerApi('logout', { method: 'POST' }); } catch {}
-  localStorage.removeItem('smritisys_partner_token');
   partnerState.token = null;
   showPartnerLogin();
 });
 
-if (partnerState.token) showPartnerPortal();
+showPartnerPortal();

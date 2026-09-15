@@ -1,4 +1,4 @@
-const adminState = { token: localStorage.getItem('smritisys_admin_token') };
+const adminState = { token: null };
 const admin$ = (selector) => document.querySelector(selector);
 const admin$$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -9,7 +9,7 @@ function adminEscape(value) {
 async function adminApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (adminState.token) headers.Authorization = `Bearer ${adminState.token}`;
-  const response = await fetch(`/api/${path}`, { ...options, headers });
+  const response = await fetch(`/api/${path}`, { ...options, headers, credentials: 'same-origin' });
   const data = await response.json().catch(() => ({ error: 'Invalid server response' }));
   if (!response.ok) {
     const error = new Error(data.error || 'Request failed');
@@ -108,7 +108,6 @@ async function loadAdminWorkspace() {
     admin$('#adminUserName').textContent = identity.user.name || identity.user.email;
     await loadAdminOverview();
   } catch (error) {
-    localStorage.removeItem('smritisys_admin_token');
     adminState.token = null;
     showAdminLogin(error.status === 403 ? 'Super admin access required.' : 'Your session has expired.');
   }
@@ -139,8 +138,7 @@ admin$('#adminLoginForm').addEventListener('submit', async (event) => {
   adminMessage(admin$('#adminLoginMessage'), 'Signing in...', true);
   try {
     const data = await adminApi('login', { method: 'POST', body: JSON.stringify({ type: 'user', email: form.get('email'), password: form.get('password') }) });
-    adminState.token = data.token;
-    localStorage.setItem('smritisys_admin_token', data.token);
+    adminState.token = null;
     showAdminPortal();
   } catch (error) { adminMessage(admin$('#adminLoginMessage'), error.status === 401 ? 'Invalid email or password.' : error.message, false); }
   finally { button.disabled = false; }
@@ -148,9 +146,8 @@ admin$('#adminLoginForm').addEventListener('submit', async (event) => {
 
 admin$('#adminLogout').addEventListener('click', async () => {
   try { await adminApi('logout', { method: 'POST' }); } catch {}
-  localStorage.removeItem('smritisys_admin_token');
   adminState.token = null;
   showAdminLogin();
 });
 
-if (adminState.token) showAdminPortal();
+showAdminPortal();
