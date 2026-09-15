@@ -114,6 +114,15 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
 
   let sessionToken = token;
 
+  await t.test("0. Invalid login is rejected without a server error", async () => {
+    const res = await callApi(d1, "login", {
+      method: "POST",
+      body: { email: "missing@example.com", password: "not-a-real-password" },
+    });
+    assert.equal(res.status, 401);
+    assert.equal(res.data.ok, false);
+  });
+
   await t.test("1. Customer Profile Verification", async () => {
     const res = await callApi(d1, "me", { token: sessionToken });
     assert.equal(res.status, 200);

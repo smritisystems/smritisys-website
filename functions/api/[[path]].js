@@ -36,7 +36,8 @@ function validEmail(value) {
 function getCookie(request, name) {
   const cookies = request.headers.get("Cookie") || "";
   const match = cookies.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+  if (!match) return null;
+  try { return decodeURIComponent(match.slice(name.length + 1)); } catch { return null; }
 }
 
 function requestSessionToken(request) {
