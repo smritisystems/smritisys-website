@@ -9,7 +9,7 @@ const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8"
 const requirementsMigration = fs.readFileSync(new URL("../migrations/0006_custom_requirements.sql", import.meta.url), "utf8");
 
 test("customer navigation exposes only implemented workspace sections", () => {
-  for (const section of ["overview", "organization", "products", "licenses", "support", "requirements", "profile"]) {
+  for (const section of ["overview", "organization", "products", "licenses", "support", "requirements", "announcements", "profile"]) {
     assert.match(html, new RegExp(`data-view="${section}"`));
     assert.match(html, new RegExp(`data-section="${section}"`));
   }
@@ -102,6 +102,16 @@ test("release center consumes eligible customer releases read-only", () => {
   assert.match(api, /Release not found/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS releases/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS release_assets/);
+});
+
+test("announcements and service status are customer-visible and license-scoped", () => {
+  assert.match(html, /data-view="announcements"/);
+  assert.match(html, /data-section="announcements"/);
+  assert.match(script, /api\('announcements'\)/);
+  assert.match(api, /async function handleCustomerAnnouncements/);
+  assert.match(api, /a\.audience = 'customer'/);
+  assert.match(api, /om\.organization_id = \?/);
+  assert.match(api, /a\.status IN \('published', 'resolved'\)/);
 });
 
 test("commercial relationship is read-only and separate from operational accounting", () => {

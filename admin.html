@@ -35,12 +35,58 @@
     <div class="login-panel"><form id="adminLoginForm" class="login-box"><span class="eyebrow">Internal access</span><h2>Administrator sign in</h2><p class="muted">Super admin credentials are required.</p><label for="adminEmail">Email address</label><input id="adminEmail" name="email" type="email" autocomplete="username" required /><label for="adminPassword">Password</label><input id="adminPassword" name="password" type="password" autocomplete="current-password" required /><button class="primary" type="submit">Sign in</button><p id="adminLoginMessage" class="message" role="alert"></p></form></div>
   </section>
   <section id="adminPortalView" class="admin-shell hidden">
-    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="audit">Audit</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
+    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
     <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
       <section class="admin-view active" data-admin-section="overview"><div class="welcome"><div><span class="eyebrow">Internal control plane</span><h2>System overview</h2><p class="muted">Governance and relationship data for authorized staff.</p></div></div><div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div></section>
       <section class="admin-view" data-admin-section="users"><div class="section-head"><div><span class="eyebrow">Identity</span><h2>Staff users</h2></div><button class="secondary admin-refresh" data-refresh="users" type="button">Refresh</button></div><div id="adminUsersState" class="state-panel">Loading users...</div><div id="adminUsersList" class="card hidden"></div></section>
       <section class="admin-view" data-admin-section="organizations"><div class="section-head"><div><span class="eyebrow">Relationships</span><h2>Organizations</h2></div><button class="secondary admin-refresh" data-refresh="organizations" type="button">Refresh</button></div><div id="adminOrganizationsState" class="state-panel">Loading organizations...</div><div id="adminOrganizationsList" class="card hidden"></div></section>
-      <section class="admin-view" data-admin-section="products"><div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div><div id="adminProductsState" class="state-panel">Loading products and licenses...</div><div id="adminProductsList" class="grid modules"></div></section>
+      <section class="admin-view" data-admin-section="products">
+        <div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div>
+        <div id="adminProductsState" class="state-panel">Loading products, organizations, and licenses...</div>
+        <div id="adminProductsList" class="grid modules"></div>
+        <div class="admin-license-workspace">
+          <form id="licenseIssueForm" class="card">
+            <div class="section-head compact"><div><span class="eyebrow">License authority</span><h2>Issue a license</h2></div></div>
+            <p class="muted">Company binding must exactly match the product's organization identifier at activation. The license key is shown once after issue.</p>
+            <div class="form-grid">
+              <div class="full"><label for="licenseOrganization">Organization</label><select id="licenseOrganization" name="organization_id" required></select></div>
+              <div><label for="licenseProduct">Product</label><select id="licenseProduct" name="product_id" required></select></div>
+              <div><label for="licenseEdition">Edition</label><select id="licenseEdition" name="edition_id" required></select></div>
+              <div><label for="licenseCompanyBinding">Company binding</label><input id="licenseCompanyBinding" name="company_binding" maxlength="200" required autocomplete="off" /></div>
+              <div><label for="licenseModel">Commercial model</label><select id="licenseModel" name="license_model"><option value="cloud_subscription">Cloud subscription</option><option value="cloud_one_time">Cloud one-time</option><option value="on_premise_subscription" selected>On-premise subscription</option><option value="on_premise_perpetual">On-premise perpetual</option></select></div>
+              <div><label for="licenseStartDate">Start date</label><input id="licenseStartDate" name="start_date" type="date" required /></div>
+              <div><label for="licenseExpiryDate">Expiry date (leave blank for perpetual)</label><input id="licenseExpiryDate" name="expiry_date" type="date" /></div>
+              <div><label for="licenseInitialStatus">Initial status</label><select id="licenseInitialStatus" name="status"><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option></select></div>
+              <div class="full"><label for="licenseEntitlements">Additional entitlements (JSON array, optional)</label><textarea id="licenseEntitlements" name="entitlements" rows="3" placeholder='[{"key":"module.students","value_type":"boolean","value":true}]'></textarea></div>
+            </div>
+            <div class="form-actions"><button id="licenseIssueButton" class="primary" type="submit">Issue license</button></div>
+            <p id="licenseIssueMessage" class="message" role="status"></p>
+          </form>
+          <form id="licensePolicyForm" class="card">
+            <div class="section-head compact"><div><span class="eyebrow">Product policy</span><h2>Evaluation &amp; rollout</h2></div></div>
+            <div class="form-grid">
+              <div><label for="licensePolicyProduct">Product</label><select id="licensePolicyProduct" name="product_id" required></select></div>
+              <div><label for="licensePolicyEdition">Edition</label><select id="licensePolicyEdition" name="edition_id" required></select></div>
+              <div><label for="licensePolicyGrace">Subscription grace days (0–30)</label><input id="licensePolicyGrace" name="subscription_grace_days" type="number" min="0" max="30" required /></div>
+              <div><label for="licensePolicyRollout">Rollout stage</label><select id="licensePolicyRollout" name="rollout_stage"><option value="shadow">Shadow / warn</option><option value="enforced">Enforced</option></select></div>
+              <div class="full policy-permissions">
+                <label><input name="allow_dashboard" type="checkbox" /> Allow dashboard in Evaluation Mode</label>
+                <label><input name="allow_read_only_records" type="checkbox" /> Allow read-only records</label>
+                <label><input name="allow_reports" type="checkbox" /> Allow reports</label>
+                <label><input name="allow_backups" type="checkbox" /> Allow backups</label>
+                <label><input name="allow_exports" type="checkbox" /> Allow exports</label>
+              </div>
+              <div class="full"><label for="licensePolicyLockedModules">Evaluation-locked modules (comma-separated)</label><input id="licensePolicyLockedModules" name="locked_modules" maxlength="1000" /></div>
+            </div>
+            <div class="form-actions"><button id="licensePolicySaveButton" class="primary" type="submit">Save edition policy</button></div>
+            <p id="licensePolicyMessage" class="message" role="status"></p>
+          </form>
+        </div>
+        <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Issued licenses</h2></div></div>
+        <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
+        <div id="adminLicensesList" class="license-list"></div>
+      </section>
+      <section class="admin-view" data-admin-section="announcements"><div class="section-head"><div><span class="eyebrow">Customer communications</span><h2>Announcements &amp; service status</h2></div><button class="secondary admin-refresh" data-refresh="announcements" type="button">Refresh</button></div><form id="announcementForm" class="card"><input id="announcementId" name="id" type="hidden" /><div class="form-grid"><div class="full"><label for="announcementTitle">Title</label><input id="announcementTitle" name="title" maxlength="200" required /></div><div class="full"><label for="announcementMessageBody">Message</label><textarea id="announcementMessageBody" name="message" maxlength="5000" rows="4" required></textarea></div><div><label for="announcementSeverity">Severity</label><select id="announcementSeverity" name="severity"><option value="info">Information</option><option value="maintenance">Maintenance</option><option value="degraded">Degraded service</option><option value="outage">Service outage</option></select></div><div><label for="announcementProduct">Product scope</label><select id="announcementProduct" name="product_id"><option value="">All customer organizations</option></select></div><div><label for="announcementStartsAt">Starts</label><input id="announcementStartsAt" name="starts_at" type="datetime-local" /></div><div><label for="announcementEndsAt">Ends (optional)</label><input id="announcementEndsAt" name="ends_at" type="datetime-local" /></div><div><label for="announcementStatus">Initial status</label><select id="announcementStatus" name="status"><option value="draft">Draft</option><option value="published">Publish now</option></select></div></div><div class="form-actions"><button id="announcementSaveButton" class="primary" type="submit">Create announcement</button><button id="announcementCancelEdit" class="secondary hidden" type="button">Cancel edit</button></div><p id="announcementMessage" class="message" role="status"></p></form><div id="adminAnnouncementsState" class="state-panel" aria-live="polite">Loading announcements...</div><div id="adminAnnouncementsList" class="grid modules" aria-live="polite"></div></section>
       <section class="admin-view" data-admin-section="audit"><div class="section-head"><div><span class="eyebrow">Governance</span><h2>Audit activity</h2></div><button class="secondary admin-refresh" data-refresh="audit" type="button">Refresh</button></div><div id="adminAuditState" class="state-panel">Loading audit activity...</div><div id="adminAuditList" class="card hidden"></div></section>
     </div></main>
   </section>

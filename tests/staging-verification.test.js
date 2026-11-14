@@ -20,6 +20,8 @@ function createD1Mock() {
   const m9 = fs.readFileSync(new URL("../migrations/0009_partner_staging_seed.sql", import.meta.url), "utf8");
   const m10 = fs.readFileSync(new URL("../migrations/0010_commercial_relationship.sql", import.meta.url), "utf8");
   const m11 = fs.readFileSync(new URL("../migrations/0011_admin_staging_seed.sql", import.meta.url), "utf8");
+  const m14 = fs.readFileSync(new URL("../migrations/0014_signed_license_artifacts.sql", import.meta.url), "utf8");
+  const m15 = fs.readFileSync(new URL("../migrations/0015_prathamone_product_registration.sql", import.meta.url), "utf8");
 
   db.exec(schema);
   db.exec(m2);
@@ -32,6 +34,8 @@ function createD1Mock() {
   db.exec(m9);
   db.exec(m10);
   db.exec(m11);
+  db.exec(m14);
+  db.exec(m15);
 
   return {
     raw: db,
@@ -94,7 +98,7 @@ async function callApi(env, path, options = {}) {
 
   const res = await onRequest({
     request: req,
-    env: { DB: env },
+    env: { DB: env, ...(options.bindings || {}) },
     params: { path: path.split("/").filter(Boolean) },
   });
 
@@ -102,6 +106,32 @@ async function callApi(env, path, options = {}) {
   const data = contentType.includes("application/json") ? await res.json() : await res.text();
   return { status: res.status, ok: res.ok, data };
 }
+
+test("announcement migration preserves existing notices", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY); CREATE TABLE products (id INTEGER PRIMARY KEY);");
+  db.exec(`CREATE TABLE announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    audience TEXT DEFAULT 'customer',
+    published_at TEXT,
+    status TEXT DEFAULT 'draft',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.prepare("INSERT INTO announcements (id, title, message, audience, published_at, status) VALUES (1, ?, ?, ?, ?, ?)")
+    .run("Existing notice", "Previously published service notice", "customer", "2026-09-01", "published");
+  db.exec(fs.readFileSync(new URL("../migrations/0013_customer_announcements.sql", import.meta.url), "utf8"));
+
+  const migrated = db.prepare("SELECT title, message, audience, status, starts_at, severity FROM announcements WHERE id = 1").get();
+  assert.equal(migrated.title, "Existing notice");
+  assert.equal(migrated.message, "Previously published service notice");
+  assert.equal(migrated.audience, "customer");
+  assert.equal(migrated.status, "published");
+  assert.equal(migrated.starts_at, "2026-09-01");
+  assert.equal(migrated.severity, "info");
+  assert.equal(db.prepare("SELECT title FROM announcements_legacy WHERE id = 1").get().title, "Existing notice");
+});
 
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   const d1 = createD1Mock();
@@ -111,6 +141,10 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   d1.prepare(
     "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+7 days'))"
   ).bind(token).run();
+  const adminToken = "test-token-super-admin-announcements";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
 
   let sessionToken = token;
 
@@ -156,6 +190,7 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(lic.edition?.name, "Enterprise Edition");
     assert.equal(lic.status, "ACTIVE");
     assert.equal(lic.validity?.is_valid, true);
+    assert.equal(lic.activation_count, 1);
   });
 
   await t.test("5. Entitlements Display", async () => {
@@ -172,6 +207,84 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(res.data.ok, true);
     assert.equal(res.data.activations.length, 1);
     assert.equal(res.data.activations[0].installation_id, "NODE-MUM-POS-01");
+  });
+
+  await t.test("6a. License activation issues a verified, organization-bound artifact", async () => {
+    const keyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const publicKey = Buffer.from(await crypto.subtle.exportKey("raw", keyPair.publicKey)).toString("base64url");
+    const refreshKeyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const refreshPublicKey = Buffer.from(await crypto.subtle.exportKey("raw", refreshKeyPair.publicKey)).toString("base64url");
+    const signer = {
+      async fetch(request) {
+        const requestBody = await request.json();
+        const payloadBytes = Buffer.from(requestBody.payload, "base64url");
+        const signature = await crypto.subtle.sign({ name: "Ed25519" }, keyPair.privateKey, payloadBytes);
+        return Response.json({
+          key_id: requestBody.key_id,
+          signature: Buffer.from(signature).toString("base64url"),
+        });
+      },
+    };
+    const bindings = {
+      LICENSE_SIGNER: signer,
+      LICENSE_ACTIVE_KEY_ID: "staging-key",
+      LICENSE_SIGNING_PUBLIC_KEYS: JSON.stringify({ "staging-key": publicKey }),
+    };
+    const body = {
+      license_key: "SMRITI-RET-ENT-2026-001",
+      product_code: "smriti-retail-os",
+      company_binding: "COMP-001",
+      installation_id: "8a36e7ab-20de-4e31-bf83-87bb4dcd7560",
+      activation_identifier: "4c765a67-9e03-4e9d-9f38-211366dcf7de",
+      refresh_public_key: refreshPublicKey,
+    };
+    const missingBinding = { ...body };
+    delete missingBinding.company_binding;
+    const unbound = await callApi(d1, "license/activate", { method: "POST", body: missingBinding, bindings });
+    assert.equal(unbound.status, 404);
+    const wrongBinding = await callApi(d1, "license/activate", {
+      method: "POST",
+      body: { ...body, company_binding: "COMP-999" },
+      bindings,
+    });
+    assert.equal(wrongBinding.status, 404);
+    const first = await callApi(d1, "license/activate", { method: "POST", body, bindings });
+    assert.equal(first.status, 201);
+    assert.equal(first.data.artifact.algorithm, "Ed25519");
+    const payloadBytes = Buffer.from(first.data.artifact.payload, "base64url");
+    const payload = JSON.parse(payloadBytes.toString("utf8"));
+    const verifier = await crypto.subtle.importKey(
+      "raw",
+      Buffer.from(publicKey, "base64url"),
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    assert.equal(payload.product_code, body.product_code);
+    assert.equal(payload.company_binding, body.company_binding);
+    assert.equal(payload.installation_id, body.installation_id);
+    assert.equal(payload.organization_id, "101");
+    assert.equal(await crypto.subtle.verify(
+      { name: "Ed25519" },
+      verifier,
+      Buffer.from(first.data.artifact.signature, "base64url"),
+      payloadBytes,
+    ), true);
+
+    const eventCount = d1.prepare(
+      `SELECT COUNT(*) AS count FROM license_events
+       WHERE license_id = 101 AND event_type = 'ACTIVATION_CREATED'
+         AND json_extract(metadata_json, '$.activation_identifier') = ?`
+    ).bind(body.activation_identifier).first().count;
+    const repeated = await callApi(d1, "license/activate", { method: "POST", body, bindings });
+    assert.equal(repeated.status, 201);
+    assert.notEqual(repeated.data.artifact.document_id, first.data.artifact.document_id);
+    const repeatedEventCount = d1.prepare(
+      `SELECT COUNT(*) AS count FROM license_events
+       WHERE license_id = 101 AND event_type = 'ACTIVATION_CREATED'
+         AND json_extract(metadata_json, '$.activation_identifier') = ?`
+    ).bind(body.activation_identifier).first().count;
+    assert.equal(repeatedEventCount, eventCount);
   });
 
   await t.test("7. License Request Action (Request-only flow)", async () => {
@@ -345,13 +458,78 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(res.status, 403);
   });
 
-  await t.test("23. Organization Isolation (Denied cross-tenant license read)", async () => {
+  await t.test("23. Announcements require super-admin authoring access", async () => {
+    const denied = await callApi(d1, "admin/announcements", {
+      method: "POST",
+      token: sessionToken,
+      body: { title: "Unauthorized", message: "Must not publish" },
+    });
+    assert.equal(denied.status, 403);
+
+    const listing = await callApi(d1, "admin/announcements", { token: adminToken });
+    assert.equal(listing.status, 200);
+    assert.deepEqual(listing.data.announcements, []);
+  });
+
+  await t.test("24. Customer announcements filter drafts and unlicensed product notices", async () => {
+    const licensedProduct = d1.prepare("SELECT product_id FROM licenses WHERE id = 101").first().product_id;
+    d1.prepare("INSERT INTO products (name, slug, status) VALUES ('Unlicensed Product', 'unlicensed-product', 'active')").run();
+    const unlicensedProduct = d1.prepare("SELECT id FROM products WHERE slug = 'unlicensed-product'").first().id;
+
+    const createAnnouncement = (body) => callApi(d1, "admin/announcements", {
+      method: "POST",
+      token: adminToken,
+      body: { title: "Service update", message: "Customer-facing details", status: "published", ...body },
+    });
+    const globalNotice = await createAnnouncement({ severity: "maintenance" });
+    const licensedNotice = await createAnnouncement({ product_id: licensedProduct, severity: "degraded" });
+    const unlicensedNotice = await createAnnouncement({ product_id: unlicensedProduct });
+    const draftNotice = await createAnnouncement({ status: "draft" });
+    assert.equal(globalNotice.status, 201);
+    assert.equal(licensedNotice.status, 201);
+    assert.equal(unlicensedNotice.status, 201);
+    assert.equal(draftNotice.status, 201);
+
+    const response = await callApi(d1, "announcements", { token: sessionToken });
+    assert.equal(response.status, 200);
+    const visibleIds = response.data.announcements.map((item) => item.id);
+    assert.ok(visibleIds.includes(globalNotice.data.announcement.id));
+    assert.ok(visibleIds.includes(licensedNotice.data.announcement.id));
+    assert.ok(!visibleIds.includes(unlicensedNotice.data.announcement.id));
+    assert.ok(!visibleIds.includes(draftNotice.data.announcement.id));
+  });
+
+  await t.test("25. Announcement status transitions are audited and constrained", async () => {
+    const draft = await callApi(d1, "admin/announcements", {
+      method: "POST",
+      token: adminToken,
+      body: { title: "Planned notice", message: "Will publish after review" },
+    });
+    const published = await callApi(d1, `admin/announcements/${draft.data.announcement.id}`, {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "published" },
+    });
+    assert.equal(published.status, 200);
+    assert.equal(published.data.announcement.status, "published");
+
+    const invalid = await callApi(d1, `admin/announcements/${draft.data.announcement.id}`, {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "draft" },
+    });
+    assert.equal(invalid.status, 409);
+    const audit = d1.prepare("SELECT COUNT(*) AS count FROM audit_logs WHERE resource_type = 'announcement'").first();
+    assert.ok(audit.count >= 5);
+  });
+
+  await t.test("26. Organization Isolation (Denied cross-tenant license read)", async () => {
     // Attempt to access unassigned license ID 999
     const res = await callApi(d1, "licenses/999/entitlements", { token: sessionToken });
     assert.equal(res.status, 404);
   });
 
-  await t.test("24. License Mutation Denial (403 Forbidden for customer)", async () => {
+  await t.test("27. License Mutation Denial (403 Forbidden for customer)", async () => {
     // Attempt direct mutation of license status
     const res = await callApi(d1, "licenses/101/suspend", {
       method: "POST",
@@ -360,7 +538,45 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(res.status, 403);
   });
 
-  await t.test("25. Logout & Invalidation", async () => {
+  await t.test("27a. Draft license keys are hidden from customers and cannot be activated", async () => {
+    const productId = d1.prepare("SELECT product_id FROM licenses WHERE id = 101").first().product_id;
+    const editionId = d1.prepare("SELECT edition_id FROM license_editions WHERE license_id = 101").first().edition_id;
+    const refreshKeyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const refreshPublicKey = Buffer.from(await crypto.subtle.exportKey("raw", refreshKeyPair.publicKey)).toString("base64url");
+    const created = await callApi(d1, "licenses", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        organization_id: 101,
+        product_id: productId,
+        edition_id: editionId,
+        status: "DRAFT",
+        entitlements: [{ key: "company.binding", value_type: "text", value: "COMP-001" }],
+      },
+    });
+    assert.equal(created.status, 201);
+
+    const customerLicenses = await callApi(d1, "licenses", { token: sessionToken });
+    const draft = customerLicenses.data.licenses.find((license) => license.id === created.data.license.id);
+    assert.equal(draft.status, "DRAFT");
+    assert.equal(draft.license_key, null);
+
+    const activation = await callApi(d1, "license/activate", {
+      method: "POST",
+      body: {
+        license_key: created.data.license.license_key,
+        product_code: "smriti-retail-os",
+        company_binding: "COMP-001",
+        installation_id: "8a36e7ab-20de-4e31-bf83-87bb4dcd7560",
+        activation_identifier: "4c765a67-9e03-4e9d-9f38-211366dcf7de",
+        refresh_public_key: refreshPublicKey,
+      },
+    });
+    assert.equal(activation.status, 409);
+    assert.match(activation.data.error, /Draft licenses cannot be activated/);
+  });
+
+  await t.test("28. Logout & Invalidation", async () => {
     const res = await callApi(d1, "logout", {
       method: "POST",
       token: sessionToken,
@@ -369,8 +585,51 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(res.data.ok, true);
   });
 
-  await t.test("26. Access After Logout Denied (401 Unauthorized)", async () => {
+  await t.test("29. Access After Logout Denied (401 Unauthorized)", async () => {
     const res = await callApi(d1, "organization", { token: sessionToken });
     assert.equal(res.status, 401);
+  });
+
+  await t.test("30. New licenses require a unique, non-empty company binding", async () => {
+    const productId = d1.prepare("SELECT product_id FROM licenses WHERE id = 101").first().product_id;
+    const editionId = d1.prepare("SELECT edition_id FROM license_editions WHERE license_id = 101").first().edition_id;
+    const baseBody = {
+      organization_id: 101,
+      product_id: productId,
+      edition_id: editionId,
+      status: "DRAFT",
+      entitlements: [{ key: "license.model", value_type: "text", value: "on_premise_subscription" }],
+    };
+    const missingBinding = await callApi(d1, "licenses", { method: "POST", token: adminToken, body: baseBody });
+    assert.equal(missingBinding.status, 400);
+
+    const duplicateBinding = await callApi(d1, "licenses", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        ...baseBody,
+        entitlements: [
+          { key: "company.binding", value_type: "text", value: "COMP-001" },
+          { key: "company.binding", value_type: "text", value: "COMP-001" },
+        ],
+      },
+    });
+    assert.equal(duplicateBinding.status, 400);
+
+    const created = await callApi(d1, "licenses", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        ...baseBody,
+        company_binding: "COMP-001",
+        entitlements: [
+          { key: "company.binding", value_type: "text", value: " COMP-001 " },
+          ...baseBody.entitlements,
+        ],
+      },
+    });
+    assert.equal(created.status, 201);
+    assert.ok(created.data.license.license_key);
+    assert.equal(created.data.license.status, "DRAFT");
   });
 });

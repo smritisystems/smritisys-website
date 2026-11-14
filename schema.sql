@@ -272,6 +272,18 @@ CREATE TABLE IF NOT EXISTS license_editions (
   FOREIGN KEY (edition_id) REFERENCES product_editions(id)
 );
 
+CREATE TABLE IF NOT EXISTS product_edition_license_policies (
+  edition_id INTEGER PRIMARY KEY,
+  subscription_grace_days INTEGER NOT NULL DEFAULT 7 CHECK (subscription_grace_days BETWEEN 0 AND 30),
+  rollout_stage TEXT NOT NULL DEFAULT 'shadow' CHECK (rollout_stage IN ('shadow', 'enforced')),
+  evaluation_policy_json TEXT NOT NULL DEFAULT '{"allow_dashboard":true,"allow_read_only_records":true,"allow_reports":true,"allow_backups":true,"allow_exports":true,"locked_modules":["billing","inventory_transactions","accounting","payroll"]}',
+  updated_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (edition_id) REFERENCES product_editions(id) ON DELETE CASCADE,
+  FOREIGN KEY (updated_by) REFERENCES people(id)
+);
+
 CREATE TABLE IF NOT EXISTS license_entitlements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   license_id INTEGER NOT NULL,
@@ -291,12 +303,40 @@ CREATE TABLE IF NOT EXISTS license_activations (
   installation_id TEXT NOT NULL,
   activation_identifier TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  refresh_public_key TEXT,
   activated_at TEXT DEFAULT (datetime('now')),
   last_seen_at TEXT DEFAULT (datetime('now')),
   deactivated_at TEXT,
   metadata_json TEXT,
   UNIQUE(license_id, activation_identifier),
   FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS license_artifacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id TEXT NOT NULL UNIQUE,
+  license_id INTEGER NOT NULL,
+  installation_id TEXT NOT NULL,
+  activation_identifier TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  algorithm TEXT NOT NULL CHECK (algorithm = 'Ed25519'),
+  payload_base64url TEXT NOT NULL,
+  signature_base64url TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (license_id) REFERENCES licenses(id),
+  FOREIGN KEY (license_id, activation_identifier)
+    REFERENCES license_activations(license_id, activation_identifier)
+);
+
+CREATE TABLE IF NOT EXISTS license_refresh_nonces (
+  license_id INTEGER NOT NULL,
+  activation_identifier TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (license_id, activation_identifier, nonce),
+  FOREIGN KEY (license_id, activation_identifier)
+    REFERENCES license_activations(license_id, activation_identifier)
 );
 
 CREATE TABLE IF NOT EXISTS license_events (
@@ -334,6 +374,9 @@ CREATE INDEX IF NOT EXISTS idx_license_entitlements_license ON license_entitleme
 CREATE INDEX IF NOT EXISTS idx_license_activations_license ON license_activations(license_id, status);
 CREATE INDEX IF NOT EXISTS idx_license_events_license ON license_events(license_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_license_events_org ON license_events(organization_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_license_artifacts_license ON license_artifacts(license_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_license_artifacts_installation ON license_artifacts(license_id, installation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_license_refresh_nonces_created ON license_refresh_nonces(created_at);
 
 CREATE TRIGGER IF NOT EXISTS prevent_license_events_update
 BEFORE UPDATE ON license_events
@@ -345,6 +388,18 @@ CREATE TRIGGER IF NOT EXISTS prevent_license_events_delete
 BEFORE DELETE ON license_events
 BEGIN
   SELECT RAISE(ABORT, 'license_events are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_license_artifacts_update
+BEFORE UPDATE ON license_artifacts
+BEGIN
+  SELECT RAISE(ABORT, 'license_artifacts are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_license_artifacts_delete
+BEFORE DELETE ON license_artifacts
+BEGIN
+  SELECT RAISE(ABORT, 'license_artifacts are immutable');
 END;
 
 CREATE TABLE IF NOT EXISTS amc_contracts (
@@ -562,10 +617,20 @@ CREATE TABLE IF NOT EXISTS announcements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
   message TEXT NOT NULL,
-  audience TEXT DEFAULT 'customer',
+  audience TEXT NOT NULL DEFAULT 'customer',
+  product_id INTEGER,
+  severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'maintenance', 'degraded', 'outage')),
   published_at TEXT,
   status TEXT DEFAULT 'draft',
-  created_at TEXT DEFAULT (datetime('now'))
+  starts_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ends_at TEXT,
+  created_by INTEGER,
+  updated_by INTEGER,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (product_id) REFERENCES products(id),
+  FOREIGN KEY (created_by) REFERENCES users(id),
+  FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS accounting_accounts (
@@ -753,6 +818,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_customer ON implementation_projects(cust
 CREATE INDEX IF NOT EXISTS idx_releases_product ON product_releases(product_id);
 CREATE INDEX IF NOT EXISTS idx_requirements_customer ON custom_requirements(customer_id);
 CREATE INDEX IF NOT EXISTS idx_announcements_status ON announcements(status, audience);
+CREATE INDEX IF NOT EXISTS idx_announcements_visibility ON announcements(status, starts_at, ends_at, product_id);
 CREATE INDEX IF NOT EXISTS idx_commissions_partner ON partner_commissions(partner_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_customer ON notifications(customer_id);
 CREATE INDEX IF NOT EXISTS idx_accounting_accounts_customer ON accounting_accounts(customer_id);
@@ -772,3 +838,27 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rate_limit_updated ON rate_limit_buckets(updated_at);
+
+INSERT OR IGNORE INTO products (name, slug, description, price, billing_period, status)
+VALUES (
+  'PrathamOne EduOS',
+  'prathamone-eduos',
+  'PrathamOne EduOS Coaching Institute Edition',
+  0,
+  'subscription',
+  'active'
+);
+
+INSERT OR IGNORE INTO product_editions (product_id, code, name, description)
+SELECT id, 'coaching-institute', 'Coaching Institute Edition',
+       'PrathamOne EduOS edition for coaching institutes'
+FROM products
+WHERE slug = 'prathamone-eduos';
+
+INSERT OR IGNORE INTO product_edition_license_policies
+  (edition_id, subscription_grace_days, rollout_stage, evaluation_policy_json)
+SELECT id, 7, 'shadow',
+       '{"allow_dashboard":true,"allow_read_only_records":true,"allow_reports":true,"allow_backups":true,"allow_exports":true,"locked_modules":["payroll","premium_analytics"]}'
+FROM product_editions
+WHERE product_id = (SELECT id FROM products WHERE slug = 'prathamone-eduos')
+  AND code = 'coaching-institute';

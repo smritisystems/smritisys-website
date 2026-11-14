@@ -5,6 +5,7 @@
     "build:css": "tailwindcss -i ./css/site.css -o ./css/site.generated.css --minify"
   },
   "devDependencies": {
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "wrangler": "^4.162.0"
   }
 }

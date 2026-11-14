@@ -153,4 +153,4 @@ partner$('#partnerLogout').addEventListener('click', async () => {
   showPartnerLogin();
 });
 
-partnerApi('partner/me').then(() => showPartnerPortal()).catch(() => showPartnerLogin());
+showPartnerLogin();

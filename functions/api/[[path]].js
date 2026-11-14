@@ -279,6 +279,7 @@ function licenseResponse(record) {
     status: record.status,
     start_date: record.starts_at,
     expiry_date: record.expires_at,
+    activation_count: Number(record.activation_count || 0),
     validity: licenseValidity(record.status, record.starts_at, record.expires_at),
     created_at: record.created_at || null,
     updated_at: record.updated_at || record.created_at || null,
@@ -291,7 +292,8 @@ async function getLicenseRecord(env, licenseId) {
             l.starts_at, l.expires_at,
             p.slug AS product_code, p.name AS product_name,
             le.edition_id, pe.code AS edition_code, pe.name AS edition_name,
-            om.organization_id
+            om.organization_id,
+            (SELECT COUNT(*) FROM license_activations la WHERE la.license_id = l.id AND la.status = 'active') AS activation_count
      FROM licenses l
      JOIN products p ON p.id = l.product_id
      JOIN organization_members om ON om.account_type = 'customer'
@@ -334,8 +336,10 @@ function normalizeEntitlements(value) {
   if (!Array.isArray(value) || value.length > 50) return null;
   const allowedTypes = ["number", "text", "boolean", "json"];
   const normalized = [];
+  const keys = new Set();
   for (const item of value) {
-    if (!item || typeof item.key !== "string" || !/^[a-z][a-z0-9_.-]{0,63}$/.test(item.key) || !allowedTypes.includes(item.value_type)) return null;
+    if (!item || typeof item.key !== "string" || !/^[a-z][a-z0-9_.-]{0,63}$/.test(item.key) || !allowedTypes.includes(item.value_type) || keys.has(item.key)) return null;
+    keys.add(item.key);
     if (item.value_type === "number" && (!Number.isFinite(Number(item.value)) || Number(item.value) < 0)) return null;
     normalized.push({
       key: item.key,
@@ -355,6 +359,426 @@ function parseEntitlement(row) {
     try { value = JSON.parse(row.value_text); } catch { value = null; }
   }
   return { key: row.entitlement_key, value_type: row.value_type, value };
+}
+
+const DEFAULT_EVALUATION_POLICY = {
+  allow_dashboard: true,
+  allow_read_only_records: true,
+  allow_reports: true,
+  allow_backups: true,
+  allow_exports: true,
+  locked_modules: ["billing", "inventory_transactions", "accounting", "payroll"],
+};
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function decodeBase64Url(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  try {
+    const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function encodeBase64Url(value) {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function licenseModel(entitlements, billingPeriod) {
+  const explicitModel = entitlements["license.model"]?.value;
+  const allowedModels = ["cloud_subscription", "cloud_one_time", "on_premise_subscription", "on_premise_perpetual"];
+  if (allowedModels.includes(explicitModel)) return explicitModel;
+  const deployment = entitlements["deployment.mode"]?.value === "cloud" ? "cloud" : "on_premise";
+  if (billingPeriod === "one_time") return deployment === "cloud" ? "cloud_one_time" : "on_premise_perpetual";
+  return `${deployment}_subscription`;
+}
+
+export function calculateLicenseMode({ status, startsAt, expiresAt, model, graceDays = 7, now = new Date() }) {
+  const today = now.toISOString().slice(0, 10);
+  if (startsAt && startsAt > today) return "evaluation";
+  const perpetual = model === "on_premise_perpetual" || model === "cloud_one_time";
+  if (perpetual) {
+    return status === "SUSPENDED" || status === "CANCELLED" ? "evaluation" : "active";
+  }
+  if (status === "SUSPENDED" || status === "CANCELLED" || status === "DRAFT") return "evaluation";
+
+  if (!expiresAt || expiresAt >= today) return "active";
+
+  const expiryDay = Date.parse(`${expiresAt}T00:00:00Z`);
+  const todayDay = Date.parse(`${today}T00:00:00Z`);
+  const daysPastExpiry = Math.floor((todayDay - expiryDay) / 86400000);
+  return daysPastExpiry <= Math.max(0, Number(graceDays) || 0) ? "grace" : "evaluation";
+}
+
+function licenseEnvelopeJson(payload) {
+  return new TextEncoder().encode(JSON.stringify(payload));
+}
+
+async function signLicensePayload(env, payloadBytes) {
+  const signer = env.LICENSE_SIGNER;
+  const activeKeyId = boundedString(env.LICENSE_ACTIVE_KEY_ID, 128);
+  let publicKeys;
+  try {
+    publicKeys = JSON.parse(env.LICENSE_SIGNING_PUBLIC_KEYS || "{}");
+  } catch {
+    return { error: "License verification keys are not configured correctly", status: 503 };
+  }
+  if (!signer || typeof signer.fetch !== "function" || !activeKeyId || !publicKeys[activeKeyId]) {
+    return { error: "License signing service is not configured", status: 503 };
+  }
+
+  const payloadBase64url = encodeBase64Url(payloadBytes);
+  const signerResponse = await signer.fetch(new Request("https://license-signer.internal/v1/sign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ algorithm: "Ed25519", key_id: activeKeyId, payload: payloadBase64url }),
+  }));
+  if (!signerResponse.ok) {
+    return { error: "License signing service is unavailable", status: 503 };
+  }
+
+  let signed;
+  try {
+    signed = await signerResponse.json();
+  } catch {
+    return { error: "License signing service returned an invalid response", status: 502 };
+  }
+  const signature = decodeBase64Url(signed?.signature);
+  const publicKeyBytes = decodeBase64Url(publicKeys[activeKeyId]);
+  if (signed?.key_id !== activeKeyId || !signature || signature.length !== 64 || !publicKeyBytes || publicKeyBytes.length !== 32) {
+    return { error: "License signing service returned an invalid signature envelope", status: 502 };
+  }
+
+  try {
+    const publicKey = await crypto.subtle.importKey("raw", publicKeyBytes, { name: "Ed25519" }, false, ["verify"]);
+    const verified = await crypto.subtle.verify({ name: "Ed25519" }, publicKey, signature, payloadBytes);
+    if (!verified) return { error: "License signature verification failed", status: 502 };
+  } catch (error) {
+    console.error("License signature verification failed", error);
+    return { error: "License signature verification failed", status: 502 };
+  }
+
+  return { keyId: activeKeyId, payload: payloadBase64url, signature: signed.signature };
+}
+
+async function buildSignedLicenseArtifact(env, license, installationId, activationIdentifier, companyBinding, entitlements, status) {
+  let editionPolicy = null;
+  if (license.edition_id) {
+    editionPolicy = await env.DB.prepare(
+      `SELECT subscription_grace_days, rollout_stage, evaluation_policy_json
+       FROM product_edition_license_policies WHERE edition_id = ?`
+    ).bind(license.edition_id).first();
+  }
+  let evaluationPolicy = DEFAULT_EVALUATION_POLICY;
+  if (editionPolicy?.evaluation_policy_json) {
+    try {
+      const configured = JSON.parse(editionPolicy.evaluation_policy_json);
+      if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+        evaluationPolicy = { ...DEFAULT_EVALUATION_POLICY, ...configured };
+      }
+    } catch (error) {
+      console.error("Invalid edition evaluation policy", error);
+      return { error: "Edition evaluation policy is invalid", status: 503 };
+    }
+  }
+
+  const issuedAt = new Date().toISOString();
+  const documentId = crypto.randomUUID();
+  const payload = {
+    schema_version: 1,
+    document_id: documentId,
+    issuer: "SMRITISYS",
+    license_id: String(license.id),
+    customer_id: String(license.customer_id),
+    organization_id: String(license.organization_id),
+    product_code: license.product_code,
+    edition: license.edition_code || null,
+    company_binding: companyBinding,
+    installation_id: installationId,
+    activation_identifier: activationIdentifier,
+    license_model: licenseModel(entitlements, license.billing_period),
+    status: status || license.status,
+    starts_at: license.starts_at,
+    expires_at: license.expires_at,
+    subscription_grace_days: Math.min(30, Math.max(0, Number(editionPolicy?.subscription_grace_days ?? 7))),
+    rollout_stage: editionPolicy?.rollout_stage || "shadow",
+    evaluation_policy: evaluationPolicy,
+    entitlements: Object.fromEntries(Object.entries(entitlements).map(([key, item]) => [key, item.value])),
+    issued_at: issuedAt,
+  };
+  const signed = await signLicensePayload(env, licenseEnvelopeJson(payload));
+  if (signed.error) return signed;
+
+  return {
+    document_id: documentId,
+    issued_at: issuedAt,
+    key_id: signed.keyId,
+    payload: signed.payload,
+    signature: signed.signature,
+  };
+}
+
+async function activateLicense(request, env, origin) {
+  const rateLimit = await requireRateLimit(env, request, "license-activation", 20, 60);
+  if (rateLimit) return rateLimit;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A JSON activation request is required" }, 400, origin);
+  }
+  const licenseKey = boundedString(body?.license_key, 200);
+  const productCode = boundedString(body?.product_code, 100);
+  const installationId = boundedString(body?.installation_id, 36);
+  const activationIdentifier = boundedString(body?.activation_identifier, 36);
+  const companyBinding = body?.company_binding == null ? null : boundedString(body.company_binding, 128);
+  const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
+  const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
+  if (!licenseKey || !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
+    return json({ ok: false, error: "License key, product code, installation ID, and activation identifier are required" }, 400, origin);
+  }
+  if (!refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
+    return json({ ok: false, error: "A valid Ed25519 refresh public key is required" }, 400, origin);
+  }
+  if (body?.company_binding != null && !companyBinding) {
+    return json({ ok: false, error: "Company binding must be a non-empty string of at most 128 characters" }, 400, origin);
+  }
+
+  const license = await env.DB.prepare(
+    `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.seats, l.status,
+            l.starts_at, l.expires_at, p.slug AS product_code, p.billing_period,
+            le.edition_id, pe.code AS edition_code, om.organization_id
+     FROM licenses l
+     JOIN products p ON p.id = l.product_id
+     JOIN organization_members om ON om.account_type = 'customer'
+       AND om.account_id = l.customer_id AND om.status = 'active'
+     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+     LEFT JOIN license_editions le ON le.license_id = l.id
+     LEFT JOIN product_editions pe ON pe.id = le.edition_id
+     WHERE l.license_key = ? AND p.slug = ?
+     ORDER BY om.id LIMIT 1`
+  ).bind(licenseKey, productCode).first();
+  if (!license) return json({ ok: false, error: "License not found for this product" }, 404, origin);
+  if (license.status === "DRAFT") {
+    return json({ ok: false, error: "Draft licenses cannot be activated" }, 409, origin);
+  }
+
+  const existing = await env.DB.prepare(
+    `SELECT id, installation_id, status FROM license_activations
+     WHERE license_id = ? AND activation_identifier = ?`
+  ).bind(license.id, activationIdentifier).first();
+  if (existing && (existing.installation_id !== installationId || existing.status !== "active")) {
+    return json({ ok: false, error: "Activation identifier is already bound or revoked" }, 409, origin);
+  }
+  const activeCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM license_activations WHERE license_id = ? AND status = 'active'"
+  ).bind(license.id).first();
+  if (!existing && Number(activeCount?.count || 0) >= Number(license.seats || 1)) {
+    return json({ ok: false, error: "The license activation limit has been reached" }, 409, origin);
+  }
+
+  const entitlementRows = await env.DB.prepare(
+    `SELECT entitlement_key, value_type, value_text, value_number
+     FROM license_entitlements WHERE license_id = ? ORDER BY entitlement_key`
+  ).bind(license.id).all();
+  const entitlements = Object.fromEntries((entitlementRows.results || []).map((row) => {
+    const parsed = parseEntitlement(row);
+    return [parsed.key, parsed];
+  }));
+  const expectedCompanyBinding = entitlements["company.binding"]?.value;
+  if (
+    typeof expectedCompanyBinding !== "string" ||
+    !expectedCompanyBinding.trim() ||
+    expectedCompanyBinding !== companyBinding
+  ) {
+    return json({ ok: false, error: "License is not registered for this company" }, 404, origin);
+  }
+
+  const signed = await buildSignedLicenseArtifact(
+    env, license, installationId, activationIdentifier, companyBinding, entitlements, license.status,
+  );
+  if (signed.error) return json({ ok: false, error: signed.error }, signed.status, origin);
+
+  const metadata = JSON.stringify({ source: "signed_license_activation", company_binding: companyBinding });
+  const artifactResult = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO license_activations
+       (license_id, installation_id, activation_identifier, refresh_public_key, metadata_json)
+       SELECT ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM license_activations
+         WHERE license_id = ? AND activation_identifier = ? AND installation_id = ? AND status = 'active'
+       ) OR (
+         SELECT COUNT(*) FROM license_activations WHERE license_id = ? AND status = 'active'
+       ) < ?`
+    ).bind(license.id, installationId, activationIdentifier, refreshPublicKey, metadata, license.id, activationIdentifier, installationId, license.id, Number(license.seats || 1)),
+    env.DB.prepare(
+      `UPDATE license_activations SET last_seen_at = datetime('now'), refresh_public_key = ?
+       WHERE license_id = ? AND activation_identifier = ? AND installation_id = ? AND status = 'active'`
+    ).bind(refreshPublicKey, license.id, activationIdentifier, installationId),
+    env.DB.prepare(
+      `INSERT INTO license_artifacts
+       (document_id, license_id, installation_id, activation_identifier, key_id, algorithm, payload_base64url, signature_base64url, issued_at)
+       SELECT ?, ?, ?, ?, ?, 'Ed25519', ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM license_activations
+         WHERE license_id = ? AND activation_identifier = ? AND installation_id = ? AND status = 'active'
+       )`
+    ).bind(signed.document_id, license.id, installationId, activationIdentifier, signed.key_id, signed.payload, signed.signature, signed.issued_at, license.id, activationIdentifier, installationId),
+  ]);
+  if (Number(artifactResult?.[2]?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "The license activation limit was reached during registration" }, 409, origin);
+  }
+
+  if (!existing) {
+    await recordLicenseEvent(env, { id: license.id, organization_id: license.organization_id }, null,
+      "ACTIVATION_CREATED", license.status, license.status,
+      { installation_id: installationId, activation_identifier: activationIdentifier, artifact_id: signed.document_id });
+  }
+  await writeAudit(env, request, { person_id: null, organization_id: license.organization_id },
+    "LICENSE_ARTIFACT_ISSUED", "license_artifact", signed.document_id, null,
+    { license_id: license.id, installation_id: installationId, key_id: signed.key_id });
+
+  return json({
+    ok: true,
+    artifact: {
+      document_id: signed.document_id,
+      algorithm: "Ed25519",
+      key_id: signed.key_id,
+      payload: signed.payload,
+      signature: signed.signature,
+    },
+  }, 201, origin);
+}
+
+async function refreshLicense(request, env, origin) {
+  const rateLimit = await requireRateLimit(env, request, "license-refresh", 20, 60);
+  if (rateLimit) return rateLimit;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A JSON refresh request is required" }, 400, origin);
+  }
+  const productCode = boundedString(body?.product_code, 100);
+  const installationId = boundedString(body?.installation_id, 36);
+  const activationIdentifier = boundedString(body?.activation_identifier, 36);
+  const companyBinding = boundedString(body?.company_binding, 128);
+  const timestamp = Number(body?.timestamp);
+  const nonce = boundedString(body?.nonce, 36);
+  const signature = decodeBase64Url(body?.signature);
+  if (
+    !productCode ||
+    !UUID_PATTERN.test(installationId || "") ||
+    !UUID_PATTERN.test(activationIdentifier || "") ||
+    !companyBinding ||
+    !Number.isSafeInteger(timestamp) ||
+    Math.abs(Date.now() - timestamp) > 5 * 60 * 1000 ||
+    !UUID_PATTERN.test(nonce || "") ||
+    !signature ||
+    signature.length !== 64
+  ) {
+    return json({ ok: false, error: "The signed refresh request is invalid or expired" }, 400, origin);
+  }
+
+  const license = await env.DB.prepare(
+    `SELECT l.id, l.customer_id, l.product_id, l.status, l.starts_at, l.expires_at, l.seats,
+            p.slug AS product_code, p.billing_period, le.edition_id, pe.code AS edition_code,
+            om.organization_id, la.status AS activation_status, la.refresh_public_key
+     FROM licenses l
+     JOIN products p ON p.id = l.product_id
+     JOIN organization_members om ON om.account_type = 'customer'
+       AND om.account_id = l.customer_id AND om.status = 'active'
+     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+     JOIN license_activations la ON la.license_id = l.id
+       AND la.installation_id = ? AND la.activation_identifier = ?
+     LEFT JOIN license_editions le ON le.license_id = l.id
+     LEFT JOIN product_editions pe ON pe.id = le.edition_id
+     WHERE p.slug = ?
+     ORDER BY om.id LIMIT 1`
+  ).bind(installationId, activationIdentifier, productCode).first();
+  if (!license || license.product_code !== productCode) {
+    return json({ ok: false, error: "License activation not found" }, 404, origin);
+  }
+
+  const entitlementRows = await env.DB.prepare(
+    `SELECT entitlement_key, value_type, value_text, value_number
+     FROM license_entitlements WHERE license_id = ? ORDER BY entitlement_key`
+  ).bind(license.id).all();
+  const entitlements = Object.fromEntries((entitlementRows.results || []).map((row) => {
+    const parsed = parseEntitlement(row);
+    return [parsed.key, parsed];
+  }));
+  if (entitlements["company.binding"]?.value !== companyBinding) {
+    return json({ ok: false, error: "License is not registered for this company" }, 404, origin);
+  }
+
+  const publicKeyBytes = decodeBase64Url(license.refresh_public_key);
+  if (!publicKeyBytes || publicKeyBytes.length !== 32) {
+    return json({ ok: false, error: "Installation refresh credentials are not registered" }, 409, origin);
+  }
+  const message = new TextEncoder().encode([
+    productCode, companyBinding, installationId, activationIdentifier, timestamp, nonce,
+  ].join("\n"));
+  try {
+    const publicKey = await crypto.subtle.importKey("raw", publicKeyBytes, { name: "Ed25519" }, false, ["verify"]);
+    if (!(await crypto.subtle.verify({ name: "Ed25519" }, publicKey, signature, message))) {
+      return json({ ok: false, error: "Installation refresh signature is invalid" }, 403, origin);
+    }
+  } catch (error) {
+    console.error("Installation refresh signature verification failed", error);
+    return json({ ok: false, error: "Installation refresh signature could not be verified" }, 403, origin);
+  }
+
+  await env.DB.prepare(
+    "DELETE FROM license_refresh_nonces WHERE created_at < datetime('now', '-10 minutes')"
+  ).run();
+  const nonceResult = await env.DB.prepare(
+    `INSERT OR IGNORE INTO license_refresh_nonces (license_id, activation_identifier, nonce)
+     VALUES (?, ?, ?)`
+  ).bind(license.id, activationIdentifier, nonce).run();
+  if (Number(nonceResult?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "Refresh request has already been used" }, 409, origin);
+  }
+
+  const effectiveStatus = license.activation_status === "revoked" ? "SUSPENDED" : license.status;
+  const signed = await buildSignedLicenseArtifact(
+    env, license, installationId, activationIdentifier, companyBinding, entitlements, effectiveStatus,
+  );
+  if (signed.error) return json({ ok: false, error: signed.error }, signed.status, origin);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO license_artifacts
+       (document_id, license_id, installation_id, activation_identifier, key_id, algorithm, payload_base64url, signature_base64url, issued_at)
+       VALUES (?, ?, ?, ?, ?, 'Ed25519', ?, ?, ?)`
+    ).bind(signed.document_id, license.id, installationId, activationIdentifier,
+      signed.key_id, signed.payload, signed.signature, signed.issued_at),
+    env.DB.prepare(
+      `UPDATE license_activations SET last_seen_at = datetime('now')
+       WHERE license_id = ? AND installation_id = ? AND activation_identifier = ? AND status = 'active'`
+    ).bind(license.id, installationId, activationIdentifier),
+  ]);
+  await writeAudit(env, request, { person_id: null, organization_id: license.organization_id },
+    "LICENSE_ARTIFACT_REFRESHED", "license_artifact", signed.document_id, null,
+    { license_id: license.id, installation_id: installationId, activation_identifier: activationIdentifier, key_id: signed.key_id });
+
+  return json({
+    ok: true,
+    artifact: {
+      document_id: signed.document_id,
+      algorithm: "Ed25519",
+      key_id: signed.key_id,
+      payload: signed.payload,
+      signature: signed.signature,
+    },
+  }, 200, origin);
 }
 
 async function requireSuperAdmin(request, env) {
@@ -441,6 +865,111 @@ async function handleEditions(request, env, productId) {
   }
 }
 
+async function handlePublicLicenseKeys(env) {
+  let publicKeys;
+  try {
+    publicKeys = JSON.parse(env.LICENSE_SIGNING_PUBLIC_KEYS || "{}");
+  } catch {
+    return json({ ok: false, error: "License verification keys are not configured correctly" }, 503);
+  }
+  if (!publicKeys || typeof publicKeys !== "object" || Array.isArray(publicKeys)) {
+    return json({ ok: false, error: "License verification keys are not configured correctly" }, 503);
+  }
+  const keys = [];
+  for (const [keyId, encodedKey] of Object.entries(publicKeys)) {
+    const key = decodeBase64Url(encodedKey);
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(keyId) || !key || key.length !== 32) {
+      return json({ ok: false, error: "A configured license verification key is invalid" }, 503);
+    }
+    keys.push({ key_id: keyId, algorithm: "Ed25519", public_key: encodedKey });
+  }
+  return json({ ok: true, keys });
+}
+
+async function handleEditionLicensePolicy(request, env, productId, editionId) {
+  const productNumericId = numericId(productId);
+  const editionNumericId = numericId(editionId);
+  if (!productNumericId || !editionNumericId) return json({ ok: false, error: "A valid product and edition id are required" }, 400);
+  const permission = request.method === "GET" ? "license.view" : "license.manage_entitlements";
+  const principal = await requirePermission(request, env, permission);
+  if (!principal) return json({ ok: false, error: "Edition license policy permission required" }, 403);
+  const edition = await env.DB.prepare(
+    "SELECT id, product_id FROM product_editions WHERE id = ? AND product_id = ?"
+  ).bind(editionNumericId, productNumericId).first();
+  if (!edition) return json({ ok: false, error: "Edition not found" }, 404);
+
+  if (request.method === "GET") {
+    const policy = await env.DB.prepare(
+      `SELECT subscription_grace_days, rollout_stage, evaluation_policy_json, updated_at
+       FROM product_edition_license_policies WHERE edition_id = ?`
+    ).bind(editionNumericId).first();
+    let evaluationPolicy = DEFAULT_EVALUATION_POLICY;
+    if (policy?.evaluation_policy_json) {
+      try {
+        evaluationPolicy = { ...DEFAULT_EVALUATION_POLICY, ...JSON.parse(policy.evaluation_policy_json) };
+      } catch (error) {
+        console.error("Invalid edition evaluation policy", error);
+        return json({ ok: false, error: "Edition evaluation policy is invalid" }, 503);
+      }
+    }
+    return json({
+      ok: true,
+      policy: {
+        subscription_grace_days: Number(policy?.subscription_grace_days ?? 7),
+        rollout_stage: policy?.rollout_stage || "shadow",
+        evaluation_policy: evaluationPolicy,
+        updated_at: policy?.updated_at || null,
+      },
+    });
+  }
+
+  if (request.method !== "PUT") return json({ ok: false, error: "Unsupported edition license policy operation" }, 405);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A JSON policy is required" }, 400);
+  }
+  const graceDays = Number(body?.subscription_grace_days);
+  const rolloutStage = body?.rollout_stage;
+  const evaluationPolicy = body?.evaluation_policy;
+  const policyBooleanKeys = ["allow_dashboard", "allow_read_only_records", "allow_reports", "allow_backups", "allow_exports"];
+  const lockedModules = evaluationPolicy?.locked_modules;
+  if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 30 ||
+      !["shadow", "enforced"].includes(rolloutStage) ||
+      !evaluationPolicy || typeof evaluationPolicy !== "object" || Array.isArray(evaluationPolicy) ||
+      policyBooleanKeys.some((key) => typeof evaluationPolicy[key] !== "boolean") ||
+      !Array.isArray(lockedModules) || lockedModules.length > 50 ||
+      lockedModules.some((module) => typeof module !== "string" || !/^[a-z][a-z0-9_.-]{0,63}$/.test(module))) {
+    return json({ ok: false, error: "The evaluation policy contains invalid values" }, 400);
+  }
+  const savedPolicy = {
+    allow_dashboard: evaluationPolicy.allow_dashboard,
+    allow_read_only_records: evaluationPolicy.allow_read_only_records,
+    allow_reports: evaluationPolicy.allow_reports,
+    allow_backups: evaluationPolicy.allow_backups,
+    allow_exports: evaluationPolicy.allow_exports,
+    locked_modules: [...new Set(lockedModules)],
+  };
+  await env.DB.prepare(
+    `INSERT INTO product_edition_license_policies
+     (edition_id, subscription_grace_days, rollout_stage, evaluation_policy_json, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(edition_id) DO UPDATE SET
+       subscription_grace_days = excluded.subscription_grace_days,
+       rollout_stage = excluded.rollout_stage,
+       evaluation_policy_json = excluded.evaluation_policy_json,
+       updated_by = excluded.updated_by,
+       updated_at = datetime('now')`
+  ).bind(editionNumericId, graceDays, rolloutStage, JSON.stringify(savedPolicy), principal.person_id).run();
+  await writeAudit(env, request, principal, "EDITION_LICENSE_POLICY_UPDATED", "product_edition", editionNumericId, null, {
+    subscription_grace_days: graceDays,
+    rollout_stage: rolloutStage,
+    evaluation_policy: savedPolicy,
+  });
+  return json({ ok: true, policy: { subscription_grace_days: graceDays, rollout_stage: rolloutStage, evaluation_policy: savedPolicy } });
+}
+
 async function listLicenses(request, env) {
   const principal = await requirePermission(request, env, "license.view");
   if (!principal) return json({ ok: false, error: "License permission required" }, 403);
@@ -449,7 +978,8 @@ async function listLicenses(request, env) {
   const { results } = await env.DB.prepare(
     `SELECT l.id, l.license_key, l.customer_id, l.product_id, l.status, l.starts_at, l.expires_at,
             om.organization_id, p.slug AS product_code, p.name AS product_name,
-            le.edition_id, pe.code AS edition_code, pe.name AS edition_name
+            le.edition_id, pe.code AS edition_code, pe.name AS edition_name,
+            (SELECT COUNT(*) FROM license_activations la WHERE la.license_id = l.id AND la.status = 'active') AS activation_count
      FROM licenses l
      JOIN products p ON p.id = l.product_id
      JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
@@ -458,7 +988,16 @@ async function listLicenses(request, env) {
      LEFT JOIN product_editions pe ON pe.id = le.edition_id
     WHERE 1 = 1 ${filter} ORDER BY l.id DESC`
   ).bind(...bindings).all();
-  return json({ ok: true, licenses: results.map(licenseResponse) });
+  return json({
+    ok: true,
+    licenses: results.map((record) => {
+      const license = licenseResponse(record);
+      if (principal.account_type === "customer" && record.status === "DRAFT") {
+        license.license_key = null;
+      }
+      return license;
+    }),
+  });
 }
 
 async function createLicense(request, env) {
@@ -490,6 +1029,14 @@ async function createLicense(request, env) {
     : `LIC-${makeToken().slice(0, 24).toUpperCase()}`;
   const entitlements = normalizeEntitlements(body.entitlements || []);
   if (!entitlements) return json({ ok: false, error: "Invalid entitlement values" }, 400);
+  const companyBinding = entitlements.find((entitlement) => entitlement.key === "company.binding");
+  if (!companyBinding || companyBinding.value_type !== "text" || !companyBinding.value_text?.trim()) {
+    return json({ ok: false, error: "A non-empty text company.binding entitlement is required" }, 400);
+  }
+  companyBinding.value_text = companyBinding.value_text.trim();
+  if (body.company_binding != null && String(body.company_binding).trim() !== companyBinding.value_text) {
+    return json({ ok: false, error: "Company binding must match its license entitlement" }, 400);
+  }
   try {
     const statements = [
       env.DB.prepare(
@@ -559,6 +1106,41 @@ async function handleLicenseActivations(request, env, licenseId) {
     ...activation,
     metadata: activation.metadata_json ? JSON.parse(activation.metadata_json) : null,
   })) });
+}
+
+async function handleLicenseArtifacts(request, env, licenseId) {
+  const access = await requireLicenseAccess(request, env, licenseId, "license.view");
+  if (access.error) return access.error;
+  const { results } = await env.DB.prepare(
+    `SELECT id, document_id, license_id, installation_id, activation_identifier, key_id,
+            algorithm, payload_base64url, signature_base64url, issued_at, created_at
+     FROM license_artifacts WHERE license_id = ? ORDER BY created_at DESC, id DESC LIMIT 100`
+  ).bind(access.license.id).all();
+  return json({ ok: true, artifacts: results });
+}
+
+async function revokeLicenseActivation(request, env, licenseId, activationId) {
+  const access = await requireLicenseAccess(request, env, licenseId, "license.activate");
+  if (access.error) return access.error;
+  const activationNumericId = numericId(activationId);
+  if (!activationNumericId) return json({ ok: false, error: "A valid activation id is required" }, 400);
+  const activation = await env.DB.prepare(
+    `SELECT id, installation_id, activation_identifier, status
+     FROM license_activations WHERE id = ? AND license_id = ?`
+  ).bind(activationNumericId, access.license.id).first();
+  if (!activation) return json({ ok: false, error: "Activation not found" }, 404);
+  if (activation.status !== "active") return json({ ok: false, error: "Activation is already revoked" }, 409);
+
+  await env.DB.prepare(
+    `UPDATE license_activations SET status = 'revoked', deactivated_at = datetime('now')
+     WHERE id = ? AND license_id = ? AND status = 'active'`
+  ).bind(activationNumericId, access.license.id).run();
+  await recordLicenseEvent(env, access.license, access.principal, "ACTIVATION_REVOKED",
+    access.license.status, access.license.status,
+    { activation_id: activationNumericId, installation_id: activation.installation_id });
+  await writeAudit(env, request, access.principal, "ACTIVATION_REVOKED", "license_activation",
+    activationNumericId, { status: "active" }, { status: "revoked" });
+  return json({ ok: true, activation_id: activationNumericId, status: "revoked" });
 }
 
 async function handleLicenseEvents(request, env, licenseId) {
@@ -688,6 +1270,10 @@ async function handleLicenses(request, env, segments) {
   const child = segments[1];
   if (child === "entitlements" && ["GET", "POST"].includes(request.method)) return handleLicenseEntitlements(request, env, licenseId);
   if (child === "activations" && request.method === "GET") return handleLicenseActivations(request, env, licenseId);
+  if (child === "activations" && segments[3] === "revoke" && request.method === "POST") {
+    return revokeLicenseActivation(request, env, licenseId, segments[2]);
+  }
+  if (child === "artifacts" && request.method === "GET") return handleLicenseArtifacts(request, env, licenseId);
   if (child === "events" && request.method === "GET") return handleLicenseEvents(request, env, licenseId);
   if (child === "requests" && request.method === "POST") return handleLicenseRequest(request, env, licenseId);
   if (["activate", "suspend", "renew"].includes(child) && request.method === "POST") return transitionLicense(request, env, licenseId, child);
@@ -1228,6 +1814,142 @@ async function handleRequirementResource(request, env, requirementId, resource) 
   return json({ ok: true, requirement: { ...requirement, messages } });
 }
 
+const ANNOUNCEMENT_SEVERITIES = ["info", "maintenance", "degraded", "outage"];
+const ANNOUNCEMENT_STATUSES = ["draft", "published", "resolved", "archived"];
+
+function normalizeAnnouncementDate(value) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || value.length > 40) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function announcementRowQuery() {
+  return `SELECT a.id, a.product_id, a.title, a.message, a.audience, a.severity, a.status,
+                 a.starts_at, a.ends_at, a.published_at, a.created_at, a.updated_at,
+                 p.slug AS product_code, p.name AS product_name
+          FROM announcements a
+          LEFT JOIN products p ON p.id = a.product_id`;
+}
+
+async function handleCustomerAnnouncements(request, env) {
+  const session = await getCustomerSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer login required" }, 401);
+  if (!(await hasPermission(env, session, "organization.view"))) {
+    return json({ ok: false, error: "Organization access required" }, 403);
+  }
+
+  const { results } = await env.DB.prepare(
+    `${announcementRowQuery()}
+     WHERE a.status IN ('published', 'resolved')
+       AND a.audience = 'customer'
+       AND datetime(a.starts_at) <= datetime('now')
+       AND (a.ends_at IS NULL OR datetime(a.ends_at) > datetime('now'))
+       AND (a.product_id IS NULL OR EXISTS (
+         SELECT 1 FROM licenses l
+         JOIN organization_members om ON om.account_type = 'customer'
+           AND om.account_id = l.customer_id AND om.organization_id = ? AND om.status = 'active'
+         WHERE l.product_id = a.product_id AND l.status NOT IN ('CANCELLED', 'EXPIRED')
+       ))
+     ORDER BY CASE a.severity
+       WHEN 'outage' THEN 1 WHEN 'degraded' THEN 2
+       WHEN 'maintenance' THEN 3 ELSE 4 END,
+       a.published_at DESC, a.id DESC`
+  ).bind(session.organization_id).all();
+  return json({ ok: true, announcements: results });
+}
+
+async function handleAdminAnnouncements(request, env, announcementId = null) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (request.method === "GET" && !announcementId) {
+    const { results } = await env.DB.prepare(
+      `${announcementRowQuery()} ORDER BY a.created_at DESC, a.id DESC LIMIT 200`
+    ).all();
+    return json({ ok: true, announcements: results });
+  }
+
+  const body = await request.json();
+  if (request.method === "POST" && !announcementId) {
+    const title = boundedString(body.title, 200);
+    const content = boundedString(body.message, 5000);
+    const severity = body.severity || "info";
+    const status = body.status || "draft";
+    const productId = body.product_id == null || body.product_id === "" ? null : numericId(body.product_id);
+    const startsAt = body.starts_at === undefined ? null : normalizeAnnouncementDate(body.starts_at);
+    const endsAt = body.ends_at === undefined ? null : normalizeAnnouncementDate(body.ends_at);
+    if (!title || !content) return json({ ok: false, error: "Title and message are required" }, 400);
+    if (!ANNOUNCEMENT_SEVERITIES.includes(severity)) return json({ ok: false, error: "Invalid announcement severity" }, 400);
+    if (!["draft", "published"].includes(status)) return json({ ok: false, error: "New announcements must be draft or published" }, 400);
+    if (productId === null && body.product_id != null && body.product_id !== "") return json({ ok: false, error: "A valid product is required" }, 400);
+    if (startsAt === undefined || endsAt === undefined) return json({ ok: false, error: "Announcement dates are invalid" }, 400);
+    if (endsAt && new Date(endsAt).getTime() <= new Date(startsAt || new Date()).getTime()) {
+      return json({ ok: false, error: "The end time must be after the start time" }, 400);
+    }
+    if (productId && !(await env.DB.prepare("SELECT id FROM products WHERE id = ?").bind(productId).first())) {
+      return json({ ok: false, error: "Product not found" }, 404);
+    }
+
+    const result = await env.DB.prepare(
+            `INSERT INTO announcements
+             (product_id, title, message, audience, severity, status, starts_at, ends_at, published_at, created_by, updated_by)
+             VALUES (?, ?, ?, 'customer', ?, ?, COALESCE(?, datetime('now')), ?,
+               CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END, ?, ?)`
+          ).bind(productId, title, content, severity, status, startsAt, endsAt, status, session.account_id, session.account_id).run();
+    const announcement = await env.DB.prepare(`${announcementRowQuery()} WHERE a.id = ?`).bind(result.meta.last_row_id).first();
+    await writeAudit(env, request, session, "ANNOUNCEMENT_CREATED", "announcement", announcement.id, null, announcement);
+    return json({ ok: true, announcement }, 201);
+  }
+
+  if (request.method === "PATCH" && announcementId) {
+    const current = await env.DB.prepare(`${announcementRowQuery()} WHERE a.id = ?`).bind(announcementId).first();
+    if (!current) return json({ ok: false, error: "Announcement not found" }, 404);
+
+    const title = Object.hasOwn(body, "title") ? boundedString(body.title, 200) : current.title;
+    const content = Object.hasOwn(body, "message") ? boundedString(body.message, 5000) : current.message;
+    const severity = body.severity || current.severity;
+    const productId = Object.hasOwn(body, "product_id")
+      ? (body.product_id == null || body.product_id === "" ? null : numericId(body.product_id))
+      : current.product_id;
+    const startsAt = Object.hasOwn(body, "starts_at") && body.starts_at
+      ? normalizeAnnouncementDate(body.starts_at)
+      : current.starts_at;
+    const endsAt = Object.hasOwn(body, "ends_at") ? normalizeAnnouncementDate(body.ends_at) : current.ends_at;
+    const status = body.status || current.status;
+    const transitions = { draft: ["published", "archived"], published: ["resolved", "archived"], resolved: ["archived"], archived: [] };
+
+    if (!title || !content) return json({ ok: false, error: "Title and message are required" }, 400);
+    if (!ANNOUNCEMENT_SEVERITIES.includes(severity)) return json({ ok: false, error: "Invalid announcement severity" }, 400);
+    if (!ANNOUNCEMENT_STATUSES.includes(status)) return json({ ok: false, error: "Invalid announcement status" }, 400);
+    if (status !== current.status && !transitions[current.status].includes(status)) {
+      return json({ ok: false, error: "Invalid announcement status transition" }, 409);
+    }
+    if (Object.hasOwn(body, "product_id") && productId === null && body.product_id != null && body.product_id !== "") {
+      return json({ ok: false, error: "A valid product is required" }, 400);
+    }
+    if (startsAt === undefined || endsAt === undefined) return json({ ok: false, error: "Announcement dates are invalid" }, 400);
+    if (endsAt && new Date(endsAt).getTime() <= new Date(startsAt).getTime()) {
+      return json({ ok: false, error: "The end time must be after the start time" }, 400);
+    }
+    if (productId && !(await env.DB.prepare("SELECT id FROM products WHERE id = ?").bind(productId).first())) {
+      return json({ ok: false, error: "Product not found" }, 404);
+    }
+
+    await env.DB.prepare(
+      `UPDATE announcements SET product_id = ?, title = ?, message = ?, severity = ?, status = ?,
+       starts_at = ?, ends_at = ?,
+       published_at = CASE WHEN ? = 'published' AND published_at IS NULL THEN datetime('now') ELSE published_at END,
+       updated_by = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(productId, title, content, severity, status, startsAt, endsAt, status, session.account_id, announcementId).run();
+    const updated = await env.DB.prepare(`${announcementRowQuery()} WHERE a.id = ?`).bind(announcementId).first();
+    await writeAudit(env, request, session, "ANNOUNCEMENT_UPDATED", "announcement", announcementId, current, updated);
+    return json({ ok: true, announcement: updated });
+  }
+
+  return json({ ok: false, error: "Unsupported announcement operation" }, 405);
+}
+
 function releaseResponse(release, assets = []) {
   return {
     id: release.id,
@@ -1452,7 +2174,12 @@ async function handleSignup(request, env) {
 }
 
 async function handleLogin(request, env) {
-  const body = await request.json();
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid JSON login request is required" }, 400);
+  }
   const type = body.type;
   const email = validEmail(body.email);
   const password = boundedString(body.password, 128);
@@ -1586,6 +2313,9 @@ export async function onRequest(context) {
   if (request.method === "OPTIONS") return cors(origin);
 
   try {
+    if (path === "license/activate" && request.method === "POST") return await activateLicense(request, env, origin);
+    if (path === "license/refresh" && request.method === "POST") return await refreshLicense(request, env, origin);
+    if (path === "license-verification-keys" && request.method === "GET") return await handlePublicLicenseKeys(env);
     if (path === "demo" && request.method === "POST") return await handleDemo(request, env);
     if (path === "signup" && request.method === "POST") return await handleSignup(request, env);
     if (path === "login" && request.method === "POST") return await handleLogin(request, env);
@@ -1614,6 +2344,15 @@ export async function onRequest(context) {
       if (!releaseId) return json({ ok: false, error: "A valid release id is required" }, 400);
       return await handleReleases(request, env, releaseId);
     }
+    if (path === "announcements" && request.method === "GET") return await handleCustomerAnnouncements(request, env);
+    if (path === "admin/announcements" && ["GET", "POST"].includes(request.method)) {
+      return await handleAdminAnnouncements(request, env);
+    }
+    if (path.startsWith("admin/announcements/") && request.method === "PATCH") {
+      const announcementId = numericId(path.split("/")[2]);
+      if (!announcementId) return json({ ok: false, error: "A valid announcement id is required" }, 400);
+      return await handleAdminAnnouncements(request, env, announcementId);
+    }
     if (path.startsWith("partner/") && path.split("/").length === 2 && request.method === "GET") {
       return await handlePartner(request, env, path.split("/")[1]);
     }
@@ -1625,6 +2364,10 @@ export async function onRequest(context) {
       return await handleCommercial(request, env, "orders", orderId);
     }
     if (path === "products" && ["GET", "POST"].includes(request.method)) return await handleProducts(request, env);
+    const editionPolicyMatch = path.match(/^products\/(\d+)\/editions\/(\d+)\/evaluation-policy$/);
+    if (editionPolicyMatch && ["GET", "PUT"].includes(request.method)) {
+      return await handleEditionLicensePolicy(request, env, editionPolicyMatch[1], editionPolicyMatch[2]);
+    }
     if (path.startsWith("products/") && path.endsWith("/editions") && ["GET", "POST"].includes(request.method)) {
       return await handleEditions(request, env, path.split("/")[1]);
     }

@@ -41,6 +41,7 @@ FROM product_editions pe WHERE pe.code = 'retail-enterprise';
 
 -- 8. License Entitlements
 INSERT OR IGNORE INTO license_entitlements (license_id, entitlement_key, value_type, value_text, value_number) VALUES
+  (101, 'company.binding', 'text', 'COMP-001', NULL),
   (101, 'pos_terminals', 'number', NULL, 5),
   (101, 'multi_branch', 'boolean', 'true', NULL),
   (101, 'gst_e_invoicing', 'boolean', 'true', NULL),

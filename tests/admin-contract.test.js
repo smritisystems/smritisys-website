@@ -11,6 +11,8 @@ const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.
   assert.match(html, /data-admin-view="users"/);
   assert.match(html, /data-admin-view="organizations"/);
   assert.match(html, /data-admin-view="audit"/);
+  assert.match(html, /data-admin-view="announcements"/);
+  assert.match(script, /adminApi\('admin\/announcements'\)/);
   assert.match(script, /adminApi\('admin\/overview'\)/);
   assert.match(script, /adminApi\('admin\/organizations'\)/);
   assert.match(script, /adminApi\('admin\/audit'\)/);
@@ -22,5 +24,18 @@ test("admin endpoints require the super-admin guard", () => {
   assert.match(api, /admin\/overview/);
   assert.match(api, /admin\/organizations/);
   assert.match(api, /admin\/audit/);
+  assert.match(api, /admin\/announcements/);
+  assert.match(api, /handleAdminAnnouncements/);
   assert.match(api, /Super admin access required/);
+});
+
+test("license workspace exposes issuance, lifecycle, activation, and edition policy controls", () => {
+  assert.match(html, /id="licenseIssueForm"/);
+  assert.match(html, /id="licensePolicyForm"/);
+  assert.match(html, /id="adminLicensesList"/);
+  assert.match(script, /data-license-suspend/);
+  assert.match(script, /data-license-renew/);
+  assert.match(script, /data-activation-revoke/);
+  assert.match(script, /evaluation-policy/);
+  assert.match(script, /company\.binding/);
 });

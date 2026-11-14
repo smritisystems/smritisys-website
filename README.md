@@ -96,6 +96,9 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | POST | `/api/requirements` | Submit a custom requirement request (Bearer token) |
 | GET | `/api/requirements/:id` | Read one organization-owned requirement and replies (Bearer token) |
 | POST | `/api/requirements/:id/messages` | Add a customer reply to an organization-owned requirement (Bearer token) |
+| GET | `/api/announcements` | List current customer notices for the authenticated organization and its licensed products |
+| GET/POST | `/api/admin/announcements` | List or create announcements (super admin only) |
+| PATCH | `/api/admin/announcements/:id` | Edit an announcement or transition its status (super admin only) |
 | GET | `/api/partner/me` | Read the authenticated partner relationship (Bearer token) |
 | GET | `/api/partner/customers` | List linked customer organizations (partner membership required) |
 | GET | `/api/partner/licenses` | Read licenses for linked customer organizations (partner license permission required) |
@@ -139,7 +142,7 @@ and local development. The API does not allow wildcard CORS.
 Before deploying the completed control plane:
 
 1. Back up the remote D1 database.
-2. Apply migrations `0002_identity_rbac.sql` through `0012_rate_limits.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production.
+2. Apply migrations `0002_identity_rbac.sql` through `0013_customer_announcements.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production. Migration `0013` preserves existing announcements while adding product targeting, severity, scheduling, and audit attribution.
 3. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
 4. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
 5. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.

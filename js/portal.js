@@ -44,7 +44,9 @@ function statusLabel(status) {
   return ({
     ACTIVE: 'Active', SUSPENDED: 'Suspended', PENDING_RENEWAL: 'Pending renewal',
     EXPIRED: 'Expired', CANCELLED: 'Cancelled', DRAFT: 'Draft',
-    active: 'Active', inactive: 'Inactive', open: 'Open', in_progress: 'In progress'
+    active: 'Active', inactive: 'Inactive', open: 'Open', in_progress: 'In progress',
+    info: 'Information', maintenance: 'Maintenance', degraded: 'Degraded service',
+    outage: 'Service outage', resolved: 'Resolved'
   }[status] || status || 'Unknown');
 }
 
@@ -141,6 +143,32 @@ function renderReleaseCard(release, detail = false) {
     ? `<div class="release-assets"><span class="eyebrow">Downloads</span>${release.assets.map((asset) => `<a class="secondary" href="${escapeHtml(asset.download_url)}" target="_blank" rel="noopener">${escapeHtml(asset.name)}${asset.platform ? ` · ${escapeHtml(asset.platform)}` : ''}</a>`).join('')}</div>`
     : '';
   return `<article class="card release-card"><div class="license-card-head"><div><span class="eyebrow">${escapeHtml(release.product.code)} · ${escapeHtml(release.version)}</span><h3>${escapeHtml(release.title)}</h3><p class="muted">${escapeHtml(release.product.name)} · Published ${formatDate(release.published_at?.slice(0, 10))}</p></div><span class="status">Published</span></div><p>${escapeHtml(release.summary || 'Release information is available for your licensed product.')}</p>${release.release_notes ? `<div class="release-notes"><span class="eyebrow">Release notes</span><p>${escapeHtml(release.release_notes)}</p></div>` : ''}${assets}</article>`;
+}
+
+function renderAnnouncementCard(item) {
+  const product = item.product_name ? `${item.product_name} · ` : '';
+  return `<article class="card release-card"><div class="license-card-head"><div><span class="eyebrow">${escapeHtml(product)}${escapeHtml(statusLabel(item.severity))}</span><h3>${escapeHtml(item.title)}</h3><p class="muted">Starts ${formatDate(item.starts_at?.slice(0, 10))}${item.ends_at ? ` · Ends ${formatDate(item.ends_at.slice(0, 10))}` : ''}</p></div><span class="status">${escapeHtml(statusLabel(item.status))}</span></div><p>${escapeHtml(item.message)}</p></article>`;
+}
+
+async function loadAnnouncements() {
+  const panel = $('#announcementState');
+  if (panel) { panel.className = 'state-panel'; panel.textContent = 'Loading announcements...'; }
+  try {
+    const data = await api('announcements');
+    const first = data.announcements[0];
+    if ($('#dashboardAnnouncements')) $('#dashboardAnnouncements').innerHTML = first
+      ? `<strong>${escapeHtml(statusLabel(first.severity))} · ${escapeHtml(first.title)}</strong><p class="muted">${escapeHtml(first.message)}</p>`
+      : '<p class="muted">There are no current service notices.</p>';
+    if (!data.announcements.length) {
+      if (panel) { panel.className = 'state-panel'; panel.innerHTML = '<h3>No current notices</h3><p class="muted">Service notices and customer announcements will appear here when published.</p>'; }
+      return;
+    }
+    if (panel) panel.classList.add('hidden');
+    $('#announcementList').innerHTML = data.announcements.map(renderAnnouncementCard).join('');
+  } catch (error) {
+    if (panel) { panel.className = 'state-panel error-state'; panel.textContent = error.status === 403 ? 'You are not authorized to view announcements.' : 'Announcements are unavailable.'; }
+    if ($('#dashboardAnnouncements')) $('#dashboardAnnouncements').innerHTML = '<p class="muted">Announcement information is unavailable.</p>';
+  }
 }
 
 async function loadReleases(targetId = 'releaseList') {
@@ -278,7 +306,7 @@ async function loadCustomerWorkspace() {
     state.profile = profileData.profile;
     fillProfile(state.profile);
     updateIdentity(state.profile);
-    await Promise.all([loadOrganization(), loadLicenses(), loadTickets(), loadReleases()]);
+    await Promise.all([loadOrganization(), loadLicenses(), loadTickets(), loadReleases(), loadAnnouncements()]);
   } catch (error) {
     $('#dashboardError').textContent = error.status === 403 ? 'This account is not authorized for the customer workspace.' : 'Some workspace data could not be loaded.';
     $('#dashboardError').className = 'state-panel error-state';
@@ -313,6 +341,7 @@ async function loadView(view) {
   if (view === 'support') await loadTickets();
   if (view === 'requirements') await loadRequirements();
   if (view === 'releases') await loadReleases();
+  if (view === 'announcements') await loadAnnouncements();
   if (view === 'commercial') await loadCommercial();
   if (view === 'admin') await loadAdminUsers();
 }
