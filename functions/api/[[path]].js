@@ -119,8 +119,10 @@ async function hashLegacyPassword(password) {
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const MAX_PBKDF2_ITERATIONS = 100000;
+
 async function hashPassword(password) {
-  const iterations = 120000;
+  const iterations = MAX_PBKDF2_ITERATIONS;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
@@ -136,9 +138,11 @@ async function verifyPassword(password, storedHash) {
 
   const [, prefix, algorithm, iterationsText, saltHex, expectedHash] = storedHash.match(/^(pbkdf2)-(sha256)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/) || [];
   if (!prefix || !algorithm || !iterationsText || !saltHex || !expectedHash) return false;
+  const iterations = Number(iterationsText);
+  if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > MAX_PBKDF2_ITERATIONS) return false;
   const salt = new Uint8Array(saltHex.match(/.{2}/g).map((value) => parseInt(value, 16)));
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: Number(iterationsText), hash: "SHA-256" }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
   const actualHash = [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return actualHash === expectedHash;
 }

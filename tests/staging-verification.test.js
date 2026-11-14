@@ -133,6 +133,48 @@ test("announcement migration preserves existing notices", () => {
   assert.equal(db.prepare("SELECT title FROM announcements_legacy WHERE id = 1").get().title, "Existing notice");
 });
 
+test("staff bootstrap uses Worker-supported PBKDF2 and can log in", async () => {
+  const d1 = createD1Mock();
+  d1.raw.prepare("DELETE FROM organization_members WHERE account_type = 'user' AND account_id = 201").run();
+  d1.raw.prepare("DELETE FROM people WHERE source_type = 'user' AND source_id = 201").run();
+  d1.raw.prepare("DELETE FROM users WHERE id = 201").run();
+  d1.raw.prepare("UPDATE system_settings SET setting_value = '0' WHERE setting_key = 'staff_bootstrap_consumed'").run();
+
+  const password = "Fresh-admin-test-passphrase-2026!";
+  const signup = await callApi(d1, "signup", {
+    method: "POST",
+    headers: { "X-Staff-Bootstrap": "test-bootstrap-token" },
+    bindings: { STAFF_BOOTSTRAP_TOKEN: "test-bootstrap-token" },
+    body: { type: "user", email: "bootstrap@example.test", name: "Bootstrap Admin", password },
+  });
+
+  assert.equal(signup.status, 200);
+  const storedHash = d1.raw.prepare("SELECT password_hash FROM users WHERE email = ?").get("bootstrap@example.test").password_hash;
+  const iterations = Number(storedHash.split("$")[1]);
+  assert.ok(iterations > 0 && iterations <= 100000);
+
+  const login = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "user", email: "bootstrap@example.test", password },
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.data.user.role, "super_admin");
+});
+
+test("unsupported PBKDF2 iteration counts are rejected without a server error", async () => {
+  const d1 = createD1Mock();
+  const hash = `pbkdf2-sha256$120000$${"00".repeat(16)}$${"00".repeat(32)}`;
+  d1.raw.prepare("INSERT INTO users (email, password_hash, name, role, status) VALUES (?, ?, ?, ?, ?)")
+    .run("legacy@example.test", hash, "Legacy Admin", "super_admin", "active");
+
+  const login = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "user", email: "legacy@example.test", password: "password" },
+  });
+
+  assert.equal(login.status, 401);
+});
+
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   const d1 = createD1Mock();
 
