@@ -11,11 +11,11 @@
  *
  * @version     1.0.0
  * @created     2026-11-06
- * @updated     2026-11-14
+ * @updated     2026-11-15
  *
- * @description Manages the authenticated admin workspace and customer invitations.
+ * @description Manages the authenticated admin workspace, customer invitations, and licenses.
  */
-const adminState = { token: null, announcements: [], products: [], licenses: [], organizations: [] };
+const adminState = { token: null, announcements: [], products: [], licenses: [], organizations: [], licenseBatchCodes: null };
 const admin$ = (selector) => document.querySelector(selector);
 const admin$$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -46,6 +46,8 @@ function clearCustomerInviteLink() {
   const link = admin$('#customerInviteLink');
   if (link) link.value = '';
   admin$('#customerInviteResult')?.classList.add('hidden');
+  adminState.licenseBatchCodes = null;
+  admin$('#licenseBatchDownload')?.classList.add('hidden');
 }
 
 function showAdminLogin(message = '') {
@@ -133,33 +135,53 @@ async function loadAdminCustomerInvites() {
 
 async function loadAdminProducts() {
   try {
-    const [products, licenses, organizations] = await Promise.all([
+    const [products, licenses, organizations, batches] = await Promise.all([
       adminApi('products'),
       adminApi('licenses'),
       adminApi('admin/organizations'),
+      adminApi('licenses/batches'),
     ]);
     adminState.products = products.products;
     adminState.licenses = licenses.licenses;
     adminState.organizations = organizations.organizations;
+    renderLicenseBatches(batches.batches || []);
     admin$('#adminProductsState').classList.add('hidden');
     admin$('#adminProductsList').innerHTML = `<article class="card module"><span class="eyebrow">Products</span><strong class="stat-value">${products.products.length}</strong><p>Catalog records</p></article><article class="card module"><span class="eyebrow">Licenses</span><strong class="stat-value">${licenses.licenses.length}</strong><p>License authority records</p></article>${products.products.map((product) => `<article class="card module"><span class="eyebrow">${adminEscape(product.code)}</span><h3>${adminEscape(product.name)}</h3><p>${adminEscape(product.status)}</p></article>`).join('')}`;
     const activeProducts = products.products.filter((product) => product.status === 'active');
     const productOptions = activeProducts.map((product) => `<option value="${adminEscape(product.id)}">${adminEscape(product.name)} (${adminEscape(product.code)})</option>`).join('');
     admin$('#licenseProduct').innerHTML = productOptions;
+    admin$('#licenseBatchProduct').innerHTML = productOptions;
     admin$('#licensePolicyProduct').innerHTML = productOptions;
-    const activeOrganizations = organizations.organizations.filter((organization) => organization.status === 'active');
+    const activeOrganizations = organizations.organizations.filter((organization) =>
+      organization.status === 'active' && organization.name.trim().toLowerCase() !== 'smritisys internal');
     admin$('#licenseOrganization').innerHTML = activeOrganizations.map((organization) => `<option value="${adminEscape(organization.id)}">${adminEscape(organization.name)}${organization.legal_name ? ` — ${adminEscape(organization.legal_name)}` : ''}</option>`).join('');
     admin$('#licenseStartDate').value ||= new Date().toISOString().slice(0, 10);
     await Promise.all([
       loadLicenseEditions(admin$('#licenseProduct'), admin$('#licenseEdition')),
+      loadLicenseEditions(admin$('#licenseBatchProduct'), admin$('#licenseBatchEdition')),
       loadLicenseEditions(admin$('#licensePolicyProduct'), admin$('#licensePolicyEdition')),
     ]);
     await loadLicensePolicy();
+    admin$('#licenseBatchStartDate').value ||= new Date().toISOString().slice(0, 10);
     renderAdminLicenses();
   } catch (error) {
     admin$('#adminProductsState').className = 'state-panel error-state';
     admin$('#adminProductsState').textContent = error.status === 403 ? 'Super admin license permissions are required.' : 'Products, organizations, or licenses are unavailable.';
   }
+}
+
+function renderLicenseBatches(batches) {
+  const state = admin$('#adminLicenseBatchesState');
+  const list = admin$('#adminLicenseBatchesList');
+  if (!batches.length) {
+    state.classList.remove('hidden');
+    state.textContent = 'No activation code batches have been generated.';
+    list.classList.add('hidden');
+    return;
+  }
+  state.classList.add('hidden');
+  list.classList.remove('hidden');
+  list.innerHTML = `<table class="admin-table"><thead><tr><th>Created</th><th>Product / edition</th><th>Total</th><th>Available</th><th>Claimed</th><th>Revoked</th></tr></thead><tbody>${batches.map((batch) => `<tr><td>${adminEscape(batch.created_at)}</td><td>${adminEscape(batch.product_name)} / ${adminEscape(batch.edition_name)}</td><td>${adminEscape(batch.total)}</td><td>${adminEscape(batch.available)}</td><td>${adminEscape(batch.claimed)}</td><td>${adminEscape(batch.revoked)}</td></tr>`).join('')}</tbody></table>`;
 }
 
 async function loadLicenseEditions(productSelect, editionSelect) {
@@ -171,6 +193,17 @@ async function loadLicenseEditions(productSelect, editionSelect) {
   const data = await adminApi(`products/${encodeURIComponent(productId)}`);
   const editions = data.product.editions.filter((edition) => edition.status === 'active');
   editionSelect.innerHTML = editions.map((edition) => `<option value="${adminEscape(edition.id)}">${adminEscape(edition.name)} (${adminEscape(edition.code)})</option>`).join('');
+}
+
+function toggleLicenseCustomerMode() {
+  const isNewCustomer = admin$('#licenseCustomerMode').value === 'new';
+  admin$('#licenseNewCustomerFields').classList.toggle('hidden', !isNewCustomer);
+  admin$('#licenseExistingOrganizationFields').classList.toggle('hidden', isNewCustomer);
+  for (const field of admin$('#licenseNewCustomerFields').querySelectorAll('input')) {
+    field.disabled = !isNewCustomer;
+  }
+  const organizationSelect = admin$('#licenseOrganization');
+  organizationSelect.disabled = isNewCustomer;
 }
 
 async function loadLicensePolicy() {
@@ -205,11 +238,10 @@ function renderAdminLicenses() {
   state.classList.add('hidden');
   list.innerHTML = licenses.map((license) => {
     const organization = adminState.organizations.find((item) => item.id === license.organization_id);
-    const maskedKey = license.license_key ? `${license.license_key.slice(0, 5)}…${license.license_key.slice(-4)}` : 'Unavailable';
     const canRenew = ['ACTIVE', 'EXPIRED', 'PENDING_RENEWAL'].includes(license.status);
     return `<article class="card license-card" data-license-card="${adminEscape(license.id)}">
-      <div class="license-card-head"><div><span class="eyebrow">${adminEscape(license.product?.code || 'Product')} · ${adminEscape(license.edition?.name || 'No edition')}</span><h3>${adminEscape(organization?.name || `Organization ${license.organization_id}`)}</h3><p class="muted">${adminEscape(license.product?.name || '')} · License #${adminEscape(license.id)}</p></div><span class="status status-${adminEscape(String(license.status).toLowerCase())}">${adminEscape(license.status)}</span></div>
-      <div class="license-meta"><div><span>License key</span><strong>${adminEscape(maskedKey)}</strong></div><div><span>Start</span><strong>${adminEscape(license.start_date || '—')}</strong></div><div><span>Expiry</span><strong>${adminEscape(license.expiry_date || 'Perpetual')}</strong></div><div><span>Activations</span><strong>${adminEscape(license.activation_count ?? 0)}</strong></div></div>
+      <div class="license-card-head"><div><span class="eyebrow">${adminEscape(license.product?.code || 'Product')} · ${adminEscape(license.edition?.name || 'No edition')}</span><h3>${adminEscape(organization?.name || `Organization ${license.organization_id}`)}</h3><p class="muted">${adminEscape(license.product?.name || '')} · ${adminEscape(license.serial_number)}</p></div><span class="status status-${adminEscape(String(license.status).toLowerCase())}">${adminEscape(license.status)}</span></div>
+      <div class="license-meta"><div><span>Activation key</span><strong>Shown once at issue</strong></div><div><span>Start</span><strong>${adminEscape(license.start_date || '—')}</strong></div><div><span>Expiry</span><strong>${adminEscape(license.expiry_date || 'Perpetual')}</strong></div><div><span>Activations</span><strong>${adminEscape(license.activation_count ?? 0)}</strong></div></div>
       <div class="form-actions"><button class="secondary" type="button" data-license-details="${adminEscape(license.id)}">Inspect license</button>${license.status === 'ACTIVE' ? `<button class="secondary" type="button" data-license-suspend="${adminEscape(license.id)}">Suspend</button>` : ''}${canRenew ? `<label class="inline-date">Renew through <input type="date" data-license-renew-date="${adminEscape(license.id)}" /></label><button class="secondary" type="button" data-license-renew="${adminEscape(license.id)}">Renew</button>` : ''}</div>
       <div class="license-details hidden" data-license-detail-panel="${adminEscape(license.id)}"></div>
     </article>`;
@@ -475,9 +507,17 @@ admin$('#adminAnnouncementsList').addEventListener('click', async (event) => {
   }
 });
 
+admin$('#licenseCustomerMode').addEventListener('change', toggleLicenseCustomerMode);
+toggleLicenseCustomerMode();
+
 admin$('#licenseProduct').addEventListener('change', async () => {
   try { await loadLicenseEditions(admin$('#licenseProduct'), admin$('#licenseEdition')); }
   catch (error) { adminMessage(admin$('#licenseIssueMessage'), error.message, false); }
+});
+
+admin$('#licenseBatchProduct').addEventListener('change', async () => {
+  try { await loadLicenseEditions(admin$('#licenseBatchProduct'), admin$('#licenseBatchEdition')); }
+  catch (error) { adminMessage(admin$('#licenseBatchMessage'), error.message, false); }
 });
 
 admin$('#licensePolicyProduct').addEventListener('change', async () => {
@@ -488,6 +528,55 @@ admin$('#licensePolicyProduct').addEventListener('change', async () => {
 });
 
 admin$('#licensePolicyEdition').addEventListener('change', loadLicensePolicy);
+
+admin$('#licenseBatchForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const body = {
+    count: Number(form.get('count')),
+    seats: Number(form.get('seats')),
+    product_id: form.get('product_id'),
+    edition_id: form.get('edition_id'),
+    license_model: form.get('license_model'),
+    start_date: form.get('start_date'),
+    expiry_date: form.get('expiry_date') || null,
+  };
+  const button = admin$('#licenseBatchButton');
+  button.disabled = true;
+  adminState.licenseBatchCodes = null;
+  admin$('#licenseBatchDownload').classList.add('hidden');
+  try {
+    const result = await adminApi('licenses/batches', { method: 'POST', body: JSON.stringify(body) });
+    adminState.licenseBatchCodes = result.codes;
+    admin$('#licenseBatchDownload').classList.remove('hidden');
+    adminMessage(
+      admin$('#licenseBatchMessage'),
+      `Generated ${result.count} codes. Download and store the CSV securely; the activation keys cannot be retrieved after this page is closed.`,
+      true,
+    );
+    await loadAdminProducts();
+  } catch (error) {
+    adminMessage(admin$('#licenseBatchMessage'), error.message, false);
+  } finally { button.disabled = false; }
+});
+
+admin$('#licenseBatchDownload').addEventListener('click', () => {
+  const codes = adminState.licenseBatchCodes;
+  if (!Array.isArray(codes) || !codes.length) {
+    adminMessage(admin$('#licenseBatchMessage'), 'This batch is no longer available for download. It cannot be retrieved from the server.', false);
+    admin$('#licenseBatchDownload').classList.add('hidden');
+    return;
+  }
+  const csv = ['serial_number,activation_key', ...codes.map((code) => `${code.serial_number},${code.activation_key}`)].join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `prathamone-license-codes-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+});
 
 admin$('#licenseIssueForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -516,7 +605,7 @@ admin$('#licenseIssueForm').addEventListener('submit', async (event) => {
     return;
   }
   const body = {
-    organization_id: form.get('organization_id'),
+    customer_mode: form.get('customer_mode'),
     product_id: form.get('product_id'),
     edition_id: form.get('edition_id'),
     company_binding: binding,
@@ -525,13 +614,25 @@ admin$('#licenseIssueForm').addEventListener('submit', async (event) => {
     status: form.get('status'),
     entitlements,
   };
+  if (body.customer_mode === 'new') {
+    body.customer_email = form.get('customer_email');
+    body.customer_name = form.get('customer_name');
+    body.customer_company = form.get('customer_company');
+  } else {
+    body.organization_id = form.get('organization_id');
+  }
   const button = admin$('#licenseIssueButton');
   button.disabled = true;
   try {
     const result = await adminApi('licenses', { method: 'POST', body: JSON.stringify(body) });
-    adminMessage(admin$('#licenseIssueMessage'), `License issued. Deliver this key securely; it will be masked in the license list: ${result.license.license_key}`, true);
+    adminMessage(
+      admin$('#licenseIssueMessage'),
+      `Issued ${result.license.serial_number}. Activation key: ${result.license.license_key}. Save and deliver it securely; it cannot be retrieved again.`,
+      true,
+    );
     formElement.reset();
     admin$('#licenseStartDate').value = new Date().toISOString().slice(0, 10);
+    toggleLicenseCustomerMode();
     await loadAdminProducts();
   } catch (error) {
     adminMessage(admin$('#licenseIssueMessage'), error.message, false);

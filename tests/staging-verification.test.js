@@ -11,7 +11,7 @@
  *
  * @version     1.0.0
  * @created     2026-11-14
- * @updated     2026-11-14
+ * @updated     2026-11-15
  *
  * @description Exercises authenticated control-plane and customer portal workflows.
  */
@@ -322,6 +322,288 @@ test("customer invitations can be revoked or expire before acceptance", async ()
   assert.equal(expiredAcceptance.status, 410);
 });
 
+test("direct license issuance registers an activation-only customer and reveals the key once", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-direct-license";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+
+  const productId = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get().id;
+  const editionId = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(productId).id;
+  d1.raw.prepare(
+    "INSERT INTO customers (id, email, password_hash, company, status) VALUES (300, ?, 'test-hash', ?, 'active')"
+  ).run("internal-bound@example.test", "Internal Test");
+  d1.raw.prepare(
+    "INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status) VALUES (201, 'customer', 300, 'customer', 'active')"
+  ).run();
+  const body = {
+    customer_mode: "new",
+    customer_email: "license-only@example.test",
+    customer_name: "License Contact",
+    customer_company: "Example Coaching Academy",
+    product_id: productId,
+    edition_id: editionId,
+    company_binding: "PA001",
+    status: "ACTIVE",
+    start_date: "2026-11-14",
+    expiry_date: "2027-11-14",
+    entitlements: [
+      { key: "company.binding", value_type: "text", value: "PA001" },
+      { key: "license.model", value_type: "text", value: "on_premise_subscription" },
+    ],
+  };
+  const internalOrganization = await callApi(d1, "licenses", {
+    method: "POST",
+    token: adminToken,
+    body: { ...body, customer_mode: "existing", organization_id: 201 },
+  });
+  assert.equal(internalOrganization.status, 400);
+
+  const issued = await callApi(d1, "licenses", { method: "POST", token: adminToken, body });
+  assert.equal(issued.status, 201);
+  assert.match(issued.data.license.serial_number, /^SMR-LIC-\d{8}$/);
+  assert.match(issued.data.license.license_key, /^LIC-[A-F0-9]+$/);
+  const licenseId = issued.data.license.id;
+  const customer = d1.raw.prepare(
+    "SELECT id, password_hash, status FROM customers WHERE email = ?"
+  ).get("license-only@example.test");
+  assert.equal(customer.status, "inactive");
+  assert.match(customer.password_hash, /^pbkdf2-sha256\$/);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM customer_invites WHERE lower(email) = lower(?)"
+  ).get("license-only@example.test").count, 0);
+
+  const organization = d1.raw.prepare(
+    `SELECT o.id, o.legal_name, om.status
+     FROM organizations o
+     JOIN organization_members om ON om.organization_id = o.id
+     WHERE om.account_type = 'customer' AND om.account_id = ?`
+  ).get(customer.id);
+  assert.equal(organization.legal_name, "Example Coaching Academy");
+  assert.equal(organization.status, "active");
+
+  const storedLicense = d1.raw.prepare(
+    "SELECT customer_id, seats, status FROM licenses WHERE id = ?"
+  ).get(licenseId);
+  assert.equal(storedLicense.customer_id, customer.id);
+  assert.equal(storedLicense.seats, 1);
+  assert.equal(storedLicense.status, "ACTIVE");
+  assert.equal(d1.raw.prepare(
+    "SELECT value_text FROM license_entitlements WHERE license_id = ? AND entitlement_key = 'company.binding'"
+  ).get(licenseId).value_text, "PA001");
+
+  const licenseList = await callApi(d1, "licenses", { token: adminToken });
+  const listedLicense = licenseList.data.licenses.find((license) => license.id === licenseId);
+  assert.equal(listedLicense.license_key, null);
+  assert.equal(listedLicense.serial_number, issued.data.license.serial_number);
+  const licenseDetail = await callApi(d1, `licenses/${licenseId}`, { token: adminToken });
+  assert.equal(licenseDetail.data.license.license_key, null);
+  const licenseAudit = d1.raw.prepare(
+    "SELECT new_value FROM audit_logs WHERE action = 'LICENSE_CREATED' AND resource_id = ?"
+  ).get(String(licenseId));
+  assert.ok(licenseAudit);
+  assert.equal(licenseAudit.new_value.includes(issued.data.license.license_key), false);
+
+  const duplicate = await callApi(d1, "licenses", { method: "POST", token: adminToken, body });
+  assert.equal(duplicate.status, 409);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM licenses").get().count, 2);
+
+  const customerLogin = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "customer", email: "license-only@example.test", password: "Not-the-random-password-2026!" },
+  });
+  assert.equal(customerLogin.status, 401);
+});
+
+test("license code inventory migration upgrades existing license and organization tables", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE organizations (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE products (id INTEGER PRIMARY KEY);
+    CREATE TABLE product_editions (id INTEGER PRIMARY KEY);
+    CREATE TABLE people (id INTEGER PRIMARY KEY);
+    CREATE TABLE licenses (id INTEGER PRIMARY KEY, license_key TEXT NOT NULL);
+  `);
+  db.prepare("INSERT INTO licenses (id, license_key) VALUES (7, 'legacy-key')").run();
+  db.exec(fs.readFileSync(new URL("../migrations/0019_license_code_inventory.sql", import.meta.url), "utf8"));
+
+  const migrated = db.prepare("SELECT serial_number, offline_validity_days FROM licenses WHERE id = 7").get();
+  assert.equal(migrated.serial_number, "SMR-LIC-00000007");
+  assert.equal(migrated.offline_validity_days, 7);
+  assert.equal(db.prepare(
+    "SELECT COUNT(*) AS count FROM pragma_table_info('organizations') WHERE name IN ('address', 'city', 'state', 'pincode', 'tax_id', 'website')"
+  ).get().count, 6);
+  assert.ok(db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'license_code_inventory'"
+  ).get());
+});
+
+test("pre-generated license codes are hash-only, claim once, and issue installation-bound 90-day artifacts", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-license-code-batch";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(product.id);
+  const createdBatch = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      count: 2,
+      seats: 1,
+      product_id: product.id,
+      edition_id: edition.id,
+      license_model: "on_premise_subscription",
+      start_date: "2026-11-15",
+      expiry_date: "2027-11-15",
+    },
+  });
+  assert.equal(createdBatch.status, 201);
+  const invalidDateBatch = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      count: 1,
+      product_id: product.id,
+      edition_id: edition.id,
+      license_model: "on_premise_subscription",
+      start_date: "2026-02-31",
+      expiry_date: "2027-11-15",
+    },
+  });
+  assert.equal(invalidDateBatch.status, 400);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM license_code_inventory").get().count, 2);
+  assert.equal(createdBatch.data.codes.length, 2);
+  const code = createdBatch.data.codes[0];
+  assert.match(code.serial_number, /^SMR-LIC-[A-F0-9]{20}$/);
+  assert.match(code.activation_key, /^ACT-[A-F0-9]{48}$/);
+  const storedCode = d1.raw.prepare(
+    "SELECT activation_key_hash, status, offline_validity_days FROM license_code_inventory WHERE serial_number = ?"
+  ).get(code.serial_number);
+  assert.match(storedCode.activation_key_hash, /^[a-f0-9]{64}$/);
+  assert.notEqual(storedCode.activation_key_hash, code.activation_key);
+  assert.equal(storedCode.status, "available");
+  assert.equal(storedCode.offline_validity_days, 90);
+  const batchList = await callApi(d1, "licenses/batches", { token: adminToken });
+  assert.equal(batchList.status, 200);
+  assert.equal(batchList.data.batches[0].available, 2);
+  assert.equal(JSON.stringify(batchList.data).includes(code.activation_key), false);
+  assert.equal(d1.raw.prepare("PRAGMA table_info(license_code_inventory)").all()
+    .some((column) => column.name === "activation_key"), false);
+
+  const signerPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey("raw", signerPair.publicKey));
+  const publicKey = Buffer.from(publicKeyBytes).toString("base64url");
+  const signer = {
+    async fetch(request) {
+      const requestBody = await request.json();
+      const signature = await crypto.subtle.sign(
+        { name: "Ed25519" },
+        signerPair.privateKey,
+        Buffer.from(requestBody.payload, "base64url"),
+      );
+      return Response.json({
+        key_id: requestBody.key_id,
+        signature: Buffer.from(signature).toString("base64url"),
+      });
+    },
+  };
+  const refreshPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const refreshPublicKey = Buffer.from(await crypto.subtle.exportKey("raw", refreshPair.publicKey)).toString("base64url");
+  const bindings = {
+    LICENSE_SIGNER: signer,
+    LICENSE_ACTIVE_KEY_ID: "test-license-key",
+    LICENSE_SIGNING_PUBLIC_KEYS: JSON.stringify({ "test-license-key": publicKey }),
+  };
+  const activation = {
+    serial_number: code.serial_number,
+    activation_key: code.activation_key,
+    product_code: "prathamone-eduos",
+    company_binding: "ACADEMY-NEW-01",
+    installation_id: "8a36e7ab-20de-4e31-bf83-87bb4dcd7560",
+    activation_identifier: "4c765a67-9e03-4e9d-9f38-211366dcf7de",
+    refresh_public_key: refreshPublicKey,
+    registration: {
+      institution_name: "New Coaching Academy",
+      contact_name: "Priya Sharma",
+      contact_email: "priya@newacademy.example",
+      phone: "+91-9876543210",
+      address: "12 Academy Road",
+      city: "Pune",
+      state: "Maharashtra",
+      pincode: "411001",
+      tax_id: "TAX-123",
+    },
+  };
+  const invalidKey = await callApi(d1, "license/activate", {
+    method: "POST",
+    body: { ...activation, activation_key: "ACT-000000000000000000000000000000000000000000000000" },
+    bindings,
+  });
+  assert.equal(invalidKey.status, 404);
+  assert.equal(d1.raw.prepare("SELECT status FROM license_code_inventory WHERE serial_number = ?")
+    .get(code.serial_number).status, "available");
+
+  const issued = await callApi(d1, "license/activate", { method: "POST", body: activation, bindings });
+  assert.equal(issued.status, 201);
+  const payload = JSON.parse(Buffer.from(issued.data.artifact.payload, "base64url").toString("utf8"));
+  assert.equal(payload.serial_number, code.serial_number);
+  assert.equal(payload.offline_validity_days, 90);
+  assert.equal(payload.company_binding, activation.company_binding);
+  assert.equal(payload.installation_id, activation.installation_id);
+  const claimed = d1.raw.prepare(
+    `SELECT c.status, c.license_id, l.serial_number, l.offline_validity_days, o.address, o.tax_id
+     FROM license_code_inventory c
+     JOIN licenses l ON l.id = c.license_id
+     JOIN customers cu ON cu.id = l.customer_id
+     JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = cu.id
+     JOIN organizations o ON o.id = om.organization_id
+     WHERE c.serial_number = ?`
+  ).get(code.serial_number);
+  assert.equal(claimed.status, "claimed");
+  assert.equal(claimed.serial_number, code.serial_number);
+  assert.equal(claimed.offline_validity_days, 90);
+  assert.equal(claimed.address, "12 Academy Road");
+  assert.equal(claimed.tax_id, "TAX-123");
+
+  const secondCode = createdBatch.data.codes[1];
+  const secondInstallation = {
+    ...activation,
+    serial_number: secondCode.serial_number,
+    activation_key: secondCode.activation_key,
+    installation_id: "12111111-2222-4333-8444-555555555555",
+    activation_identifier: "12111111-2222-4333-8444-666666666666",
+  };
+  const secondLicense = await callApi(d1, "license/activate", {
+    method: "POST",
+    body: secondInstallation,
+    bindings,
+  });
+  assert.equal(secondLicense.status, 201);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM customers WHERE email = ?")
+    .get("priya@newacademy.example").count, 1);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM organization_members WHERE account_type = 'customer' AND account_id = (SELECT id FROM customers WHERE email = ?)"
+  ).get("priya@newacademy.example").count, 1);
+
+  const repeated = await callApi(d1, "license/activate", { method: "POST", body: activation, bindings });
+  assert.equal(repeated.status, 201);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM license_code_inventory WHERE status = 'claimed'").get().count, 2);
+  const otherInstallation = await callApi(d1, "license/activate", {
+    method: "POST",
+    body: { ...activation, installation_id: "12111111-2222-4333-8444-555555555555" },
+    bindings,
+  });
+  assert.equal(otherInstallation.status, 409);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM licenses WHERE serial_number = ?").get(code.serial_number).count, 1);
+});
+
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   const d1 = createD1Mock();
 
@@ -375,7 +657,8 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(res.data.ok, true);
     assert.equal(res.data.licenses.length, 1);
     const lic = res.data.licenses[0];
-    assert.equal(lic.license_key, "SMRITI-RET-ENT-2026-001");
+    assert.equal(lic.license_key, null);
+    assert.match(lic.serial_number, /^SMR-LIC-\d{8}$/);
     assert.equal(lic.edition?.name, "Enterprise Edition");
     assert.equal(lic.status, "ACTIVE");
     assert.equal(lic.validity?.is_valid, true);

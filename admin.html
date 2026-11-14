@@ -68,11 +68,35 @@
         <div id="adminProductsState" class="state-panel">Loading products, organizations, and licenses...</div>
         <div id="adminProductsList" class="grid modules"></div>
         <div class="admin-license-workspace">
+          <form id="licenseBatchForm" class="card">
+            <div class="section-head compact"><div><span class="eyebrow">License inventory</span><h2>Prepare activation codes</h2></div></div>
+            <p class="muted">Generate unassigned serial number and activation-key pairs to deliver to customers. The activation key is returned only in this response and is never stored in plaintext. Claimed licenses receive a 90-day offline activation response.</p>
+            <div class="form-grid">
+              <div><label for="licenseBatchCount">Number of codes</label><input id="licenseBatchCount" name="count" type="number" min="1" max="50" value="10" required /></div>
+              <div><label for="licenseBatchSeats">Seats per code</label><input id="licenseBatchSeats" name="seats" type="number" min="1" max="10000" value="1" required /></div>
+              <div><label for="licenseBatchProduct">Product</label><select id="licenseBatchProduct" name="product_id" required></select></div>
+              <div><label for="licenseBatchEdition">Edition</label><select id="licenseBatchEdition" name="edition_id" required></select></div>
+              <div><label for="licenseBatchModel">Commercial model</label><select id="licenseBatchModel" name="license_model"><option value="cloud_subscription">Cloud subscription</option><option value="cloud_one_time">Cloud one-time</option><option value="on_premise_subscription" selected>On-premise subscription</option><option value="on_premise_perpetual">On-premise perpetual</option></select></div>
+              <div><label for="licenseBatchStartDate">Start date</label><input id="licenseBatchStartDate" name="start_date" type="date" required /></div>
+              <div class="full"><label for="licenseBatchExpiryDate">Expiry date (leave blank for perpetual)</label><input id="licenseBatchExpiryDate" name="expiry_date" type="date" /></div>
+            </div>
+            <div class="form-actions"><button id="licenseBatchButton" class="primary" type="submit">Generate activation codes</button><button id="licenseBatchDownload" class="secondary hidden" type="button">Download this batch's codes (CSV)</button></div>
+            <p id="licenseBatchMessage" class="message" role="status"></p>
+          </form>
           <form id="licenseIssueForm" class="card">
             <div class="section-head compact"><div><span class="eyebrow">License authority</span><h2>Issue a license</h2></div></div>
-            <p class="muted">Company binding must exactly match the product's organization identifier at activation. The license key is shown once after issue.</p>
+            <p class="muted">Issue an activation key without requiring a customer portal invite. The server registers the customer and organization, limits this license to one concurrent installation, and shows the activation key only once.</p>
             <div class="form-grid">
-              <div class="full"><label for="licenseOrganization">Organization</label><select id="licenseOrganization" name="organization_id" required></select></div>
+              <div class="full"><label for="licenseCustomerMode">Customer</label><select id="licenseCustomerMode" name="customer_mode"><option value="new" selected>Register new customer — activation only</option><option value="existing">Use an existing organization</option></select></div>
+              <div id="licenseNewCustomerFields" class="full">
+                <div class="form-grid">
+                  <div><label for="licenseCustomerEmail">Customer email</label><input id="licenseCustomerEmail" name="customer_email" type="email" maxlength="254" autocomplete="off" required /></div>
+                  <div><label for="licenseCustomerName">Contact name (optional)</label><input id="licenseCustomerName" name="customer_name" maxlength="120" autocomplete="off" /></div>
+                  <div class="full"><label for="licenseCustomerCompany">Organization name</label><input id="licenseCustomerCompany" name="customer_company" maxlength="200" autocomplete="organization" required /></div>
+                </div>
+                <p class="muted">No customer sign-in or invitation is created. The customer receives only the serial number and activation key.</p>
+              </div>
+              <div id="licenseExistingOrganizationFields" class="full hidden"><label for="licenseOrganization">Existing organization</label><select id="licenseOrganization" name="organization_id" required disabled></select></div>
               <div><label for="licenseProduct">Product</label><select id="licenseProduct" name="product_id" required></select></div>
               <div><label for="licenseEdition">Edition</label><select id="licenseEdition" name="edition_id" required></select></div>
               <div><label for="licenseCompanyBinding">Company binding</label><input id="licenseCompanyBinding" name="company_binding" maxlength="200" required autocomplete="off" /></div>
@@ -105,6 +129,9 @@
             <p id="licensePolicyMessage" class="message" role="status"></p>
           </form>
         </div>
+        <div class="section-head dashboard-head"><div><span class="eyebrow">Inventory</span><h2>Activation code batches</h2></div></div>
+        <div id="adminLicenseBatchesState" class="state-panel">Loading activation code batches...</div>
+        <div id="adminLicenseBatchesList" class="card hidden"></div>
         <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Issued licenses</h2></div></div>
         <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
         <div id="adminLicensesList" class="license-list"></div>

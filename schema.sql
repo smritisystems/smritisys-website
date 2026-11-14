@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS organizations (
   name TEXT NOT NULL,
   legal_name TEXT,
   gst_number TEXT,
+  address TEXT,
+  city TEXT,
+  state TEXT,
+  pincode TEXT,
+  tax_id TEXT,
+  website TEXT,
   status TEXT DEFAULT 'active',
   created_at TEXT DEFAULT (datetime('now'))
 );
@@ -279,13 +285,53 @@ CREATE TABLE IF NOT EXISTS licenses (
   customer_id INTEGER NOT NULL,
   product_id INTEGER NOT NULL,
   license_key TEXT UNIQUE NOT NULL,
+  serial_number TEXT UNIQUE,
   seats INTEGER NOT NULL DEFAULT 1,
   starts_at TEXT NOT NULL,
   expires_at TEXT,
+  offline_validity_days INTEGER NOT NULL DEFAULT 7
+    CHECK (offline_validity_days BETWEEN 1 AND 365),
   status TEXT DEFAULT 'active',
   FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id)
 );
+
+CREATE TABLE IF NOT EXISTS license_code_inventory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id TEXT NOT NULL,
+  serial_number TEXT NOT NULL UNIQUE,
+  activation_key_hash TEXT NOT NULL UNIQUE,
+  product_id INTEGER NOT NULL,
+  edition_id INTEGER NOT NULL,
+  starts_at TEXT NOT NULL,
+  expires_at TEXT,
+  license_model TEXT NOT NULL CHECK (license_model IN (
+    'cloud_subscription', 'cloud_one_time',
+    'on_premise_subscription', 'on_premise_perpetual'
+  )),
+  seats INTEGER NOT NULL DEFAULT 1 CHECK (seats BETWEEN 1 AND 10000),
+  entitlements_json TEXT NOT NULL DEFAULT '[]',
+  offline_validity_days INTEGER NOT NULL DEFAULT 90
+    CHECK (offline_validity_days BETWEEN 7 AND 365),
+  status TEXT NOT NULL DEFAULT 'available'
+    CHECK (status IN ('available', 'claiming', 'claimed', 'revoked')),
+  license_id INTEGER UNIQUE,
+  company_binding TEXT,
+  installation_id TEXT,
+  activation_identifier TEXT,
+  contact_email TEXT,
+  created_by_person_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  claimed_at TEXT,
+  FOREIGN KEY (product_id) REFERENCES products(id),
+  FOREIGN KEY (edition_id) REFERENCES product_editions(id),
+  FOREIGN KEY (license_id) REFERENCES licenses(id),
+  FOREIGN KEY (created_by_person_id) REFERENCES people(id)
+);
+CREATE INDEX IF NOT EXISTS idx_license_code_inventory_batch
+  ON license_code_inventory(batch_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_license_code_inventory_status
+  ON license_code_inventory(status, product_id, edition_id);
 
 CREATE TABLE IF NOT EXISTS license_editions (
   license_id INTEGER PRIMARY KEY,

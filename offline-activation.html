@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Offline License Activation | SMRITISYS</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, "Segoe UI", sans-serif; background: #f3f6fb; color: #17243b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    main { width: min(100%, 620px); border: 1px solid #dce4ef; border-radius: 20px; background: #fff; padding: clamp(24px, 5vw, 42px); box-shadow: 0 18px 48px #13294b12; }
+    .eyebrow { color: #087c79; font-size: .75rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 10px 0; font-size: clamp(1.7rem, 5vw, 2.2rem); }
+    p { color: #596a81; line-height: 1.6; }
+    label { display: block; margin: 18px 0 7px; color: #243650; font-size: .9rem; font-weight: 700; }
+    input { width: 100%; padding: 12px; border: 1px solid #cbd6e5; border-radius: 10px; font: inherit; }
+    button { margin-top: 20px; border: 0; border-radius: 10px; background: #087c79; color: #fff; padding: 12px 18px; font: inherit; font-weight: 800; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .6; }
+    #status { min-height: 24px; margin-top: 16px; }
+    #status[data-error="true"] { color: #b42318; }
+    #downloadResponse { display: none; margin-top: 12px; color: #087c79; font-weight: 700; }
+    #requestSummary { display: none; margin-top: 16px; padding: 12px; border-radius: 10px; background: #f3f6fb; color: #384b63; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="eyebrow">SMRITISYS License Authority</span>
+    <h1>Offline activation</h1>
+    <p>Upload the offline request file created in PrathamOne EduOS, enter the matching activation key, and download the signed response. Return that response file to the institution's PrathamOne installation.</p>
+    <form id="offlineActivationForm">
+      <label for="requestFile">Offline request file</label>
+      <input id="requestFile" type="file" accept="application/json,.json" required />
+      <div id="requestSummary"></div>
+      <label for="activationKey">Activation key</label>
+      <input id="activationKey" type="password" autocomplete="off" maxlength="100" required />
+      <button id="activateButton" type="submit">Generate signed response</button>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+    <a id="downloadResponse" href="#">Download signed response</a>
+  </main>
+  <script src="/js/offline-activation.js" defer></script>
+</body>
+</html>

@@ -11,7 +11,7 @@
  *
  * @version     1.0.0
  * @created     2026-11-06
- * @updated     2026-11-14
+ * @updated     2026-11-15
  *
  * @description Handles authenticated website APIs and customer invitation workflows.
  */
@@ -170,6 +170,11 @@ function makeToken() {
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function isValidCustomerInviteToken(token) {
   return typeof token === "string" && /^[a-f0-9]{48}$/.test(token);
 }
@@ -299,10 +304,11 @@ function licenseValidity(status, startsAt, expiresAt) {
   return { is_valid: isValid, is_expired: Boolean(isExpired), days_remaining: daysRemaining };
 }
 
-function licenseResponse(record) {
+function licenseResponse(record, includeActivationKey = false) {
   return {
     id: record.id,
-    license_key: record.license_key,
+    serial_number: record.serial_number || `SMR-LIC-${String(record.id).padStart(8, "0")}`,
+    license_key: includeActivationKey ? record.license_key : null,
     organization_id: record.organization_id,
     customer_id: record.customer_id,
     product: { id: record.product_id, code: record.product_code, name: record.product_name },
@@ -319,7 +325,8 @@ function licenseResponse(record) {
 
 async function getLicenseRecord(env, licenseId) {
   return await env.DB.prepare(
-    `SELECT l.id, l.license_key, l.customer_id, l.product_id, l.status,
+    `SELECT l.id, l.license_key, l.serial_number, l.offline_validity_days,
+            l.customer_id, l.product_id, l.status,
             l.starts_at, l.expires_at,
             p.slug AS product_code, p.name AS product_name,
             le.edition_id, pe.code AS edition_code, pe.name AS edition_name,
@@ -524,6 +531,7 @@ async function buildSignedLicenseArtifact(env, license, installationId, activati
     document_id: documentId,
     issuer: "SMRITISYS",
     license_id: String(license.id),
+    serial_number: license.serial_number || `SMR-LIC-${String(license.id).padStart(8, "0")}`,
     customer_id: String(license.customer_id),
     organization_id: String(license.organization_id),
     product_code: license.product_code,
@@ -535,6 +543,7 @@ async function buildSignedLicenseArtifact(env, license, installationId, activati
     status: status || license.status,
     starts_at: license.starts_at,
     expires_at: license.expires_at,
+    offline_validity_days: Number(license.offline_validity_days || 7),
     subscription_grace_days: Math.min(30, Math.max(0, Number(editionPolicy?.subscription_grace_days ?? 7))),
     rollout_stage: editionPolicy?.rollout_stage || "shadow",
     evaluation_policy: evaluationPolicy,
@@ -553,6 +562,217 @@ async function buildSignedLicenseArtifact(env, license, installationId, activati
   };
 }
 
+function constantTimeHexEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+async function claimLicenseCode(env, { serialNumber, activationKey, productCode, companyBinding, installationId, activationIdentifier, registration }) {
+  const activationKeyHash = await sha256Hex(activationKey);
+  const code = await env.DB.prepare(
+    `SELECT c.*, p.slug AS product_code, p.billing_period
+     FROM license_code_inventory c
+     JOIN products p ON p.id = c.product_id
+     WHERE c.serial_number = ?`
+  ).bind(serialNumber).first();
+  if (!code || !constantTimeHexEqual(code.activation_key_hash, activationKeyHash) || code.product_code !== productCode) {
+    return { error: "Serial number and activation key were not recognized for this product", status: 404 };
+  }
+  if (code.status === "claimed") {
+    if (code.company_binding !== companyBinding ||
+        code.installation_id !== installationId ||
+        code.activation_identifier !== activationIdentifier) {
+      return { error: "This activation code has already been claimed by another installation", status: 409 };
+    }
+    return { license_id: code.license_id };
+  }
+  if (code.status !== "available") {
+    return { error: "This activation code is not available", status: 409 };
+  }
+
+  const customerEmail = validEmail(registration?.contact_email);
+  const institutionName = boundedString(registration?.institution_name, 200);
+  const contactName = boundedString(registration?.contact_name, 120);
+  const optionalString = (value, maxLength) => {
+    if (value == null || value === "") return null;
+    return boundedString(value, maxLength);
+  };
+  const phone = boundedString(registration?.phone, 50);
+  const address = optionalString(registration?.address, 300);
+  const city = optionalString(registration?.city, 120);
+  const state = optionalString(registration?.state, 120);
+  const pincode = optionalString(registration?.pincode, 30);
+  const taxId = optionalString(registration?.tax_id, 80);
+  const website = optionalString(registration?.website, 200);
+  if (!customerEmail || !institutionName || !contactName || !phone ||
+      (registration?.address != null && registration.address !== "" && !address) ||
+      (registration?.city != null && registration.city !== "" && !city) ||
+      (registration?.state != null && registration.state !== "" && !state) ||
+      (registration?.pincode != null && registration.pincode !== "" && !pincode) ||
+      (registration?.tax_id != null && registration.tax_id !== "" && !taxId) ||
+      (registration?.website != null && registration.website !== "" && !website)) {
+    return { error: "Registration requires an institution name, contact name, valid email, and valid optional contact details", status: 400 };
+  }
+  if (!companyBinding || companyBinding.length > 128) {
+    return { error: "A valid company binding is required", status: 400 };
+  }
+
+  let customer = await env.DB.prepare(
+    "SELECT id, company, status FROM customers WHERE lower(email) = ? LIMIT 1"
+  ).bind(customerEmail).first();
+  if (customer) {
+    if (customer.status !== "active" ||
+        String(customer.company || "").trim().toLowerCase() !== institutionName.toLowerCase()) {
+      return { error: "This contact email is already registered to another customer organization", status: 409 };
+    }
+  } else {
+    if (await emailAlreadyRegistered(env, customerEmail)) {
+      return { error: "This contact email is already registered to another account", status: 409 };
+    }
+    customer = { id: null };
+  }
+
+  let existingOrganization = null;
+  if (customer.id) {
+    existingOrganization = await env.DB.prepare(
+      `SELECT o.id, o.legal_name
+       FROM organization_members om
+       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       WHERE om.account_type = 'customer' AND om.account_id = ? AND om.status = 'active'
+       ORDER BY om.id LIMIT 1`
+    ).bind(customer.id).first();
+    if (!existingOrganization) {
+      return { error: "This customer account has no active organization relationship", status: 409 };
+    }
+    if (existingOrganization.legal_name &&
+        String(existingOrganization.legal_name).trim().toLowerCase() !== institutionName.toLowerCase()) {
+      return { error: "The registered organization name does not match this activation registration", status: 409 };
+    }
+  }
+
+  const generatedLicenseKey = `CLAIM-${makeToken().toUpperCase()}`;
+  const newCustomerPasswordHash = customer.id ? null : await hashPassword(makeToken());
+  const organizationAccountId = customer.id ? "?" : "(SELECT id FROM customers WHERE email = ?)";
+  const organizationIdExpression = `(
+    SELECT om.organization_id FROM organization_members om
+    WHERE om.account_type = 'customer' AND om.account_id = ${organizationAccountId} AND om.status = 'active'
+    ORDER BY om.id LIMIT 1
+  )`;
+  const statements = [
+    env.DB.prepare(
+      `UPDATE license_code_inventory SET status = 'claiming'
+       WHERE id = ? AND status = 'available'`
+    ).bind(code.id),
+  ];
+  if (!customer.id) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO customers (email, password_hash, name, phone, company, status)
+       SELECT ?, ?, ?, ?, ?, 'active'
+       WHERE EXISTS (
+         SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming'
+       )`
+    ).bind(customerEmail, newCustomerPasswordHash, contactName, phone, institutionName, code.id));
+    statements.push(...customerIdentityStatements(
+      env,
+      "(SELECT id FROM customers WHERE email = ?)",
+      [customerEmail],
+      "active",
+      "active",
+      "customer",
+    ));
+  } else {
+    statements.push(env.DB.prepare(
+      `UPDATE customers SET name = COALESCE(NULLIF(name, ''), ?),
+                            phone = COALESCE(NULLIF(phone, ''), ?)
+       WHERE id = ? AND EXISTS (
+         SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming'
+       )`
+    ).bind(contactName, phone, customer.id, code.id));
+  }
+  const customerIdExpression = customer.id ? "?" : "(SELECT id FROM customers WHERE email = ?)";
+  const customerIdBinding = customer.id ? customer.id : customerEmail;
+  const orgIdBinding = customer.id ? customer.id : customerEmail;
+  statements.push(env.DB.prepare(
+    `UPDATE organizations
+     SET legal_name = COALESCE(NULLIF(legal_name, ''), ?),
+         address = COALESCE(NULLIF(address, ''), ?),
+         city = COALESCE(NULLIF(city, ''), ?),
+         state = COALESCE(NULLIF(state, ''), ?),
+         pincode = COALESCE(NULLIF(pincode, ''), ?),
+         tax_id = COALESCE(NULLIF(tax_id, ''), ?),
+         website = COALESCE(NULLIF(website, ''), ?)
+     WHERE id = ${organizationIdExpression}
+       AND EXISTS (SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming')`
+  ).bind(institutionName, address, city, state, pincode, taxId, website, orgIdBinding, code.id));
+  statements.push(env.DB.prepare(
+    `INSERT INTO licenses
+     (customer_id, product_id, license_key, serial_number, seats, starts_at, expires_at, offline_validity_days, status)
+     SELECT ${customerIdExpression}, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'
+     WHERE EXISTS (SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming')`
+  ).bind(
+    customerIdBinding, code.product_id, generatedLicenseKey, code.serial_number, code.seats,
+    code.starts_at, code.expires_at, code.offline_validity_days, code.id,
+  ));
+  statements.push(env.DB.prepare(
+    `INSERT INTO license_editions (license_id, edition_id)
+     SELECT id, ? FROM licenses WHERE license_key = ?`
+  ).bind(code.edition_id, generatedLicenseKey));
+  const entitlements = [
+    { key: "company.binding", value_type: "text", value_text: companyBinding, value_number: null },
+    { key: "license.model", value_type: "text", value_text: code.license_model, value_number: null },
+  ];
+  for (const entitlement of entitlements) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO license_entitlements (license_id, entitlement_key, value_type, value_text, value_number)
+       SELECT id, ?, ?, ?, ? FROM licenses WHERE license_key = ?`
+    ).bind(entitlement.key, entitlement.value_type, entitlement.value_text, entitlement.value_number, generatedLicenseKey));
+  }
+  statements.push(env.DB.prepare(
+    `INSERT INTO license_events (license_id, organization_id, event_type, new_status, metadata_json)
+     SELECT l.id, ${organizationIdExpression}, 'LICENSE_CREATED', l.status, ?
+     FROM licenses l WHERE l.license_key = ?`
+  ).bind(orgIdBinding, JSON.stringify({ source: "activation_code_claim", batch_id: code.batch_id }), generatedLicenseKey));
+  statements.push(env.DB.prepare(
+    `UPDATE license_code_inventory
+     SET status = 'claimed',
+         license_id = (SELECT id FROM licenses WHERE license_key = ?),
+         company_binding = ?,
+         installation_id = ?,
+         activation_identifier = ?,
+         contact_email = ?,
+         claimed_at = datetime('now')
+     WHERE id = ? AND status = 'claiming'`
+  ).bind(generatedLicenseKey, companyBinding, installationId, activationIdentifier, customerEmail, code.id));
+  statements.push(env.DB.prepare(
+    `INSERT INTO audit_logs
+     (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+     SELECT NULL, ${organizationIdExpression}, 'LICENSE_CODE_CLAIMED', 'license_code', ?, NULL, ?, NULL
+     WHERE EXISTS (
+       SELECT 1 FROM license_code_inventory
+       WHERE id = ? AND status = 'claimed' AND license_id = (SELECT id FROM licenses WHERE license_key = ?)
+     )`
+  ).bind(orgIdBinding, code.serial_number, JSON.stringify({
+    product_id: code.product_id,
+    edition_id: code.edition_id,
+    contact_email: customerEmail,
+  }), code.id, generatedLicenseKey));
+
+  const results = await env.DB.batch(statements);
+  const claimChanges = Number(results?.[0]?.meta?.changes || 0);
+  const finalizeChanges = Number(results?.[results.length - 2]?.meta?.changes || 0);
+  const licenseId = await env.DB.prepare(
+    "SELECT license_id FROM license_code_inventory WHERE id = ? AND status = 'claimed'"
+  ).bind(code.id).first();
+  if (claimChanges !== 1 || finalizeChanges !== 1 || !licenseId?.license_id) {
+    return { error: "This activation code was claimed by another request; retry with the same installation", status: 409 };
+  }
+  return { license_id: licenseId.license_id };
+}
+
 async function activateLicense(request, env, origin) {
   const rateLimit = await requireRateLimit(env, request, "license-activation", 20, 60);
   if (rateLimit) return rateLimit;
@@ -564,14 +784,21 @@ async function activateLicense(request, env, origin) {
     return json({ ok: false, error: "A JSON activation request is required" }, 400, origin);
   }
   const licenseKey = boundedString(body?.license_key, 200);
+  const serialNumber = boundedString(body?.serial_number, 80);
+  const activationKey = boundedString(body?.activation_key, 100)?.toUpperCase() || null;
   const productCode = boundedString(body?.product_code, 100);
   const installationId = boundedString(body?.installation_id, 36);
   const activationIdentifier = boundedString(body?.activation_identifier, 36);
   const companyBinding = body?.company_binding == null ? null : boundedString(body.company_binding, 128);
   const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
-  if (!licenseKey || !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
-    return json({ ok: false, error: "License key, product code, installation ID, and activation identifier are required" }, 400, origin);
+  const usesActivationCode = Boolean(serialNumber || activationKey);
+  if ((!licenseKey && !usesActivationCode) || (usesActivationCode && (!serialNumber || !activationKey || licenseKey)) ||
+      !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
+    return json({ ok: false, error: "Provide either a license key or a serial number and activation key, with product and installation identifiers" }, 400, origin);
+  }
+  if (usesActivationCode && !/^ACT-[A-F0-9]{48}$/.test(activationKey)) {
+    return json({ ok: false, error: "The activation key format is invalid" }, 400, origin);
   }
   if (!refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
     return json({ ok: false, error: "A valid Ed25519 refresh public key is required" }, 400, origin);
@@ -580,20 +807,51 @@ async function activateLicense(request, env, origin) {
     return json({ ok: false, error: "Company binding must be a non-empty string of at most 128 characters" }, 400, origin);
   }
 
-  const license = await env.DB.prepare(
-    `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.seats, l.status,
-            l.starts_at, l.expires_at, p.slug AS product_code, p.billing_period,
+  let license;
+  if (usesActivationCode) {
+    const registration = body.registration;
+    const claim = await claimLicenseCode(env, {
+      serialNumber,
+      activationKey,
+      productCode,
+      companyBinding,
+      installationId,
+      activationIdentifier,
+      registration,
+    });
+    if (claim.error) return json({ ok: false, error: claim.error }, claim.status, origin);
+    license = await env.DB.prepare(
+      `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
+              l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
+              p.slug AS product_code, p.billing_period,
+              le.edition_id, pe.code AS edition_code, om.organization_id
+       FROM licenses l
+       JOIN products p ON p.id = l.product_id
+       JOIN organization_members om ON om.account_type = 'customer'
+         AND om.account_id = l.customer_id AND om.status = 'active'
+       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       LEFT JOIN license_editions le ON le.license_id = l.id
+       LEFT JOIN product_editions pe ON pe.id = le.edition_id
+       WHERE l.id = ? AND p.slug = ?
+       ORDER BY om.id LIMIT 1`
+    ).bind(claim.license_id, productCode).first();
+  } else {
+    license = await env.DB.prepare(
+      `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
+              l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
+              p.slug AS product_code, p.billing_period,
             le.edition_id, pe.code AS edition_code, om.organization_id
-     FROM licenses l
-     JOIN products p ON p.id = l.product_id
-     JOIN organization_members om ON om.account_type = 'customer'
-       AND om.account_id = l.customer_id AND om.status = 'active'
-     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
-     LEFT JOIN license_editions le ON le.license_id = l.id
-     LEFT JOIN product_editions pe ON pe.id = le.edition_id
-     WHERE l.license_key = ? AND p.slug = ?
-     ORDER BY om.id LIMIT 1`
-  ).bind(licenseKey, productCode).first();
+       FROM licenses l
+       JOIN products p ON p.id = l.product_id
+       JOIN organization_members om ON om.account_type = 'customer'
+         AND om.account_id = l.customer_id AND om.status = 'active'
+       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       LEFT JOIN license_editions le ON le.license_id = l.id
+       LEFT JOIN product_editions pe ON pe.id = le.edition_id
+       WHERE l.license_key = ? AND p.slug = ?
+       ORDER BY om.id LIMIT 1`
+    ).bind(licenseKey, productCode).first();
+  }
   if (!license) return json({ ok: false, error: "License not found for this product" }, 404, origin);
   if (license.status === "DRAFT") {
     return json({ ok: false, error: "Draft licenses cannot be activated" }, 409, origin);
@@ -719,7 +977,8 @@ async function refreshLicense(request, env, origin) {
   }
 
   const license = await env.DB.prepare(
-    `SELECT l.id, l.customer_id, l.product_id, l.status, l.starts_at, l.expires_at, l.seats,
+    `SELECT l.id, l.customer_id, l.product_id, l.serial_number, l.offline_validity_days,
+            l.status, l.starts_at, l.expires_at, l.seats,
             p.slug AS product_code, p.billing_period, le.edition_id, pe.code AS edition_code,
             om.organization_id, la.status AS activation_status, la.refresh_public_key
      FROM licenses l
@@ -1032,17 +1291,42 @@ async function listLicenses(request, env) {
 }
 
 async function createLicense(request, env) {
-  const principal = await requirePermission(request, env, "license.create");
-  if (!principal) return json({ ok: false, error: "License creation permission required" }, 403);
-  const body = await request.json();
-  const organizationId = numericId(body.organization_id);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid JSON license request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A license request object is required" }, 400);
+  }
+  const customerMode = body?.customer_mode || "existing";
+  if (!["existing", "new"].includes(customerMode)) {
+    return json({ ok: false, error: "Customer mode must be existing or new" }, 400);
+  }
+  const provisionCustomer = customerMode === "new";
+  const principal = provisionCustomer
+    ? await requireSuperAdmin(request, env)
+    : await requirePermission(request, env, "license.create");
+  if (!principal) return json({ ok: false, error: provisionCustomer ? "Super admin access required" : "License creation permission required" }, 403);
+
+  const organizationId = provisionCustomer ? null : numericId(body.organization_id);
   const productId = numericId(body.product_id);
   const editionId = numericId(body.edition_id);
   const status = body.status || "DRAFT";
   const startsAt = body.start_date || new Date().toISOString().slice(0, 10);
   const expiresAt = body.expiry_date || null;
-  if (!organizationId || !productId || !editionId || !LICENSE_STATUSES.includes(status) || !["DRAFT", "ACTIVE"].includes(status)) {
-    return json({ ok: false, error: "Organization, product, edition, and a valid initial status are required" }, 400);
+  const customerEmail = provisionCustomer ? validEmail(body.customer_email) : null;
+  const suppliedName = body.customer_name;
+  const customerName = suppliedName == null || suppliedName === "" ? null : boundedString(suppliedName, 120);
+  const customerCompany = provisionCustomer ? boundedString(body.customer_company, 200) : null;
+  if ((!provisionCustomer && !organizationId) || !productId || !editionId ||
+      !LICENSE_STATUSES.includes(status) || !["DRAFT", "ACTIVE"].includes(status)) {
+    return json({ ok: false, error: "Organization or new customer details, product, edition, and a valid initial status are required" }, 400);
+  }
+  if (provisionCustomer && (!customerEmail || !customerCompany ||
+      (suppliedName != null && suppliedName !== "" && !customerName))) {
+    return json({ ok: false, error: "A valid customer email, organization name, and optional contact name are required" }, 400);
   }
   if (expiresAt && expiresAt < startsAt) return json({ ok: false, error: "Expiry date must not precede start date" }, 400);
   const product = await env.DB.prepare(
@@ -1050,14 +1334,24 @@ async function createLicense(request, env) {
      WHERE p.id = ? AND e.id = ? AND p.status = 'active' AND e.status = 'active'`
   ).bind(productId, editionId).first();
   if (!product) return json({ ok: false, error: "Product and edition do not match or are inactive" }, 400);
-  const customer = await env.DB.prepare(
-    `SELECT account_id FROM organization_members
-     WHERE organization_id = ? AND account_type = 'customer' AND status = 'active' ORDER BY id LIMIT 1`
-  ).bind(organizationId).first();
-  if (!customer) return json({ ok: false, error: "Organization has no active customer relationship" }, 400);
-  const licenseKey = typeof body.license_key === "string" && body.license_key.trim()
-    ? body.license_key.trim()
-    : `LIC-${makeToken().slice(0, 24).toUpperCase()}`;
+  let customer = null;
+  let customerPasswordHash = null;
+  if (provisionCustomer) {
+    if (await emailAlreadyRegistered(env, customerEmail)) {
+      return json({ ok: false, error: "A customer or staff account already uses this email; select its existing organization instead" }, 409);
+    }
+    customerPasswordHash = await hashPassword(makeToken());
+  } else {
+    customer = await env.DB.prepare(
+      `SELECT om.account_id FROM organization_members om
+       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       WHERE om.organization_id = ? AND lower(o.name) != 'smritisys internal'
+         AND om.account_type = 'customer' AND om.status = 'active'
+       ORDER BY om.id LIMIT 1`
+    ).bind(organizationId).first();
+    if (!customer) return json({ ok: false, error: "Organization has no active customer relationship" }, 400);
+  }
+  const licenseKey = `LIC-${makeToken().toUpperCase()}`;
   const entitlements = normalizeEntitlements(body.entitlements || []);
   if (!entitlements) return json({ ok: false, error: "Invalid entitlement values" }, 400);
   const companyBinding = entitlements.find((entitlement) => entitlement.key === "company.binding");
@@ -1068,17 +1362,53 @@ async function createLicense(request, env) {
   if (body.company_binding != null && String(body.company_binding).trim() !== companyBinding.value_text) {
     return json({ ok: false, error: "Company binding must match its license entitlement" }, 400);
   }
+
+  const customerIdExpression = provisionCustomer ? "(SELECT id FROM customers WHERE email = ?)" : "?";
+  const organizationIdExpression = provisionCustomer
+    ? `(SELECT m.organization_id FROM organization_members m
+       WHERE m.account_type = 'customer'
+         AND m.account_id = (SELECT id FROM customers WHERE email = ?)
+         AND m.status = 'active'
+       ORDER BY m.id LIMIT 1)`
+    : "?";
+  const auditIp = request.headers.get("CF-Connecting-IP") || null;
+  const licenseAuditValue = JSON.stringify({
+    customer_id: provisionCustomer ? null : customer.account_id,
+    product_id: productId,
+    edition_id: editionId,
+    status,
+    start_date: startsAt,
+    expiry_date: expiresAt,
+    company_binding: companyBinding.value_text,
+    seats: 1,
+  });
   try {
-    const statements = [
+    const statements = provisionCustomer ? [
+      env.DB.prepare(
+        `INSERT INTO customers (email, password_hash, name, company, status)
+         VALUES (?, ?, ?, ?, 'inactive')`
+      ).bind(customerEmail, customerPasswordHash, customerName, customerCompany),
+      ...customerIdentityStatements(
+        env,
+        "(SELECT id FROM customers WHERE email = ?)",
+        [customerEmail],
+        "active",
+        "active",
+        "customer",
+      ),
+    ] : [];
+    statements.push(
       env.DB.prepare(
         `INSERT INTO licenses (customer_id, product_id, license_key, seats, starts_at, expires_at, status)
-         VALUES (?, ?, ?, 1, ?, ?, ?)`
-      ).bind(customer.account_id, productId, licenseKey, startsAt, expiresAt, status),
+         VALUES (${customerIdExpression}, ?, ?, 1, ?, ?, ?)`
+      ).bind(...(provisionCustomer
+        ? [customerEmail, productId, licenseKey, startsAt, expiresAt, status]
+        : [customer.account_id, productId, licenseKey, startsAt, expiresAt, status])),
       env.DB.prepare(
         `INSERT INTO license_editions (license_id, edition_id)
          SELECT id, ? FROM licenses WHERE license_key = ?`
       ).bind(editionId, licenseKey),
-    ];
+    );
     for (const entitlement of entitlements) {
       statements.push(env.DB.prepare(
         `INSERT INTO license_entitlements (license_id, entitlement_key, value_type, value_text, value_number)
@@ -1087,16 +1417,145 @@ async function createLicense(request, env) {
     }
     statements.push(env.DB.prepare(
       `INSERT INTO license_events (license_id, organization_id, actor_person_id, event_type, new_status, metadata_json)
-       SELECT id, ?, ?, 'LICENSE_CREATED', status, ? FROM licenses WHERE license_key = ?`
-    ).bind(organizationId, principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId }), licenseKey));
+       SELECT id, ${organizationIdExpression}, ?, 'LICENSE_CREATED', status, ? FROM licenses WHERE license_key = ?`
+    ).bind(...(provisionCustomer
+      ? [customerEmail, principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId, seats: 1 }), licenseKey]
+      : [organizationId, principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId, seats: 1 }), licenseKey])),
+    env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       SELECT ?, ${organizationIdExpression}, 'LICENSE_CREATED', 'license',
+              CAST(id AS TEXT), NULL, ?, ? FROM licenses WHERE license_key = ?`
+    ).bind(...(provisionCustomer
+      ? [principal.person_id, customerEmail, licenseAuditValue, auditIp, licenseKey]
+      : [principal.person_id, organizationId, licenseAuditValue, auditIp, licenseKey])),
+    );
+    if (provisionCustomer) {
+      statements.push(env.DB.prepare(
+        `INSERT INTO audit_logs
+         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+         SELECT ?, om.organization_id, 'CUSTOMER_LICENSE_ACCOUNT_CREATED', 'customer',
+                CAST(c.id AS TEXT), NULL, ?, ?
+         FROM customers c
+         JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = c.id AND om.status = 'active'
+         WHERE c.email = ? ORDER BY om.id LIMIT 1`
+      ).bind(
+        principal.person_id,
+        JSON.stringify({ email: customerEmail, company: customerCompany, portal_access: false }),
+        auditIp,
+        customerEmail,
+      ));
+    }
+
     await env.DB.batch(statements);
-    const license = await getLicenseRecord(env, (await env.DB.prepare("SELECT id FROM licenses WHERE license_key = ?").bind(licenseKey).first()).id);
-    await writeAudit(env, request, principal, "LICENSE_CREATED", "license", license.id, null, licenseResponse(license));
-    return json({ ok: true, license: licenseResponse(license) }, 201);
+    const licenseId = await env.DB.prepare("SELECT id FROM licenses WHERE license_key = ?").bind(licenseKey).first();
+    if (!licenseId) throw new Error("The new license record could not be loaded after creation");
+    const license = await getLicenseRecord(env, licenseId.id);
+    if (!license) throw new Error("The new license is missing its active organization relationship");
+    return json({ ok: true, license: licenseResponse(license, true) }, 201);
   } catch (error) {
-    if (String(error).includes("UNIQUE")) return json({ ok: false, error: "License key already exists" }, 409);
+    if (String(error).includes("UNIQUE")) {
+      return json({ ok: false, error: provisionCustomer ? "Customer email or license record already exists" : "License record already exists" }, 409);
+    }
     throw error;
   }
+}
+
+async function handleLicenseCodeBatches(request, env) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (request.method === "GET") {
+    const { results } = await env.DB.prepare(
+      `SELECT b.batch_id, b.product_id, p.name AS product_name,
+              b.edition_id, e.name AS edition_name,
+              MIN(b.created_at) AS created_at,
+              COUNT(*) AS total,
+              SUM(CASE WHEN b.status = 'available' THEN 1 ELSE 0 END) AS available,
+              SUM(CASE WHEN b.status = 'claimed' THEN 1 ELSE 0 END) AS claimed,
+              SUM(CASE WHEN b.status = 'revoked' THEN 1 ELSE 0 END) AS revoked
+       FROM license_code_inventory b
+       JOIN products p ON p.id = b.product_id
+       JOIN product_editions e ON e.id = b.edition_id
+       GROUP BY b.batch_id, b.product_id, p.name, b.edition_id, e.name
+       ORDER BY created_at DESC LIMIT 50`
+    ).all();
+    return json({ ok: true, batches: results || [] });
+  }
+
+  if (request.method !== "POST") return json({ ok: false, error: "Unsupported batch operation" }, 405);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid JSON batch request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A license code batch object is required" }, 400);
+  }
+
+  const count = Number(body.count);
+  const productId = numericId(body.product_id);
+  const editionId = numericId(body.edition_id);
+  const seats = Number(body.seats ?? 1);
+  const licenseModelName = boundedString(body.license_model, 40);
+  const startsAt = boundedString(body.start_date, 10) || new Date().toISOString().slice(0, 10);
+  const expiresAt = body.expiry_date ? boundedString(body.expiry_date, 10) : null;
+  const allowedModels = ["cloud_subscription", "cloud_one_time", "on_premise_subscription", "on_premise_perpetual"];
+  const isDate = (value) => {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  if (!Number.isInteger(count) || count < 1 || count > 50 ||
+      !productId || !editionId || !Number.isInteger(seats) || seats < 1 || seats > 10000 ||
+      !allowedModels.includes(licenseModelName) || !isDate(startsAt) ||
+      (body.expiry_date != null && (!expiresAt || !isDate(expiresAt))) ||
+      (expiresAt && (expiresAt < startsAt || expiresAt < new Date().toISOString().slice(0, 10)))) {
+    return json({ ok: false, error: "Provide 1-50 codes, a matching product and edition, valid license terms, and a valid seat count" }, 400);
+  }
+
+  const product = await env.DB.prepare(
+    `SELECT p.id, e.id AS edition_id
+     FROM products p JOIN product_editions e ON e.product_id = p.id
+     WHERE p.id = ? AND e.id = ? AND p.status = 'active' AND e.status = 'active'`
+  ).bind(productId, editionId).first();
+  if (!product) return json({ ok: false, error: "Product and edition do not match or are inactive" }, 400);
+
+  const batchId = crypto.randomUUID();
+  const batchEntitlements = "[]";
+  const codes = [];
+  const statements = [];
+  for (let index = 0; index < count; index += 1) {
+    const serialNumber = `SMR-LIC-${makeToken().slice(0, 20).toUpperCase()}`;
+    const activationKey = `ACT-${makeToken().toUpperCase()}`;
+    const activationKeyHash = await sha256Hex(activationKey);
+    codes.push({ serial_number: serialNumber, activation_key: activationKey });
+    statements.push(env.DB.prepare(
+      `INSERT INTO license_code_inventory
+       (batch_id, serial_number, activation_key_hash, product_id, edition_id,
+        starts_at, expires_at, license_model, seats, entitlements_json,
+        offline_validity_days, created_by_person_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 90, ?)`
+    ).bind(
+      batchId, serialNumber, activationKeyHash, productId, editionId,
+      startsAt, expiresAt, licenseModelName, seats, batchEntitlements, principal.person_id,
+    ));
+  }
+  statements.push(env.DB.prepare(
+    `INSERT INTO audit_logs
+     (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+     VALUES (?, NULL, 'LICENSE_CODE_BATCH_CREATED', 'license_code_batch', ?, NULL, ?, ?)`
+  ).bind(
+    principal.person_id,
+    batchId,
+    JSON.stringify({ count, product_id: productId, edition_id: editionId, starts_at: startsAt, expires_at: expiresAt, seats }),
+    request.headers.get("CF-Connecting-IP") || null,
+  ));
+
+  await env.DB.batch(statements);
+  return json({ ok: true, batch_id: batchId, count, codes, offline_validity_days: 90 }, 201);
 }
 
 async function handleLicenseEntitlements(request, env, licenseId) {
@@ -1295,6 +1754,7 @@ async function patchLicense(request, env, licenseId) {
 }
 
 async function handleLicenses(request, env, segments) {
+  if (segments[0] === "batches") return await handleLicenseCodeBatches(request, env);
   if (!segments.length) return request.method === "GET" ? listLicenses(request, env) : createLicense(request, env);
   const licenseId = numericId(segments[0]);
   if (!licenseId) return json({ ok: false, error: "A valid license id is required" }, 400);
