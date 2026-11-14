@@ -40,7 +40,7 @@ function validateChallenge(value) {
       value.schema_version !== 1 ||
       value.request_type !== 'prathamone-offline-activation-request' ||
       typeof value.serial_number !== 'string' ||
-      !/^SMR-LIC-[A-F0-9]{20}$/.test(value.serial_number) ||
+      !/^(?:\d{1,9}|SMR-LIC-(?:\d{8}|[A-F0-9]{20}))$/.test(value.serial_number) ||
       typeof value.product_code !== 'string' ||
       typeof value.company_binding !== 'string' ||
       typeof value.installation_id !== 'string' ||

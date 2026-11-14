@@ -6,7 +6,7 @@ document_type: "SPECIFICATION"
 product: "PrathamOne EduOS"
 edition: "Coaching Institute Edition"
 version: "1.0.0"
-doc_version: "1.3"
+doc_version: "1.4"
 created_date: "2026-11-14"
 updated_date: "2026-11-15"
 author: "Jawahar R Mallah"
@@ -96,9 +96,9 @@ DRAFT license keys are not returned to customer list responses, and the authorit
 
 ## Internal administrator workspace
 
-The authenticated super-admin workspace can issue licenses for active organizations and product editions, generate batches of 1-50 unassigned activation-code pairs, review batch counts without retrieving keys, configure edition Evaluation Mode/grace/rollout policy, inspect entitlements, activations, signed-artifact metadata, and lifecycle events, renew or suspend licenses, and revoke activations. These actions use the existing permission-scoped APIs and append audit/event records. Activation revocation and suspension require explicit confirmation in the UI.
+The authenticated super-admin workspace can issue licenses for active organizations and product editions, generate batches of 1-200 unassigned activation-code pairs, review batch counts without retrieving keys, configure edition Evaluation Mode/grace/rollout policy, inspect entitlements, activations, signed-artifact metadata, and lifecycle events, renew or suspend licenses, and revoke activations. Batch codes use nine-digit numeric serials and 16-character uppercase alphanumeric activation keys. A batch can be revoked only while none of its codes are claimed or being claimed; revocations are audited.
 
-`POST /api/licenses` returns a stable `SMR-LIC-########` serial number and the direct-issue key once. `POST /api/licenses/batches` returns generated serial/key pairs once; the keys are hash-only at rest and absent from all list, audit and batch-summary responses. The admin workspace offers a CSV download from the current response and clears the in-memory key list on sign-out. License creation and customer registration are audited without including activation keys. Existing-organization issuance remains available.
+`POST /api/licenses` returns a stable `SMR-LIC-########` serial number and the direct-issue key once. `POST /api/licenses/batches` returns generated serial/key pairs once; the keys are hash-only at rest and absent from all list, audit and batch-summary responses. `POST /api/licenses/batches/:batch_id/revoke` revokes all unclaimed codes in one batch and records an audit event. The admin workspace offers a CSV download from the current response and clears the in-memory key list on sign-out. License creation and customer registration are audited without including activation keys. Existing-organization issuance remains available.
 
 Private signing material and signed artifact payload/signature bytes are not rendered in the workspace.
 

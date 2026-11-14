@@ -70,9 +70,9 @@
         <div class="admin-license-workspace">
           <form id="licenseBatchForm" class="card">
             <div class="section-head compact"><div><span class="eyebrow">License inventory</span><h2>Prepare activation codes</h2></div></div>
-            <p class="muted">Generate unassigned serial number and activation-key pairs to deliver to customers. The activation key is returned only in this response and is never stored in plaintext. Claimed licenses receive a 90-day offline activation response.</p>
+            <p class="muted">Generate up to 200 unassigned pairs with nine-digit numeric serials and 16-character alphanumeric activation keys. Keys are returned only in this response and never stored in plaintext. Claimed licenses receive a 90-day offline activation response.</p>
             <div class="form-grid">
-              <div><label for="licenseBatchCount">Number of codes</label><input id="licenseBatchCount" name="count" type="number" min="1" max="50" value="10" required /></div>
+              <div><label for="licenseBatchCount">Number of codes</label><input id="licenseBatchCount" name="count" type="number" min="1" max="200" value="10" required /></div>
               <div><label for="licenseBatchSeats">Seats per code</label><input id="licenseBatchSeats" name="seats" type="number" min="1" max="10000" value="1" required /></div>
               <div><label for="licenseBatchProduct">Product</label><select id="licenseBatchProduct" name="product_id" required></select></div>
               <div><label for="licenseBatchEdition">Edition</label><select id="licenseBatchEdition" name="edition_id" required></select></div>
@@ -141,6 +141,6 @@
       <section class="admin-view" data-admin-section="security"><div class="section-head"><div><span class="eyebrow">Account security</span><h2>Change your password</h2></div></div><form id="adminPasswordForm" class="card" method="post"><label for="adminCurrentPassword">Current password</label><input id="adminCurrentPassword" name="current_password" type="password" autocomplete="current-password" required /><label for="adminNewPassword">New password</label><input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="12" required /><div class="form-actions"><button id="adminPasswordButton" class="primary" type="submit">Change password</button></div><p id="adminPasswordMessage" class="message" role="status"></p><p class="muted">Changing your password signs out all active sessions.</p></form></section>
     </div></main>
   </section>
-  <script src="js/admin.js?v=23fe8d2" defer></script>
+  <script src="js/admin.js?v=license-codes-200-v1" defer></script>
 </body>
 </html>

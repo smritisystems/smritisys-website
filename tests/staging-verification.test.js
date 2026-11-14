@@ -481,8 +481,8 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM license_code_inventory").get().count, 2);
   assert.equal(createdBatch.data.codes.length, 2);
   const code = createdBatch.data.codes[0];
-  assert.match(code.serial_number, /^SMR-LIC-[A-F0-9]{20}$/);
-  assert.match(code.activation_key, /^ACT-[A-F0-9]{48}$/);
+  assert.match(code.serial_number, /^\d{9}$/);
+  assert.match(code.activation_key, /^[A-Z0-9]{16}$/);
   const storedCode = d1.raw.prepare(
     "SELECT activation_key_hash, status, offline_validity_days FROM license_code_inventory WHERE serial_number = ?"
   ).get(code.serial_number);
@@ -541,6 +541,18 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
       tax_id: "TAX-123",
     },
   };
+  const invalidSerial = await callApi(d1, "license/activate", {
+    method: "POST",
+    body: { ...activation, serial_number: `X${code.serial_number}` },
+    bindings,
+  });
+  assert.equal(invalidSerial.status, 400);
+  const invalidKeyFormat = await callApi(d1, "license/activate", {
+    method: "POST",
+    body: { ...activation, activation_key: `${code.activation_key.slice(0, 15)}!` },
+    bindings,
+  });
+  assert.equal(invalidKeyFormat.status, 400);
   const invalidKey = await callApi(d1, "license/activate", {
     method: "POST",
     body: { ...activation, activation_key: "ACT-000000000000000000000000000000000000000000000000" },
@@ -602,6 +614,93 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   });
   assert.equal(otherInstallation.status, 409);
   assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM licenses WHERE serial_number = ?").get(code.serial_number).count, 1);
+});
+
+test("license code batches allow 200 new-format codes and safely revoke unused batches", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-license-code-revoke";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(product.id);
+  const body = {
+    count: 200,
+    seats: 1,
+    product_id: product.id,
+    edition_id: edition.id,
+    license_model: "on_premise_perpetual",
+    start_date: "2026-11-15",
+    expiry_date: null,
+  };
+  const created = await callApi(d1, "licenses/batches", { method: "POST", token: adminToken, body });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.codes.length, 200);
+  assert.ok(created.data.codes.every((code) => /^\d{9}$/.test(code.serial_number)));
+  assert.ok(created.data.codes.every((code) => /^[A-Z0-9]{16}$/.test(code.activation_key)));
+  assert.equal(new Set(created.data.codes.map((code) => code.serial_number)).size, 200);
+  assert.equal(new Set(created.data.codes.map((code) => code.activation_key)).size, 200);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM license_code_inventory").get().count, 200);
+
+  const unauthorizedRevocation = await callApi(d1, `licenses/batches/${created.data.batch_id}/revoke`, {
+    method: "POST",
+  });
+  assert.equal(unauthorizedRevocation.status, 403);
+  const overLimit = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: { ...body, count: 201 },
+  });
+  assert.equal(overLimit.status, 400);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM license_code_inventory").get().count, 200);
+
+  const revoked = await callApi(d1, `licenses/batches/${created.data.batch_id}/revoke`, {
+    method: "POST",
+    token: adminToken,
+  });
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.data.status, "revoked");
+  assert.equal(revoked.data.revoked, 200);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM license_code_inventory WHERE batch_id = ? AND status = 'revoked'"
+  ).get(created.data.batch_id).count, 200);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'LICENSE_CODE_BATCH_REVOKED' AND resource_id = ?"
+  ).get(created.data.batch_id).count, 1);
+
+  const repeatedRevocation = await callApi(d1, `licenses/batches/${created.data.batch_id}/revoke`, {
+    method: "POST",
+    token: adminToken,
+  });
+  assert.equal(repeatedRevocation.status, 200);
+  assert.equal(repeatedRevocation.data.already_revoked, true);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'LICENSE_CODE_BATCH_REVOKED' AND resource_id = ?"
+  ).get(created.data.batch_id).count, 1);
+
+  const guardedBatch = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: { ...body, count: 2 },
+  });
+  assert.equal(guardedBatch.status, 201);
+  d1.raw.prepare(
+    `UPDATE license_code_inventory SET status = 'claimed'
+     WHERE id = (SELECT id FROM license_code_inventory WHERE batch_id = ? LIMIT 1)`
+  ).run(guardedBatch.data.batch_id);
+  const blockedRevocation = await callApi(d1, `licenses/batches/${guardedBatch.data.batch_id}/revoke`, {
+    method: "POST",
+    token: adminToken,
+  });
+  assert.equal(blockedRevocation.status, 409);
+  assert.deepEqual(
+    d1.raw.prepare(
+      "SELECT status, COUNT(*) AS count FROM license_code_inventory WHERE batch_id = ? GROUP BY status ORDER BY status"
+    ).all(guardedBatch.data.batch_id).map((row) => [row.status, row.count]),
+    [["available", 1], ["claimed", 1]],
+  );
 });
 
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {

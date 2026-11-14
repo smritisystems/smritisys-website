@@ -170,6 +170,36 @@ function makeToken() {
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function makeNumericLicenseSerialNumber(usedSerials) {
+  const range = 900_000_000;
+  const maxAcceptedValue = Math.floor(0x1_0000_0000 / range) * range;
+  const random = new Uint32Array(1);
+  while (true) {
+    crypto.getRandomValues(random);
+    if (random[0] >= maxAcceptedValue) continue;
+    const serialNumber = String(100_000_000 + (random[0] % range));
+    if (usedSerials.has(serialNumber)) continue;
+    usedSerials.add(serialNumber);
+    return serialNumber;
+  }
+}
+
+function makeLicenseActivationKey() {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const maxAcceptedValue = Math.floor(256 / alphabet.length) * alphabet.length;
+  const random = new Uint8Array(32);
+  const characters = [];
+  while (characters.length < 16) {
+    crypto.getRandomValues(random);
+    for (const byte of random) {
+      if (byte >= maxAcceptedValue) continue;
+      characters.push(alphabet[byte % alphabet.length]);
+      if (characters.length === 16) break;
+    }
+  }
+  return characters.join("");
+}
+
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -784,7 +814,7 @@ async function activateLicense(request, env, origin) {
     return json({ ok: false, error: "A JSON activation request is required" }, 400, origin);
   }
   const licenseKey = boundedString(body?.license_key, 200);
-  const serialNumber = boundedString(body?.serial_number, 80);
+  const serialNumber = boundedString(body?.serial_number, 80)?.toUpperCase() || null;
   const activationKey = boundedString(body?.activation_key, 100)?.toUpperCase() || null;
   const productCode = boundedString(body?.product_code, 100);
   const installationId = boundedString(body?.installation_id, 36);
@@ -797,7 +827,10 @@ async function activateLicense(request, env, origin) {
       !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
     return json({ ok: false, error: "Provide either a license key or a serial number and activation key, with product and installation identifiers" }, 400, origin);
   }
-  if (usesActivationCode && !/^ACT-[A-F0-9]{48}$/.test(activationKey)) {
+  if (usesActivationCode && !/^(?:\d{1,9}|SMR-LIC-(?:\d{8}|[A-F0-9]{20}))$/.test(serialNumber)) {
+    return json({ ok: false, error: "The serial number format is invalid" }, 400, origin);
+  }
+  if (usesActivationCode && !/^(?:[A-Z0-9]{16}|ACT-[A-F0-9]{48})$/.test(activationKey)) {
     return json({ ok: false, error: "The activation key format is invalid" }, 400, origin);
   }
   if (!refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
@@ -1508,12 +1541,12 @@ async function handleLicenseCodeBatches(request, env) {
     const parsed = new Date(`${value}T00:00:00Z`);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
   };
-  if (!Number.isInteger(count) || count < 1 || count > 50 ||
+  if (!Number.isInteger(count) || count < 1 || count > 200 ||
       !productId || !editionId || !Number.isInteger(seats) || seats < 1 || seats > 10000 ||
       !allowedModels.includes(licenseModelName) || !isDate(startsAt) ||
       (body.expiry_date != null && (!expiresAt || !isDate(expiresAt))) ||
       (expiresAt && (expiresAt < startsAt || expiresAt < new Date().toISOString().slice(0, 10)))) {
-    return json({ ok: false, error: "Provide 1-50 codes, a matching product and edition, valid license terms, and a valid seat count" }, 400);
+    return json({ ok: false, error: "Provide 1-200 codes, a matching product and edition, valid license terms, and a valid seat count" }, 400);
   }
 
   const product = await env.DB.prepare(
@@ -1527,9 +1560,22 @@ async function handleLicenseCodeBatches(request, env) {
   const batchEntitlements = "[]";
   const codes = [];
   const statements = [];
+  const { results: existingSerialRows } = await env.DB.prepare(
+    `SELECT serial_number FROM license_code_inventory
+     WHERE length(serial_number) BETWEEN 1 AND 9 AND serial_number NOT GLOB '*[^0-9]*'
+     UNION
+     SELECT serial_number FROM licenses
+     WHERE serial_number IS NOT NULL
+       AND length(serial_number) BETWEEN 1 AND 9
+       AND serial_number NOT GLOB '*[^0-9]*'`
+  ).all();
+  const usedSerials = new Set((existingSerialRows || []).map((row) => row.serial_number));
+  const usedActivationKeys = new Set();
   for (let index = 0; index < count; index += 1) {
-    const serialNumber = `SMR-LIC-${makeToken().slice(0, 20).toUpperCase()}`;
-    const activationKey = `ACT-${makeToken().toUpperCase()}`;
+    const serialNumber = makeNumericLicenseSerialNumber(usedSerials);
+    let activationKey = makeLicenseActivationKey();
+    while (usedActivationKeys.has(activationKey)) activationKey = makeLicenseActivationKey();
+    usedActivationKeys.add(activationKey);
     const activationKeyHash = await sha256Hex(activationKey);
     codes.push({ serial_number: serialNumber, activation_key: activationKey });
     statements.push(env.DB.prepare(
@@ -1556,6 +1602,69 @@ async function handleLicenseCodeBatches(request, env) {
 
   await env.DB.batch(statements);
   return json({ ok: true, batch_id: batchId, count, codes, offline_validity_days: 90 }, 201);
+}
+
+async function revokeLicenseCodeBatch(request, env, batchId) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(batchId)) {
+    return json({ ok: false, error: "A valid batch id is required" }, 400);
+  }
+
+  const getBatchCounts = () => env.DB.prepare(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available,
+            SUM(CASE WHEN status = 'claiming' THEN 1 ELSE 0 END) AS claiming,
+            SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed,
+            SUM(CASE WHEN status = 'revoked' THEN 1 ELSE 0 END) AS revoked
+     FROM license_code_inventory WHERE batch_id = ?`
+  ).bind(batchId).first();
+
+  const current = await getBatchCounts();
+  if (!current || Number(current.total) === 0) {
+    return json({ ok: false, error: "License code batch not found" }, 404);
+  }
+  if (Number(current.claiming) > 0 || Number(current.claimed) > 0) {
+    return json({ ok: false, error: "A batch with a claimed or in-progress code cannot be revoked" }, 409);
+  }
+  if (Number(current.revoked) === Number(current.total)) {
+    return json({ ok: true, batch_id: batchId, status: "revoked", count: Number(current.total), already_revoked: true });
+  }
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE license_code_inventory SET status = 'revoked'
+       WHERE batch_id = ? AND status = 'available'
+         AND NOT EXISTS (
+           SELECT 1 FROM license_code_inventory
+           WHERE batch_id = ? AND status IN ('claiming', 'claimed')
+         )`
+    ).bind(batchId, batchId),
+    env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       SELECT ?, NULL, 'LICENSE_CODE_BATCH_REVOKED', 'license_code_batch', ?, ?, ?, ?
+       WHERE changes() > 0`
+    ).bind(
+      principal.person_id,
+      batchId,
+      JSON.stringify({ status: "available", count: Number(current.available) }),
+      JSON.stringify({ status: "revoked", count: Number(current.available) }),
+      request.headers.get("CF-Connecting-IP") || null,
+    ),
+  ]);
+
+  const updated = await getBatchCounts();
+  if (Number(updated.claiming) > 0 || Number(updated.claimed) > 0 || Number(updated.available) > 0) {
+    return json({ ok: false, error: "The batch changed during revocation; no further codes were revoked" }, 409);
+  }
+  return json({
+    ok: true,
+    batch_id: batchId,
+    status: "revoked",
+    count: Number(updated.total),
+    revoked: Number(updated.revoked),
+  });
 }
 
 async function handleLicenseEntitlements(request, env, licenseId) {
@@ -1754,7 +1863,13 @@ async function patchLicense(request, env, licenseId) {
 }
 
 async function handleLicenses(request, env, segments) {
-  if (segments[0] === "batches") return await handleLicenseCodeBatches(request, env);
+  if (segments[0] === "batches") {
+    if (segments.length === 1) return await handleLicenseCodeBatches(request, env);
+    if (segments.length === 3 && segments[2] === "revoke" && request.method === "POST") {
+      return await revokeLicenseCodeBatch(request, env, segments[1]);
+    }
+    return json({ ok: false, error: "License code batch operation not found" }, 404);
+  }
   if (!segments.length) return request.method === "GET" ? listLicenses(request, env) : createLicense(request, env);
   const licenseId = numericId(segments[0]);
   if (!licenseId) return json({ ok: false, error: "A valid license id is required" }, 400);
