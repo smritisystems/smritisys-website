@@ -287,6 +287,31 @@ admin$('#adminLogout').addEventListener('click', async () => {
   showAdminLogin();
 });
 
+admin$('#adminPasswordForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = new FormData(form);
+  const button = admin$('#adminPasswordButton');
+  button.disabled = true;
+  try {
+    const result = await adminApi('admin/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: values.get('current_password'),
+        new_password: values.get('new_password'),
+      }),
+    });
+    form.reset();
+    adminState.token = null;
+    showAdminLogin();
+    adminMessage(admin$('#adminLoginMessage'), result.message, true);
+  } catch (error) {
+    adminMessage(admin$('#adminPasswordMessage'), error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 admin$('#announcementForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);

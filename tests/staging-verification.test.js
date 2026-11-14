@@ -159,6 +159,27 @@ test("staff bootstrap uses Worker-supported PBKDF2 and can log in", async () => 
   });
   assert.equal(login.status, 200);
   assert.equal(login.data.user.role, "super_admin");
+
+  const newPassword = "Changed-admin-test-passphrase-2026!";
+  const passwordChange = await callApi(d1, "admin/password", {
+    method: "POST",
+    token: login.data.token,
+    body: { current_password: password, new_password: newPassword },
+  });
+  assert.equal(passwordChange.status, 200);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM sessions WHERE account_type = 'user'").get().count, 0);
+
+  const oldPasswordLogin = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "user", email: "bootstrap@example.test", password },
+  });
+  assert.equal(oldPasswordLogin.status, 401);
+
+  const changedPasswordLogin = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "user", email: "bootstrap@example.test", password: newPassword },
+  });
+  assert.equal(changedPasswordLogin.status, 200);
 });
 
 test("unsupported PBKDF2 iteration counts are rejected without a server error", async () => {

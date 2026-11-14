@@ -2297,6 +2297,42 @@ async function handlePasswordChange(request, env) {
   return json({ ok: true, message: "Password changed. Please sign in again." });
 }
 
+async function handleAdminPasswordChange(request, env) {
+  const session = await getIdentitySession(request, env);
+  if (!session || session.account_type !== "user") {
+    return json({ ok: false, error: "Staff login required" }, 401);
+  }
+  const limited = await requireRateLimit(env, request, "admin-password", 5, 900, String(session.account_id));
+  if (limited) return limited;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid JSON password request is required" }, 400);
+  }
+  const currentPassword = boundedString(body.current_password, 128);
+  const newPassword = boundedString(body.new_password, 128);
+  if (!currentPassword || !newPassword || newPassword.length < 12) {
+    return json({ ok: false, error: "Current password and a new password of at least 12 characters are required" }, 400);
+  }
+
+  const user = await env.DB.prepare("SELECT password_hash FROM users WHERE id = ? AND status = 'active'")
+    .bind(session.account_id)
+    .first();
+  if (!user || !(await verifyPassword(currentPassword, user.password_hash))) {
+    return json({ ok: false, error: "Current password is incorrect" }, 403);
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(passwordHash, session.account_id),
+    env.DB.prepare("DELETE FROM sessions WHERE account_type = 'user' AND account_id = ?").bind(session.account_id),
+  ]);
+  await writeAudit(env, request, session, "STAFF_PASSWORD_CHANGED", "user", session.account_id);
+  return json({ ok: true, message: "Password changed. Please sign in again." }, 200, null, { "Set-Cookie": clearedSessionCookie() });
+}
+
 async function handleListDemos(request, env) {
   const session = await requireSuperAdmin(request, env);
   if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
@@ -2326,6 +2362,7 @@ export async function onRequest(context) {
     if (path === "logout" && request.method === "POST") return await handleLogout(request, env);
     if (path === "me" && request.method === "GET") return await handleMe(request, env);
     if (path === "password" && request.method === "POST") return await handlePasswordChange(request, env);
+    if (path === "admin/password" && request.method === "POST") return await handleAdminPasswordChange(request, env);
     if (path === "profile" && ["GET", "PUT"].includes(request.method)) return await handleProfile(request, env);
     if (path === "organization" && request.method === "GET") return await handleOrganization(request, env);
     if (path === "tickets" && ["GET", "POST"].includes(request.method)) return await handleTickets(request, env);

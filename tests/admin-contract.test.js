@@ -12,6 +12,9 @@ const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.
   assert.match(html, /data-admin-view="organizations"/);
   assert.match(html, /data-admin-view="audit"/);
   assert.match(html, /data-admin-view="announcements"/);
+  assert.match(html, /data-admin-view="security"/);
+  assert.match(html, /id="adminPasswordForm"/);
+  assert.match(script, /adminApi\('admin\/password'/);
   assert.match(script, /adminApi\('admin\/announcements'\)/);
   assert.match(script, /adminApi\('admin\/overview'\)/);
   assert.match(script, /adminApi\('admin\/organizations'\)/);
