@@ -1,0 +1,14 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "smritisys-license-signer",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-14",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "LICENSE_KEY_ID": "smritisys-ed25519-2026-11"
+  },
+  "secrets": {
+    "required": ["LICENSE_SIGNING_PRIVATE_KEY_PKCS8"]
+  }
+}
