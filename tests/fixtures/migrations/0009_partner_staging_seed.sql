@@ -1,4 +1,4 @@
--- Phase 8 local verification seed: one partner linked to Organization A.
+-- Test-only fixture: one partner linked to a seeded organization.
 
 INSERT OR IGNORE INTO customers (id, email, password_hash, name, company, status)
 VALUES (103, 'partner@example.com', '783f1ea39d9119c1cf5d9b0c1bc579b7780df38992d9774837ac3917ebcc98ee', 'Partner Admin', 'Channel Partner Pvt Ltd', 'active');

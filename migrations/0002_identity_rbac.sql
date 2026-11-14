@@ -128,21 +128,42 @@ FROM customers c
 WHERE NOT EXISTS (
   SELECT 1 FROM organization_members m
   WHERE m.account_type = 'customer' AND m.account_id = c.id
+)
+AND NOT EXISTS (
+  SELECT 1 FROM organizations o
+  WHERE o.name = COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), 'Customer') || ' #' || c.id
 );
 
 INSERT OR IGNORE INTO organization_members (organization_id, account_type, account_id, member_role, status)
 SELECT o.id, 'customer', c.id, 'customer',
        CASE WHEN c.status IN ('active', 'trial') THEN 'active' ELSE 'inactive' END
 FROM customers c
-JOIN organizations o ON o.name = COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), 'Customer') || ' #' || c.id;
+JOIN organizations o ON o.id = (
+  SELECT MIN(candidate.id)
+  FROM organizations candidate
+  WHERE candidate.name = COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), 'Customer') || ' #' || c.id
+)
+WHERE NOT EXISTS (
+  SELECT 1 FROM organization_members m
+  WHERE m.organization_id = o.id
+    AND m.account_type = 'customer'
+    AND m.account_id = c.id
+);
 
 INSERT OR IGNORE INTO organizations (name, legal_name, status)
 SELECT 'SMRITISYS Internal', 'SMRITISYS Internal', 'active'
-WHERE EXISTS (SELECT 1 FROM users);
+WHERE EXISTS (SELECT 1 FROM users)
+  AND NOT EXISTS (
+    SELECT 1 FROM organizations WHERE name = 'SMRITISYS Internal'
+  );
 
 INSERT OR IGNORE INTO organization_members (organization_id, account_type, account_id, member_role, status)
 SELECT o.id, 'user', u.id,
        CASE WHEN u.role IN ('staff', 'admin', 'super_admin') THEN u.role ELSE 'staff' END,
        u.status
 FROM users u
-JOIN organizations o ON o.name = 'SMRITISYS Internal';
+JOIN organizations o ON o.id = (
+  SELECT MIN(candidate.id)
+  FROM organizations candidate
+  WHERE candidate.name = 'SMRITISYS Internal'
+);

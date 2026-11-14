@@ -1,3 +1,20 @@
+/**
+ * @file        admin.js
+ * @project     PrathamOne EduOS Coaching Institute Management System
+ * @module      SMRITISYS admin portal
+ *
+ * @author      Jawahar R. Mallah
+ * @organization AITDL (AI Technology & Development Lab)
+ * @client      Prashant Academy Coaching Institute
+ * @copyright   Copyright (c) 2026 AITDL
+ * @license     Proprietary
+ *
+ * @version     1.0.0
+ * @created     2026-11-06
+ * @updated     2026-11-14
+ *
+ * @description Manages the authenticated admin workspace and customer invitations.
+ */
 const adminState = { token: null, announcements: [], products: [], licenses: [], organizations: [] };
 const admin$ = (selector) => document.querySelector(selector);
 const admin$$ = (selector) => [...document.querySelectorAll(selector)];
@@ -25,7 +42,14 @@ function adminMessage(element, text, ok) {
   element.style.color = ok ? 'var(--turquoise)' : 'var(--red)';
 }
 
+function clearCustomerInviteLink() {
+  const link = admin$('#customerInviteLink');
+  if (link) link.value = '';
+  admin$('#customerInviteResult')?.classList.add('hidden');
+}
+
 function showAdminLogin(message = '') {
+  clearCustomerInviteLink();
   admin$('#adminPortalView').classList.add('hidden');
   admin$('#adminLoginView').classList.remove('hidden');
   adminMessage(admin$('#adminLoginMessage'), message, false);
@@ -80,6 +104,31 @@ async function loadAdminOrganizations() {
     list.classList.remove('hidden');
     list.innerHTML = `<table class="admin-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th><th>Members</th></tr></thead><tbody>${data.organizations.map((organization) => `<tr><td>${adminEscape(organization.name)}</td><td>${adminEscape(organization.legal_name || 'Not provided')}</td><td><span class="status">${adminEscape(organization.status)}</span></td><td>${adminEscape(organization.member_count)}</td></tr>`).join('')}</tbody></table>`;
   } catch (error) { adminStatePanel('adminOrganizationsState', 'adminOrganizationsList', 'Organizations are unavailable.', true); }
+}
+
+async function loadAdminCustomerInvites() {
+  try {
+    const data = await adminApi('admin/customer-invites');
+    const list = admin$('#adminCustomerInvitesList');
+    if (!data.invites.length) return adminStatePanel('adminCustomerInvitesState', 'adminCustomerInvitesList', 'No customer invitations found.');
+    admin$('#adminCustomerInvitesState').classList.add('hidden');
+    list.classList.remove('hidden');
+    list.innerHTML = `<table class="admin-table"><thead><tr><th>Email</th><th>Organization</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${data.invites.map((invite) => `<tr><td>${adminEscape(invite.email)}</td><td>${adminEscape(invite.company)}</td><td><span class="status">${adminEscape(invite.status)}</span></td><td>${adminEscape(invite.expires_at)}</td><td>${invite.status === 'pending' ? `<button class="text-button" type="button" data-customer-invite-revoke="${adminEscape(invite.id)}">Revoke</button>` : '—'}</td></tr>`).join('')}</tbody></table>`;
+    list.querySelectorAll('[data-customer-invite-revoke]').forEach((button) => button.addEventListener('click', async () => {
+      if (!window.confirm('Revoke this setup invitation? The link will stop working.')) return;
+      button.disabled = true;
+      try {
+        await adminApi(`admin/customer-invites/${button.dataset.customerInviteRevoke}/revoke`, { method: 'POST', body: '{}' });
+        await loadAdminCustomerInvites();
+      } catch (error) {
+        adminMessage(admin$('#adminError'), error.message, false);
+        admin$('#adminError').className = 'state-panel error-state';
+        button.disabled = false;
+      }
+    }));
+  } catch (error) {
+    adminStatePanel('adminCustomerInvitesState', 'adminCustomerInvitesList', 'Customer invitations are unavailable.', true);
+  }
 }
 
 async function loadAdminProducts() {
@@ -252,13 +301,17 @@ async function loadAdminWorkspace() {
 function navigateAdmin(view) {
   const button = admin$(`button[data-admin-view="${view}"]`);
   if (!button) return;
+  if (view !== 'organizations') clearCustomerInviteLink();
   admin$$('.admin-nav button').forEach((item) => item.classList.remove('active'));
   button.classList.add('active');
   admin$$('.admin-view').forEach((section) => section.classList.toggle('active', section.dataset.adminSection === view));
   admin$('#adminPageTitle').textContent = button.textContent;
   if (view === 'overview') loadAdminOverview();
   if (view === 'users') loadAdminUsers();
-  if (view === 'organizations') loadAdminOrganizations();
+  if (view === 'organizations') {
+    loadAdminOrganizations();
+    loadAdminCustomerInvites();
+  }
   if (view === 'products') loadAdminProducts();
   if (view === 'announcements') loadAdminAnnouncements();
   if (view === 'audit') loadAdminAudit();
@@ -279,6 +332,47 @@ admin$('#adminLoginForm').addEventListener('submit', async (event) => {
     showAdminPortal();
   } catch (error) { adminMessage(admin$('#adminLoginMessage'), error.status === 401 ? 'Invalid email or password.' : error.message, false); }
   finally { button.disabled = false; }
+});
+
+admin$('#customerInviteForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const values = new FormData(formElement);
+  const button = admin$('#customerInviteButton');
+  button.disabled = true;
+  admin$('#customerInviteResult').classList.add('hidden');
+  adminMessage(admin$('#customerInviteMessage'), 'Creating one-time setup invite...', true);
+  try {
+    const result = await adminApi('admin/customer-invites', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: values.get('email'),
+        name: values.get('name'),
+        company: values.get('company'),
+      }),
+    });
+    admin$('#customerInviteLink').value = new URL(result.setup_path, window.location.origin).href;
+    admin$('#customerInviteResult').classList.remove('hidden');
+    formElement.reset();
+    adminMessage(admin$('#customerInviteMessage'), 'Invite created. Copy the link now and share it only with the intended customer.', true);
+    await loadAdminCustomerInvites();
+  } catch (error) {
+    adminMessage(admin$('#customerInviteMessage'), error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+admin$('#customerInviteCopy').addEventListener('click', async () => {
+  const input = admin$('#customerInviteLink');
+  try {
+    await navigator.clipboard.writeText(input.value);
+    adminMessage(admin$('#customerInviteMessage'), 'Setup link copied. Share it only with the intended customer.', true);
+  } catch {
+    input.focus();
+    input.select();
+    adminMessage(admin$('#customerInviteMessage'), 'Select and copy the setup link manually.', false);
+  }
 });
 
 admin$('#adminLogout').addEventListener('click', async () => {

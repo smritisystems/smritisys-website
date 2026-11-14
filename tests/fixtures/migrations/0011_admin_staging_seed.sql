@@ -1,4 +1,4 @@
--- Phase 10 local verification seed: isolated super-admin identity.
+-- Test-only fixture: isolated super-admin identity.
 
 INSERT OR IGNORE INTO users (id, email, password_hash, name, role, status)
 VALUES (201, 'admin.phase10@example.com', '783f1ea39d9119c1cf5d9b0c1bc579b7780df38992d9774837ac3917ebcc98ee', 'Phase 10 Admin', 'super_admin', 'active');

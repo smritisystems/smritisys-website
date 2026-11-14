@@ -1,4 +1,4 @@
-﻿-- Phase 4-7 Staging Verification Seed: customer, license, support, requirement, and release dataset.
+-- Test-only fixture: customer, license, support, requirement, and release dataset.
 
 -- 1. Product Editions
 INSERT OR IGNORE INTO product_editions (product_id, code, name, description, status)

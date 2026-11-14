@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Set up customer access | SMRITISYS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/portal.css" />
+</head>
+<body>
+  <section class="login-shell">
+    <div class="login-art">
+      <div class="brand">SMRITISYS</div>
+      <h1>Set up your customer access.</h1>
+      <p>Choose a password to finish creating your customer account.</p>
+    </div>
+    <div class="login-panel">
+      <div class="login-box">
+        <span class="eyebrow">Customer onboarding</span>
+        <h2>Create your password</h2>
+        <p class="muted">Use at least 12 characters. This invitation can only be used once.</p>
+        <form id="inviteForm">
+          <label for="invitePassword">Password</label>
+          <input id="invitePassword" name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+          <label for="invitePasswordConfirm">Confirm password</label>
+          <input id="invitePasswordConfirm" name="password_confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+          <button id="inviteSubmit" class="primary" type="submit">Finish setup</button>
+        </form>
+        <p id="inviteMessage" class="message" role="status" aria-live="polite"></p>
+        <div id="inviteComplete" class="hidden">
+          <p>Your account is ready. Sign in with the invited email and the password you just created.</p>
+          <a class="secondary" href="/portal.html">Go to customer sign in</a>
+        </div>
+      </div>
+    </div>
+  </section>
+  <script src="js/accept-invite.js" defer></script>
+</body>
+</html>

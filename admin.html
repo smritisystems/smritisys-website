@@ -39,7 +39,30 @@
     <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
       <section class="admin-view active" data-admin-section="overview"><div class="welcome"><div><span class="eyebrow">Internal control plane</span><h2>System overview</h2><p class="muted">Governance and relationship data for authorized staff.</p></div></div><div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div></section>
       <section class="admin-view" data-admin-section="users"><div class="section-head"><div><span class="eyebrow">Identity</span><h2>Staff users</h2></div><button class="secondary admin-refresh" data-refresh="users" type="button">Refresh</button></div><div id="adminUsersState" class="state-panel">Loading users...</div><div id="adminUsersList" class="card hidden"></div></section>
-      <section class="admin-view" data-admin-section="organizations"><div class="section-head"><div><span class="eyebrow">Relationships</span><h2>Organizations</h2></div><button class="secondary admin-refresh" data-refresh="organizations" type="button">Refresh</button></div><div id="adminOrganizationsState" class="state-panel">Loading organizations...</div><div id="adminOrganizationsList" class="card hidden"></div></section>
+      <section class="admin-view" data-admin-section="organizations">
+        <div class="section-head"><div><span class="eyebrow">Relationships</span><h2>Organizations</h2></div><button class="secondary admin-refresh" data-refresh="organizations" type="button">Refresh</button></div>
+        <div id="adminOrganizationsState" class="state-panel">Loading organizations...</div>
+        <div id="adminOrganizationsList" class="card hidden"></div>
+        <form id="customerInviteForm" class="card">
+          <div class="section-head compact"><div><span class="eyebrow">Customer onboarding</span><h2>Invite a customer</h2></div></div>
+          <p class="muted">Create a one-time setup link. It expires in 24 hours; share it with the customer through a trusted channel. The customer chooses their own password.</p>
+          <div class="form-grid">
+            <div><label for="customerInviteEmail">Customer email</label><input id="customerInviteEmail" name="email" type="email" autocomplete="off" maxlength="254" required /></div>
+            <div><label for="customerInviteName">Full name (optional)</label><input id="customerInviteName" name="name" autocomplete="off" maxlength="120" /></div>
+            <div class="full"><label for="customerInviteCompany">Organization name</label><input id="customerInviteCompany" name="company" autocomplete="organization" maxlength="200" required /></div>
+          </div>
+          <button id="customerInviteButton" class="primary" type="submit">Create setup invite</button>
+          <p id="customerInviteMessage" class="message" role="status"></p>
+          <div id="customerInviteResult" class="hidden">
+            <label for="customerInviteLink">One-time setup link — copy it now; it cannot be retrieved later</label>
+            <input id="customerInviteLink" type="url" readonly />
+            <button id="customerInviteCopy" class="secondary" type="button">Copy setup link</button>
+          </div>
+        </form>
+        <div class="section-head"><div><span class="eyebrow">Access management</span><h2>Customer invitations</h2></div></div>
+        <div id="adminCustomerInvitesState" class="state-panel">Loading invitations...</div>
+        <div id="adminCustomerInvitesList" class="card hidden"></div>
+      </section>
       <section class="admin-view" data-admin-section="products">
         <div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div>
         <div id="adminProductsState" class="state-panel">Loading products, organizations, and licenses...</div>

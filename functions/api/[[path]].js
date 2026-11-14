@@ -1,4 +1,21 @@
 /**
+ * @file        [[path]].js
+ * @project     PrathamOne EduOS Coaching Institute Management System
+ * @module      SMRITISYS Pages API
+ *
+ * @author      Jawahar R. Mallah
+ * @organization AITDL (AI Technology & Development Lab)
+ * @client      Prashant Academy Coaching Institute
+ * @copyright   Copyright (c) 2026 AITDL
+ * @license     Proprietary
+ *
+ * @version     1.0.0
+ * @created     2026-11-06
+ * @updated     2026-11-14
+ *
+ * @description Handles authenticated website APIs and customer invitation workflows.
+ */
+/**
  * SMRITISYS Pages Functions
  * Handles account, profile, support ticket, and demo APIs.
  * Auto-deploys with Cloudflare Pages on every GitHub push
@@ -151,6 +168,16 @@ function makeToken() {
   const arr = new Uint8Array(24);
   crypto.getRandomValues(arr);
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function isValidCustomerInviteToken(token) {
+  return typeof token === "string" && /^[a-f0-9]{48}$/.test(token);
+}
+
+export async function hashCustomerInviteToken(token) {
+  if (!isValidCustomerInviteToken(token)) throw new TypeError("Invalid customer invitation token");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function getCustomerSession(request, env) {
@@ -2084,7 +2111,48 @@ async function handleDemo(request, env) {
   return json({ ok: true, message: "Demo request received. We will contact you soon." });
 }
 
+function customerIdentityStatements(env, customerIdExpression, customerIdBindings, personStatus, memberStatus, memberRole) {
+  const organizationName = "COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), 'Customer') || ' #' || c.id";
+  const organizationLegalName = `COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), ${organizationName})`;
+  const bindCustomerId = () => [...customerIdBindings];
+
+  return [
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO people (email, name, source_type, source_id, status)
+       SELECT c.email, c.name, 'customer', c.id, ?
+       FROM customers c WHERE c.id = ${customerIdExpression}`
+    ).bind(personStatus, ...bindCustomerId()),
+    env.DB.prepare(
+      `INSERT INTO organizations (name, legal_name, status)
+       SELECT ${organizationName}, ${organizationLegalName}, 'active'
+       FROM customers c
+       WHERE c.id = ${customerIdExpression}
+         AND NOT EXISTS (SELECT 1 FROM organizations WHERE name = ${organizationName})`
+    ).bind(...bindCustomerId()),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO organization_members
+       (organization_id, account_type, account_id, member_role, status)
+       SELECT o.id, 'customer', c.id, ?, ?
+       FROM customers c
+       JOIN organizations o ON o.name = ${organizationName}
+       WHERE c.id = ${customerIdExpression}`
+    ).bind(memberRole, memberStatus, ...bindCustomerId()),
+  ];
+}
+
 async function ensureIdentityForAccount(env, accountType, accountId, email, name, status, company = null, role = null) {
+  if (accountType === "customer") {
+    await env.DB.batch(customerIdentityStatements(
+      env,
+      "?",
+      [accountId],
+      status || "active",
+      status === "inactive" ? "inactive" : "active",
+      role || "customer",
+    ));
+    return;
+  }
+
   await env.DB.prepare(
     `INSERT OR IGNORE INTO people (email, name, source_type, source_id, status)
      VALUES (?, ?, ?, ?, ?)`
@@ -2092,18 +2160,16 @@ async function ensureIdentityForAccount(env, accountType, accountId, email, name
     .bind(email, name || null, accountType, accountId, status || "active")
     .run();
 
-  const organizationName = accountType === "customer"
-    ? `${company || name || "Customer"} #${accountId}`
-    : "SMRITISYS Internal";
+  const organizationName = "SMRITISYS Internal";
   await env.DB.prepare(
     `INSERT INTO organizations (name, legal_name, status)
      SELECT ?, ?, 'active'
      WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE name = ?)`
   )
-    .bind(organizationName, company || name || organizationName, organizationName)
+    .bind(organizationName, organizationName, organizationName)
     .run();
   const organization = await env.DB.prepare("SELECT id FROM organizations WHERE name = ? LIMIT 1").bind(organizationName).first();
-  const memberRole = role || (accountType === "customer" ? "customer" : "staff");
+  const memberRole = role || "staff";
   await env.DB.prepare(
     `INSERT OR IGNORE INTO organization_members
      (organization_id, account_type, account_id, member_role, status)
@@ -2111,6 +2177,213 @@ async function ensureIdentityForAccount(env, accountType, accountId, email, name
   )
     .bind(organization.id, accountType, accountId, memberRole, status === "inactive" ? "inactive" : "active")
     .run();
+}
+
+async function emailAlreadyRegistered(env, email) {
+  const existing = await env.DB.prepare(
+    `SELECT 1 AS registered FROM customers WHERE lower(email) = ?
+    UNION ALL SELECT 1 FROM users WHERE lower(email) = ?
+    UNION ALL SELECT 1 FROM people WHERE lower(email) = ?
+    LIMIT 1`
+  ).bind(email, email, email).first();
+  return Boolean(existing);
+}
+
+async function handleAdminCustomerInvites(request, env, origin) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (request.method === "GET") {
+    const { results } = await env.DB.prepare(
+     `SELECT id, email, name, company,
+             CASE WHEN status = 'pending' AND expires_at <= datetime('now') THEN 'expired' ELSE status END AS status,
+             created_at, expires_at, accepted_at
+      FROM customer_invites ORDER BY created_at DESC, id DESC LIMIT 100`
+    ).all();
+    return json({ ok: true, invites: results }, 200, origin, { "Cache-Control": "no-store" });
+  }
+
+  const limited = await requireRateLimit(env, request, "customer-invite-create", 20, 3600, String(principal.person_id));
+  if (limited) return limited;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid JSON invitation request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid invitation request is required" }, 400);
+  }
+
+  const email = validEmail(body.email);
+  const company = boundedString(body.company, 200);
+  const suppliedName = body.name;
+  const name = suppliedName == null || suppliedName === "" ? null : boundedString(suppliedName, 120);
+  if (!email || !company || (suppliedName != null && suppliedName !== "" && !name)) {
+    return json({ ok: false, error: "A valid email, company, and optional name are required" }, 400);
+  }
+  if (await emailAlreadyRegistered(env, email)) {
+    return json({ ok: false, error: "An account already exists for this email" }, 409);
+  }
+
+  const pendingInvite = await env.DB.prepare(
+    `SELECT id FROM customer_invites
+    WHERE lower(email) = ? AND status = 'pending' AND expires_at > datetime('now') LIMIT 1`
+  ).bind(email).first();
+  if (pendingInvite) return json({ ok: false, error: "An active invitation already exists for this email" }, 409);
+
+  const token = makeToken();
+  const tokenHash = await hashCustomerInviteToken(token);
+  const auditValue = JSON.stringify({ email, name, company, expires_in_hours: 24 });
+  const clientIp = request.headers.get("CF-Connecting-IP") || null;
+  let results;
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE customer_invites SET status = 'revoked'
+         WHERE lower(email) = ? AND status = 'pending' AND expires_at <= datetime('now')`
+      ).bind(email),
+      env.DB.prepare(
+        `INSERT INTO customer_invites (token_hash, email, name, company, created_by, expires_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'))`
+      ).bind(tokenHash, email, name, company, principal.person_id),
+      env.DB.prepare(
+        `INSERT INTO audit_logs
+         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+         SELECT ?, NULL, 'CUSTOMER_INVITE_CREATED', 'customer_invite',
+                CAST(id AS TEXT), NULL, ?, ?
+         FROM customer_invites WHERE token_hash = ?`
+      ).bind(principal.person_id, auditValue, clientIp, tokenHash),
+    ]);
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) {
+     return json({ ok: false, error: "An active invitation already exists for this email" }, 409);
+    }
+    throw error;
+  }
+  const [, created, audited] = results;
+  if (created.meta.changes !== 1 || audited.meta.changes !== 1) {
+    throw new Error("Customer invitation could not be recorded");
+  }
+
+  return json({
+    ok: true,
+    setup_path: `/accept-invite.html#token=${token}`,
+    expires_in_hours: 24,
+    invite_id: created.meta.last_row_id,
+  }, 201, origin, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminCustomerInviteRevocation(request, env, inviteId) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  const invite = await env.DB.prepare(
+    "SELECT id, email, company, status FROM customer_invites WHERE id = ?"
+  ).bind(inviteId).first();
+  if (!invite) return json({ ok: false, error: "Invitation not found" }, 404);
+  if (invite.status !== "pending") return json({ ok: false, error: "Only pending invitations can be revoked" }, 409);
+
+  const updated = await env.DB.prepare(
+    `UPDATE customer_invites SET status = 'revoked'
+    WHERE id = ? AND status = 'pending'`
+  ).bind(inviteId).run();
+  if (updated.meta.changes !== 1) {
+    return json({ ok: false, error: "Invitation is no longer pending" }, 409);
+  }
+  await writeAudit(
+    env,
+    request,
+    principal,
+    "CUSTOMER_INVITE_REVOKED",
+    "customer_invite",
+    inviteId,
+    null,
+    { email: invite.email, company: invite.company },
+  );
+  return json({ ok: true, message: "Invitation revoked" }, 200, null, { "Cache-Control": "no-store" });
+}
+
+async function handleCustomerInviteAcceptance(request, env, origin) {
+  const limited = await requireRateLimit(env, request, "customer-invite-accept", 5, 3600);
+  if (limited) return limited;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid invitation setup request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid invitation setup request is required" }, 400);
+  }
+  const token = body.token;
+  const password = body.password;
+  if (!isValidCustomerInviteToken(token) || typeof password !== "string" || password.length < 12 || password.length > 128) {
+    return json({ ok: false, error: "A valid invitation token and password of 12 to 128 characters are required" }, 400);
+  }
+
+  const tokenHash = await hashCustomerInviteToken(token);
+  const invitation = await env.DB.prepare(
+    `SELECT id, email, name, company FROM customer_invites
+    WHERE token_hash = ? AND status = 'pending' AND expires_at > datetime('now')`
+  ).bind(tokenHash).first();
+  if (!invitation) return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+  if (await emailAlreadyRegistered(env, invitation.email)) {
+    return json({ ok: false, error: "An account already exists for this invitation email" }, 409);
+  }
+
+  const passwordHash = await hashPassword(password);
+  const clientIp = request.headers.get("CF-Connecting-IP") || null;
+  const auditValue = JSON.stringify({ email: invitation.email, company: invitation.company });
+  try {
+    const results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE customer_invites SET status = 'accepted', accepted_at = datetime('now')
+         WHERE id = ? AND status = 'pending' AND expires_at > datetime('now')`
+      ).bind(invitation.id),
+      env.DB.prepare(
+        `INSERT INTO customers (email, password_hash, name, phone, company)
+         SELECT ?, ?, ?, NULL, ? WHERE changes() = 1`
+      ).bind(invitation.email, passwordHash, invitation.name, invitation.company),
+      env.DB.prepare(
+        `UPDATE customer_invites
+         SET customer_id = (SELECT id FROM customers WHERE email = ? LIMIT 1)
+         WHERE id = ? AND status = 'accepted' AND customer_id IS NULL AND changes() = 1`
+      ).bind(invitation.email, invitation.id),
+      ...customerIdentityStatements(
+        env,
+        "(SELECT customer_id FROM customer_invites WHERE id = ? AND status = 'accepted')",
+        [invitation.id],
+        "active",
+        "active",
+        "customer",
+      ),
+      env.DB.prepare(
+        `INSERT INTO audit_logs
+         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+         SELECT p.id, om.organization_id, 'CUSTOMER_INVITE_ACCEPTED', 'customer', CAST(c.id AS TEXT),
+                NULL, ?, ?
+         FROM customer_invites i
+         JOIN customers c ON c.id = i.customer_id
+         JOIN people p ON p.source_type = 'customer' AND p.source_id = c.id
+         JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = c.id
+         WHERE i.id = ? AND i.status = 'accepted'`
+      ).bind(auditValue, clientIp, invitation.id),
+    ]);
+
+    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1 || results[2].meta.changes !== 1) {
+     return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+    }
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) {
+     return json({ ok: false, error: "An account already exists for this invitation email" }, 409);
+    }
+    throw error;
+  }
+
+  return json({ ok: true, message: "Account setup is complete. You can now sign in." }, 200, origin, { "Cache-Control": "no-store" });
 }
 
 async function handleSignup(request, env) {
@@ -2357,12 +2630,24 @@ export async function onRequest(context) {
     if (path === "license/refresh" && request.method === "POST") return await refreshLicense(request, env, origin);
     if (path === "license-verification-keys" && request.method === "GET") return await handlePublicLicenseKeys(env);
     if (path === "demo" && request.method === "POST") return await handleDemo(request, env);
+    if (path === "customer-invites/accept" && request.method === "POST") {
+      return await handleCustomerInviteAcceptance(request, env, origin);
+    }
     if (path === "signup" && request.method === "POST") return await handleSignup(request, env);
     if (path === "login" && request.method === "POST") return await handleLogin(request, env);
     if (path === "logout" && request.method === "POST") return await handleLogout(request, env);
     if (path === "me" && request.method === "GET") return await handleMe(request, env);
     if (path === "password" && request.method === "POST") return await handlePasswordChange(request, env);
     if (path === "admin/password" && request.method === "POST") return await handleAdminPasswordChange(request, env);
+    if (path === "admin/customer-invites" && ["GET", "POST"].includes(request.method)) {
+      return await handleAdminCustomerInvites(request, env, origin);
+    }
+    const inviteRevocation = path.match(/^admin\/customer-invites\/(\d+)\/revoke$/);
+    if (inviteRevocation && request.method === "POST") {
+      const inviteId = numericId(inviteRevocation[1]);
+      if (!inviteId) return json({ ok: false, error: "A valid invitation id is required" }, 400);
+      return await handleAdminCustomerInviteRevocation(request, env, inviteId);
+    }
     if (path === "profile" && ["GET", "PUT"].includes(request.method)) return await handleProfile(request, env);
     if (path === "organization" && request.method === "GET") return await handleOrganization(request, env);
     if (path === "tickets" && ["GET", "POST"].includes(request.method)) return await handleTickets(request, env);

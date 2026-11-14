@@ -48,6 +48,16 @@ FROM custom_requirements_legacy r;
 
 DROP TABLE custom_requirements_legacy;
 
+CREATE TABLE IF NOT EXISTS custom_requirement_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  requirement_id INTEGER NOT NULL,
+  author_type TEXT NOT NULL,
+  author_id INTEGER NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (requirement_id) REFERENCES custom_requirements(id) ON DELETE CASCADE
+);
+
 ALTER TABLE custom_requirement_messages RENAME TO custom_requirement_messages_legacy;
 
 CREATE TABLE custom_requirement_messages (

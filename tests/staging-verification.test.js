@@ -1,8 +1,25 @@
-﻿import assert from "node:assert/strict";
+/**
+ * @file        staging-verification.test.js
+ * @project     PrathamOne EduOS Coaching Institute Management System
+ * @module      SMRITISYS integration tests
+ *
+ * @author      Jawahar R. Mallah
+ * @organization AITDL (AI Technology & Development Lab)
+ * @client      Prashant Academy Coaching Institute
+ * @copyright   Copyright (c) 2026 AITDL
+ * @license     Proprietary
+ *
+ * @version     1.0.0
+ * @created     2026-11-14
+ * @updated     2026-11-14
+ *
+ * @description Exercises authenticated control-plane and customer portal workflows.
+ */
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { onRequest } from "../functions/api/[[path]].js";
+import { hashCustomerInviteToken, onRequest } from "../functions/api/[[path]].js";
 
 // Initialize in-memory SQLite with D1-like interface
 function createD1Mock() {
@@ -13,13 +30,13 @@ function createD1Mock() {
   const m2 = fs.readFileSync(new URL("../migrations/0002_identity_rbac.sql", import.meta.url), "utf8");
   const m3 = fs.readFileSync(new URL("../migrations/0003_license_control_plane.sql", import.meta.url), "utf8");
   const m4 = fs.readFileSync(new URL("../migrations/0004_customer_license_requests.sql", import.meta.url), "utf8");
-  const m5 = fs.readFileSync(new URL("../migrations/0005_staging_verification_seed.sql", import.meta.url), "utf8");
+  const m5 = fs.readFileSync(new URL("./fixtures/migrations/0005_staging_verification_seed.sql", import.meta.url), "utf8");
   const m6 = fs.readFileSync(new URL("../migrations/0006_custom_requirements.sql", import.meta.url), "utf8");
   const m7 = fs.readFileSync(new URL("../migrations/0007_release_center.sql", import.meta.url), "utf8");
   const m8 = fs.readFileSync(new URL("../migrations/0008_partner_relationships.sql", import.meta.url), "utf8");
-  const m9 = fs.readFileSync(new URL("../migrations/0009_partner_staging_seed.sql", import.meta.url), "utf8");
+  const m9 = fs.readFileSync(new URL("./fixtures/migrations/0009_partner_staging_seed.sql", import.meta.url), "utf8");
   const m10 = fs.readFileSync(new URL("../migrations/0010_commercial_relationship.sql", import.meta.url), "utf8");
-  const m11 = fs.readFileSync(new URL("../migrations/0011_admin_staging_seed.sql", import.meta.url), "utf8");
+  const m11 = fs.readFileSync(new URL("./fixtures/migrations/0011_admin_staging_seed.sql", import.meta.url), "utf8");
   const m14 = fs.readFileSync(new URL("../migrations/0014_signed_license_artifacts.sql", import.meta.url), "utf8");
   const m15 = fs.readFileSync(new URL("../migrations/0015_prathamone_product_registration.sql", import.meta.url), "utf8");
 
@@ -194,6 +211,115 @@ test("unsupported PBKDF2 iteration counts are rejected without a server error", 
   });
 
   assert.equal(login.status, 401);
+});
+
+test("customer setup invitations are one-time and provision the canonical customer identity", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-super-admin-invites";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+
+  const denied = await callApi(d1, "admin/customer-invites");
+  assert.equal(denied.status, 403);
+
+  const invite = await callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email: "invitee@example.test", name: "Invitee", company: "Example Academy" },
+  });
+  assert.equal(invite.status, 201);
+  const token = invite.data.setup_path.match(/#token=([a-f0-9]{48})$/)?.[1];
+  assert.ok(token);
+
+  const storedInvite = d1.raw.prepare("SELECT token_hash, status FROM customer_invites WHERE id = ?").get(invite.data.invite_id);
+  assert.equal(storedInvite.status, "pending");
+  assert.equal(storedInvite.token_hash, await hashCustomerInviteToken(token));
+  assert.notEqual(storedInvite.token_hash, token);
+  const creationAudit = d1.raw.prepare(
+    "SELECT new_value FROM audit_logs WHERE action = 'CUSTOMER_INVITE_CREATED' AND resource_id = ?"
+  ).get(String(invite.data.invite_id));
+  assert.equal(creationAudit.new_value.includes(token), false);
+
+  const password = "One-time-invite-passphrase-2026!";
+  const accepted = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token, password },
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(d1.raw.prepare("SELECT status FROM customer_invites WHERE id = ?").get(invite.data.invite_id).status, "accepted");
+
+  const customer = d1.raw.prepare("SELECT id, password_hash FROM customers WHERE email = ?").get("invitee@example.test");
+  assert.ok(customer);
+  assert.match(customer.password_hash, /^pbkdf2-sha256\$/);
+  const identity = d1.raw.prepare(
+    `SELECT p.email, o.legal_name, m.member_role
+     FROM people p
+     JOIN organization_members m ON m.account_type = 'customer' AND m.account_id = p.source_id
+     JOIN organizations o ON o.id = m.organization_id
+     WHERE p.source_type = 'customer' AND p.source_id = ?`
+  ).get(customer.id);
+  assert.equal(identity.email, "invitee@example.test");
+  assert.equal(identity.legal_name, "Example Academy");
+  assert.equal(identity.member_role, "customer");
+
+  const login = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "customer", email: "invitee@example.test", password },
+  });
+  assert.equal(login.status, 200);
+
+  const inviteList = await callApi(d1, "admin/customer-invites", { token: adminToken });
+  assert.equal(inviteList.status, 200);
+  assert.equal("token_hash" in inviteList.data.invites[0], false);
+  assert.equal("setup_path" in inviteList.data.invites[0], false);
+
+  const replay = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token, password },
+  });
+  assert.equal(replay.status, 410);
+});
+
+test("customer invitations can be revoked or expire before acceptance", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-super-admin-invite-revoke";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+
+  const createInvite = async (email) => callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email, company: "Example Academy" },
+  });
+  const revokedInvite = await createInvite("revoked@example.test");
+  assert.equal(revokedInvite.status, 201);
+  const revokedToken = revokedInvite.data.setup_path.match(/#token=([a-f0-9]{48})$/)[1];
+  const duplicateInvite = await createInvite("REVOKED@example.test");
+  assert.equal(duplicateInvite.status, 409);
+  const revoke = await callApi(d1, `admin/customer-invites/${revokedInvite.data.invite_id}/revoke`, {
+    method: "POST",
+    token: adminToken,
+    body: {},
+  });
+  assert.equal(revoke.status, 200);
+  const revokedAcceptance = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token: revokedToken, password: "One-time-invite-passphrase-2026!" },
+  });
+  assert.equal(revokedAcceptance.status, 410);
+
+  const expiredInvite = await createInvite("expired@example.test");
+  assert.equal(expiredInvite.status, 201);
+  const expiredToken = expiredInvite.data.setup_path.match(/#token=([a-f0-9]{48})$/)[1];
+  d1.raw.prepare("UPDATE customer_invites SET expires_at = datetime('now', '-1 hour') WHERE id = ?")
+    .run(expiredInvite.data.invite_id);
+  const expiredAcceptance = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token: expiredToken, password: "One-time-invite-passphrase-2026!" },
+  });
+  assert.equal(expiredAcceptance.status, 410);
 });
 
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
