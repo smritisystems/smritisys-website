@@ -91,11 +91,64 @@
     .admin-product-panel .admin-table { min-width:720px; }
     .admin-product-panel #adminLicenseBatchesList,.admin-product-panel #adminLicenseCodesList { overflow-x:auto; }
     .admin-refresh { border-radius:8px; }
+    .admin-registration-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.8rem; margin:.8rem 0 1rem; }
+    .admin-registration-metrics .card { min-height:100px; }
+    .admin-registration-metrics .stat-value { display:block; margin-top:.4rem; font-size:1.75rem; }
+    .admin-registration-filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(4,minmax(130px,1fr)) auto auto; align-items:end; gap:.7rem; margin-bottom:1rem; }
+    .admin-registration-filters label { display:block; margin-bottom:.35rem; color:var(--muted); font-size:.75rem; font-weight:700; }
+    .admin-registration-filters input,.admin-registration-filters select { width:100%; min-width:0; }
+    .admin-license-table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    .admin-license-table { width:100%; min-width:1050px; border-collapse:collapse; }
+    .admin-license-table th,.admin-license-table td { padding:.85rem .75rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    .admin-license-table th { color:var(--muted); font-size:.7rem; letter-spacing:.07em; text-transform:uppercase; white-space:nowrap; }
+    .admin-license-table td strong { display:block; font-size:.84rem; }
+    .admin-license-table td small { display:block; margin-top:.22rem; color:var(--muted); font-size:.75rem; overflow-wrap:anywhere; }
+    .admin-license-table tr:last-child td { border-bottom:0; }
+    .admin-license-table .registration-email { max-width:210px; overflow-wrap:anywhere; }
+    .admin-license-table .registration-actions { min-width:180px; }
+    .admin-license-table .registration-actions .secondary { margin:.15rem .2rem .15rem 0; padding:.45rem .6rem; }
+    .admin-license-detail-row[hidden] { display:none; }
+    .admin-license-detail-row > td { padding:0; background:#f7faf9; }
+    .admin-license-detail-row .license-details { padding:1rem; }
+    .registration-detail-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.8rem; margin-bottom:1rem; }
+    .registration-detail-grid section { min-width:0; padding:.9rem; border:1px solid var(--line); border-radius:10px; background:#fff; }
+    .admin-key-reveal { width:min(440px,calc(100vw - 2rem)); margin:auto; padding:1.4rem; border:1px solid var(--line); border-radius:14px; color:var(--ink); background:#fff; box-shadow:0 24px 80px #102a2a3d; }
+    .admin-key-reveal::backdrop { background:#0d242acc; }
+    .admin-key-reveal form { display:grid; gap:1rem; }
+    .admin-key-reveal h2 { margin:0; }
+    .admin-key-reveal label { display:grid; gap:.4rem; color:var(--muted); font-size:.8rem; font-weight:700; }
+    .admin-key-reveal input { width:100%; }
+    .admin-key-reveal code { display:block; padding:1rem; border-radius:8px; background:#f2f6f6; font-size:1.1rem; overflow-wrap:anywhere; user-select:all; }
+    .admin-key-reveal-actions { display:flex; justify-content:flex-end; gap:.6rem; }
+    .registration-detail-grid h4 { margin:0 0 .65rem; }
+    .registration-detail-grid dl { display:grid; grid-template-columns:minmax(100px,.8fr) minmax(0,1.2fr); gap:.45rem .7rem; margin:0; font-size:.82rem; }
+    .registration-detail-grid dt { color:var(--muted); }
+    .registration-detail-grid dd { margin:0; overflow-wrap:anywhere; font-weight:600; }
+    .admin-registration-pagination { display:flex; align-items:center; justify-content:space-between; gap:.8rem; padding:.8rem 0; }
+    .admin-registration-pagination .form-actions { margin:0; }
+    .admin-registration-pagination p { margin:0; color:var(--muted); font-size:.82rem; }
+    .admin-d1-databases { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:.9rem; margin-top:.9rem; }
+    .admin-d1-card { min-width:0; }
+    .admin-d1-card h4 { margin:0 0 .4rem; overflow-wrap:anywhere; }
+    .admin-d1-card p { margin:.3rem 0; color:var(--muted); font-size:.82rem; }
+    .admin-d1-card strong { color:var(--ink); }
+    .admin-d1-meter { height:9px; margin:.6rem 0 .9rem; overflow:hidden; border-radius:99px; background:#e8eeee; }
+    .admin-d1-meter span { display:block; height:100%; border-radius:inherit; background:#278579; }
+    .admin-d1-meter span.warning { background:#d89b28; }
+    .admin-d1-meter span.critical { background:#c84e4e; }
+    .admin-d1-status { display:inline-block; padding:.2rem .5rem; border-radius:99px; color:#276b55; background:#e5f4ed; font-size:.74rem; font-weight:700; }
+    .admin-d1-status.warning { color:#895d13; background:#fff3d4; }
+    .admin-d1-status.critical,.admin-d1-status.failed { color:#963b3b; background:#fde8e8; }
+    .admin-d1-history,.admin-d1-backups { margin-top:1rem; overflow-x:auto; }
+    .admin-d1-estimates { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; margin-top:.7rem; }
+    .admin-d1-estimates div { padding:.65rem; border-radius:8px; background:#f4f7f7; }
+    .admin-d1-estimates small { display:block; color:var(--muted); font-size:.72rem; }
     @media (max-width:1080px) { .admin-ops-metrics,.admin-product-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-overview-grid { grid-template-columns:1fr; } }
+    @media (max-width:980px) { .admin-registration-filters { grid-template-columns:repeat(3,minmax(0,1fr)); } .registration-detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (max-width:900px) { .admin-shell { grid-template-columns:1fr; } .admin-aside { position:relative; height:auto; padding:.8rem; } .admin-aside .brand { padding:.5rem .75rem 1rem; } .admin-nav { display:flex; overflow:auto; } .admin-nav button { white-space:nowrap; } .admin-logout { margin-top:.7rem; } .admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (max-width:680px) { .admin-overview-hero { align-items:flex-start; flex-direction:column; padding:1.3rem; } .admin-topbar-label { display:none; } .admin-product-tabs { flex-wrap:nowrap; overflow-x:auto; } .admin-product-tab { flex:0 0 auto; } }
-    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics,.admin-ops-metrics,.admin-product-summary { grid-template-columns:1fr 1fr; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } .admin-overview-heading { align-items:flex-start; flex-direction:column; } .admin-activity-item { grid-template-columns:1fr; } .admin-activity-item time { grid-row:3; } .admin-main > .topbar .user-chip span:first-child { display:block; } }
-    @media (max-width:380px) { .admin-metrics,.admin-ops-metrics,.admin-product-summary { grid-template-columns:1fr; } }
+    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics,.admin-ops-metrics,.admin-product-summary,.admin-registration-metrics { grid-template-columns:1fr 1fr; } .admin-registration-filters { grid-template-columns:1fr 1fr; } .admin-license-table { min-width:950px; } .registration-detail-grid { grid-template-columns:1fr; } .admin-registration-pagination { align-items:flex-start; flex-direction:column; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } .admin-overview-heading { align-items:flex-start; flex-direction:column; } .admin-activity-item { grid-template-columns:1fr; } .admin-activity-item time { grid-row:3; } .admin-main > .topbar .user-chip span:first-child { display:block; } .admin-d1-databases { grid-template-columns:1fr; } }
+    @media (max-width:380px) { .admin-metrics,.admin-ops-metrics,.admin-product-summary,.admin-registration-metrics,.admin-registration-filters,.admin-d1-estimates { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -118,6 +171,22 @@
         <div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div>
         <div class="admin-overview-heading"><div><span class="eyebrow">License operations</span><h3>Health &amp; inventory</h3></div><p class="muted">Live counts from the license authority</p></div>
         <div id="adminOperationsMetrics" class="admin-ops-metrics" aria-live="polite"></div>
+        <div class="admin-overview-heading"><div><span class="eyebrow">Infrastructure</span><h3>D1 capacity monitoring</h3></div><div class="admin-overview-actions"><p class="muted">Daily at 02:00 UTC · backups are not configured</p><button id="adminD1Refresh" class="secondary" type="button">Refresh</button></div></div>
+        <div id="adminD1State" class="state-panel">Loading D1 capacity monitoring...</div>
+        <div id="adminD1Content" class="hidden">
+          <div id="adminD1Summary" class="admin-ops-metrics" aria-live="polite"></div>
+          <div id="adminD1Databases" class="admin-d1-databases"></div>
+          <section class="card admin-d1-history">
+            <h4 class="admin-panel-title">Recent storage samples</h4>
+            <p class="admin-panel-subtitle">A growth estimate appears after at least two daily samples. Free and Paid comparisons are shown because the account plan is not configured.</p>
+            <div id="adminD1History"></div>
+          </section>
+          <section class="card admin-d1-backups">
+            <h4 class="admin-panel-title">Backup status</h4>
+            <p class="admin-panel-subtitle">Automated backups are disabled. This workspace monitors storage only and does not provide backups or restore.</p>
+            <div id="adminD1Backups"></div>
+          </section>
+        </div>
         <div class="admin-overview-grid">
           <section class="card" aria-labelledby="adminLicenseHealthTitle"><h3 id="adminLicenseHealthTitle" class="admin-panel-title">License status</h3><p class="admin-panel-subtitle">Current licenses grouped by their authority status.</p><div id="adminLicenseHealth" class="admin-health-list"></div></section>
           <section class="card" aria-labelledby="adminActivityTitle"><h3 id="adminActivityTitle" class="admin-panel-title">Recent activity</h3><p class="admin-panel-subtitle">Latest recorded changes across the control plane.</p><div id="adminRecentActivity" class="admin-activity-list"></div></section>
@@ -130,11 +199,12 @@
         <div id="adminOrganizationsList" class="card hidden"></div>
         <form id="customerInviteForm" class="card">
           <div class="section-head compact"><div><span class="eyebrow">Customer onboarding</span><h2>Invite a customer</h2></div></div>
-          <p class="muted">Create a one-time setup link. It expires in 24 hours; share it with the customer through a trusted channel. The customer chooses their own password.</p>
+          <p class="muted">Reuse an existing organization for another contact, or create a new organization. New setup links expire in 24 hours.</p>
           <div class="form-grid">
             <div><label for="customerInviteEmail">Customer email</label><input id="customerInviteEmail" name="email" type="email" autocomplete="off" maxlength="254" required /></div>
             <div><label for="customerInviteName">Full name (optional)</label><input id="customerInviteName" name="name" autocomplete="off" maxlength="120" /></div>
-            <div class="full"><label for="customerInviteCompany">Organization name</label><input id="customerInviteCompany" name="company" autocomplete="organization" maxlength="200" required /></div>
+            <div class="full"><label for="customerInviteOrganization">Organization</label><select id="customerInviteOrganization" name="organization_id"></select></div>
+            <div id="customerInviteCompanyWrap" class="full"><label for="customerInviteCompany">New organization name</label><input id="customerInviteCompany" name="company" autocomplete="organization" maxlength="200" required /></div>
           </div>
           <button id="customerInviteButton" class="primary" type="submit">Create setup invite</button>
           <p id="customerInviteMessage" class="message" role="status"></p>
@@ -147,6 +217,46 @@
         <div class="section-head"><div><span class="eyebrow">Access management</span><h2>Customer invitations</h2></div></div>
         <div id="adminCustomerInvitesState" class="state-panel">Loading invitations...</div>
         <div id="adminCustomerInvitesList" class="card hidden"></div>
+        <form id="partnerContactForm" class="card">
+          <div class="section-head compact"><div><span class="eyebrow">Channel partners</span><h2>Onboard a partner contact</h2></div></div>
+          <p class="muted">Create or reuse an organization, classify its partner relationship, and add an existing customer account or issue a one-time setup link.</p>
+          <div class="form-grid">
+            <div class="full"><label for="partnerContactOrganization">Organization</label><select id="partnerContactOrganization" name="organization_id"></select></div>
+            <div id="partnerOrganizationNameWrap" class="full"><label for="partnerOrganizationName">New partner organization name</label><input id="partnerOrganizationName" name="organization_name" autocomplete="organization" maxlength="200" required /></div>
+            <div><label for="partnerContactType">Partner type</label><select id="partnerContactType" name="partner_type" required>
+              <option value="channel_partner">Channel partner</option>
+              <option value="reseller">Reseller</option>
+              <option value="implementation_partner">Implementation partner</option>
+              <option value="technology_partner">Technology partner</option>
+              <option value="referral_partner">Referral partner</option>
+              <option value="distributor">Distributor</option>
+            </select></div>
+            <div><label for="partnerContactRole">Partner role</label><select id="partnerContactRole" name="partner_role"><option value="partner_admin">Partner administrator</option><option value="partner_member">Partner member</option></select></div>
+            <div><label for="partnerContactEmail">Contact email</label><input id="partnerContactEmail" name="email" type="email" autocomplete="off" maxlength="254" required /></div>
+            <div><label for="partnerContactName">Full name (optional)</label><input id="partnerContactName" name="name" autocomplete="name" maxlength="120" /></div>
+          </div>
+          <button id="partnerContactButton" class="primary" type="submit">Add partner contact</button>
+          <p id="partnerContactMessage" class="message" role="status"></p>
+          <div id="partnerInviteResult" class="hidden">
+            <label for="partnerInviteLink">One-time partner setup link — copy it now</label>
+            <input id="partnerInviteLink" type="url" readonly />
+            <button id="partnerInviteCopy" class="secondary" type="button">Copy setup link</button>
+          </div>
+        </form>
+        <div class="section-head"><div><span class="eyebrow">Partner administration</span><h2>Partners &amp; customer links</h2></div></div>
+        <div id="adminPartnersState" class="state-panel">Loading partners...</div>
+        <div id="adminPartnersList" class="card hidden"></div>
+        <form id="partnerCustomerLinkForm" class="card">
+          <div class="section-head compact"><div><span class="eyebrow">Relationship management</span><h2>Link a customer organization</h2></div></div>
+          <div class="form-grid">
+            <div><label for="partnerLinkPartner">Partner organization</label><select id="partnerLinkPartner" name="partner_organization_id" required></select></div>
+            <div><label for="partnerLinkCustomer">Customer organization</label><select id="partnerLinkCustomer" name="customer_organization_id" required></select></div>
+          </div>
+          <button id="partnerCustomerLinkButton" class="secondary" type="submit">Link customer</button>
+          <p id="partnerCustomerLinkMessage" class="message" role="status"></p>
+        </form>
+        <div id="adminPartnerInvitesState" class="state-panel">Loading partner invitations...</div>
+        <div id="adminPartnerInvitesList" class="card hidden"></div>
       </section>
       <section class="admin-view" data-admin-section="products">
         <div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div>
@@ -165,7 +275,7 @@
           <div class="admin-license-workspace">
             <form id="licenseBatchForm" class="card">
               <div class="section-head compact"><div><span class="eyebrow">License inventory</span><h2>Prepare activation codes</h2></div></div>
-              <p class="muted">Generate up to 200 unassigned pairs with nine-digit numeric serials and 16-character alphanumeric activation keys. Keys are returned only in this response and never stored in plaintext. Claimed licenses receive a 90-day offline activation response.</p>
+              <p class="muted">Generate up to 200 unassigned pairs with nine-digit numeric serials and 16-character alphanumeric activation keys. Keys are encrypted at rest and can be revealed one at a time after confirming your admin password. Older hash-only codes can be restored if you still have the original key. New licenses receive a 14-day offline lease followed by a 7-day grace period.</p>
               <div class="form-grid">
                 <div><label for="licenseBatchCount">Number of codes</label><input id="licenseBatchCount" name="count" type="number" min="1" max="200" value="10" required /></div>
                 <div><label for="licenseBatchSeats">Seats per code</label><input id="licenseBatchSeats" name="seats" type="number" min="1" max="10000" value="1" required /></div>
@@ -248,16 +358,68 @@
           <div id="adminLicenseCodesList" class="card hidden"></div>
         </section>
         <section class="admin-product-panel" id="adminProductPanelLicenses" role="tabpanel" aria-labelledby="adminProductTabLicenses" data-product-panel="licenses" hidden>
-          <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Issued licenses</h2></div></div>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Registration &amp; activation monitor</h2></div><p class="muted">Customer details are restricted to super admins and audited when inspected.</p></div>
+          <div id="adminRegistrationMetrics" class="admin-registration-metrics" aria-live="polite"></div>
+          <form id="adminRegistrationFilters" class="card admin-registration-filters">
+            <div><label for="adminRegistrationSearch">Search customers, emails or serials</label><input id="adminRegistrationSearch" name="q" type="search" maxlength="100" placeholder="Organization, contact, email, product or serial" /></div>
+            <div><label for="adminRegistrationStatus">License status</label><select id="adminRegistrationStatus" name="status"><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option><option value="PENDING_RENEWAL">Pending renewal</option><option value="EXPIRED">Expired</option><option value="SUSPENDED">Suspended</option><option value="CANCELLED">Cancelled</option></select></div>
+            <div><label for="adminRegistrationActivation">Activation</label><select id="adminRegistrationActivation" name="activation"><option value="">All activations</option><option value="active">Has active installation</option><option value="never_activated">Never activated</option><option value="released">All installations released</option></select></div>
+            <div><label for="adminRegistrationEmail">Registered email</label><select id="adminRegistrationEmail" name="email"><option value="">All email states</option><option value="registered">Registered</option><option value="missing">Missing</option></select></div>
+            <div><label for="adminRegistrationFrom">Issued from</label><input id="adminRegistrationFrom" name="from" type="date" /></div>
+            <div><label for="adminRegistrationTo">Issued to</label><input id="adminRegistrationTo" name="to" type="date" /></div>
+            <div class="form-actions"><button class="primary" type="submit">Apply</button><button id="adminRegistrationReset" class="secondary" type="button">Reset</button></div>
+          </form>
           <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
           <div id="adminLicensesList" class="license-list"></div>
+          <div id="adminRegistrationPagination" class="admin-registration-pagination" aria-live="polite"></div>
         </section>
       </section>
       <section class="admin-view" data-admin-section="announcements"><div class="section-head"><div><span class="eyebrow">Customer communications</span><h2>Announcements &amp; service status</h2></div><button class="secondary admin-refresh" data-refresh="announcements" type="button">Refresh</button></div><form id="announcementForm" class="card"><input id="announcementId" name="id" type="hidden" /><div class="form-grid"><div class="full"><label for="announcementTitle">Title</label><input id="announcementTitle" name="title" maxlength="200" required /></div><div class="full"><label for="announcementMessageBody">Message</label><textarea id="announcementMessageBody" name="message" maxlength="5000" rows="4" required></textarea></div><div><label for="announcementSeverity">Severity</label><select id="announcementSeverity" name="severity"><option value="info">Information</option><option value="maintenance">Maintenance</option><option value="degraded">Degraded service</option><option value="outage">Service outage</option></select></div><div><label for="announcementProduct">Product scope</label><select id="announcementProduct" name="product_id"><option value="">All customer organizations</option></select></div><div><label for="announcementStartsAt">Starts</label><input id="announcementStartsAt" name="starts_at" type="datetime-local" /></div><div><label for="announcementEndsAt">Ends (optional)</label><input id="announcementEndsAt" name="ends_at" type="datetime-local" /></div><div><label for="announcementStatus">Initial status</label><select id="announcementStatus" name="status"><option value="draft">Draft</option><option value="published">Publish now</option></select></div></div><div class="form-actions"><button id="announcementSaveButton" class="primary" type="submit">Create announcement</button><button id="announcementCancelEdit" class="secondary hidden" type="button">Cancel edit</button></div><p id="announcementMessage" class="message" role="status"></p></form><div id="adminAnnouncementsState" class="state-panel" aria-live="polite">Loading announcements...</div><div id="adminAnnouncementsList" class="grid modules" aria-live="polite"></div></section>
       <section class="admin-view" data-admin-section="audit"><div class="section-head"><div><span class="eyebrow">Governance</span><h2>Audit activity</h2></div><button class="secondary admin-refresh" data-refresh="audit" type="button">Refresh</button></div><div id="adminAuditState" class="state-panel">Loading audit activity...</div><div id="adminAuditList" class="card hidden"></div></section>
       <section class="admin-view" data-admin-section="security"><div class="section-head"><div><span class="eyebrow">Account security</span><h2>Change your password</h2></div></div><form id="adminPasswordForm" class="card" method="post"><label for="adminCurrentPassword">Current password</label><input id="adminCurrentPassword" name="current_password" type="password" autocomplete="current-password" required /><label for="adminNewPassword">New password</label><input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="12" required /><div class="form-actions"><button id="adminPasswordButton" class="primary" type="submit">Change password</button></div><p id="adminPasswordMessage" class="message" role="status"></p><p class="muted">Changing your password signs out all active sessions.</p></form></section>
     </div></main>
+    <dialog id="licenseCodeRevealDialog" class="admin-key-reveal" aria-labelledby="licenseCodeRevealTitle">
+      <form id="licenseCodeRevealForm">
+        <div>
+          <span class="eyebrow">Protected key access</span>
+          <h2 id="licenseCodeRevealTitle">Reveal one activation key</h2>
+        </div>
+        <p class="muted">Serial <strong id="licenseCodeRevealSerial"></strong>. Confirm your admin password. The key is hidden after 30 seconds.</p>
+        <label for="licenseCodeRevealPassword">Current admin password
+          <input id="licenseCodeRevealPassword" type="password" autocomplete="current-password" maxlength="256" required />
+        </label>
+        <div id="licenseCodeRevealResult" class="hidden" aria-live="polite">
+          <strong>Activation key</strong>
+          <code id="licenseCodeRevealKey"></code>
+        </div>
+        <p id="licenseCodeRevealMessage" class="message" role="status"></p>
+        <div class="admin-key-reveal-actions">
+          <button id="licenseCodeRevealCancel" class="secondary" type="button">Close</button>
+          <button id="licenseCodeRevealSubmit" class="primary" type="submit">Confirm &amp; reveal</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="licenseCodeRestoreDialog" class="admin-key-reveal" aria-labelledby="licenseCodeRestoreTitle">
+      <form id="licenseCodeRestoreForm">
+        <div>
+          <span class="eyebrow">Legacy key recovery</span>
+          <h2 id="licenseCodeRestoreTitle">Restore an existing key</h2>
+        </div>
+        <p class="muted">Serial <strong id="licenseCodeRestoreSerial"></strong>. The server verifies the key against this serial before encrypting it. Only available, unclaimed codes can be restored.</p>
+        <label for="licenseCodeRestoreKey">Existing activation key
+          <input id="licenseCodeRestoreKey" type="password" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" pattern="[A-Z0-9]{16}" required />
+        </label>
+        <label for="licenseCodeRestorePassword">Current admin password
+          <input id="licenseCodeRestorePassword" type="password" autocomplete="current-password" maxlength="256" required />
+        </label>
+        <p id="licenseCodeRestoreMessage" class="message" role="status"></p>
+        <div class="admin-key-reveal-actions">
+          <button id="licenseCodeRestoreCancel" class="secondary" type="button">Close</button>
+          <button id="licenseCodeRestoreSubmit" class="primary" type="submit">Verify &amp; restore</button>
+        </div>
+      </form>
+    </dialog>
   </section>
-  <script src="js/admin.js?v=admin-ops-dashboard-v1" defer></script>
+  <script src="js/admin.js?v=admin-license-key-reveal-v5-d1-monitoring-single-db-v1" defer></script>
 </body>
 </html>

@@ -9,6 +9,9 @@ VALUES (103, 'partner@example.com', 'Partner Admin', 'customer', 103, 'active');
 INSERT OR IGNORE INTO organizations (id, name, legal_name, status)
 VALUES (103, 'Channel Partner Pvt Ltd', 'Channel Partner Pvt Ltd', 'active');
 
+INSERT OR IGNORE INTO relationships (organization_id, relationship_type, status)
+VALUES (103, 'reseller', 'active');
+
 INSERT OR IGNORE INTO organization_members (organization_id, account_type, account_id, member_role, status)
 VALUES (103, 'customer', 103, 'customer', 'active');
 

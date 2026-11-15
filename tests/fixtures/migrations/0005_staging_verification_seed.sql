@@ -25,6 +25,9 @@ VALUES (101, 'customer.a@smritibooks.com', 'Customer A', 'customer', 101, 'activ
 INSERT OR IGNORE INTO organizations (id, name, legal_name, gst_number, status)
 VALUES (101, 'Organization A', 'Organization A Retail Pvt Ltd', '27AABCO1234A1Z5', 'active');
 
+INSERT OR IGNORE INTO relationships (organization_id, relationship_type, status)
+VALUES (101, 'customer', 'active');
+
 -- 5. Organization Membership
 INSERT OR IGNORE INTO organization_members (organization_id, account_type, account_id, member_role, status)
 VALUES (101, 'customer', 101, 'customer', 'active');
@@ -65,6 +68,9 @@ VALUES (102, 'customer.b@example.com', 'Customer B', 'customer', 102, 'active');
 
 INSERT OR IGNORE INTO organizations (id, name, legal_name, status)
 VALUES (102, 'Organization B', 'Organization B Retail Pvt Ltd', 'active');
+
+INSERT OR IGNORE INTO relationships (organization_id, relationship_type, status)
+VALUES (102, 'customer', 'active');
 
 INSERT OR IGNORE INTO organization_members (organization_id, account_type, account_id, member_role, status)
 VALUES (102, 'customer', 102, 'customer', 'active');

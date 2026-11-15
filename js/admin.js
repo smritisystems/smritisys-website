@@ -13,19 +13,25 @@
  * @created     2026-11-06
  * @updated     2026-11-15
  *
- * @description Manages the authenticated admin workspace, customer invitations, and licenses.
+ * @description Manages the authenticated admin workspace, organization relationships, invitations, and licenses.
  */
 const adminState = {
   token: null,
   announcements: [],
   products: [],
   licenses: [],
+  registrationPage: 1,
+  registrationRequestId: 0,
   organizations: [],
+  partners: [],
   licenseBatchCodes: null,
   licenseCodeBatchId: null,
 };
 const admin$ = (selector) => document.querySelector(selector);
 const admin$$ = (selector) => [...document.querySelectorAll(selector)];
+let licenseCodeRevealTimer = null;
+let licenseCodeRevealRequestId = 0;
+let licenseCodeRestoreRequestId = 0;
 
 function adminEscape(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
@@ -54,11 +60,16 @@ function clearCustomerInviteLink() {
   const link = admin$('#customerInviteLink');
   if (link) link.value = '';
   admin$('#customerInviteResult')?.classList.add('hidden');
+  const partnerLink = admin$('#partnerInviteLink');
+  if (partnerLink) partnerLink.value = '';
+  admin$('#partnerInviteResult')?.classList.add('hidden');
   adminState.licenseBatchCodes = null;
   admin$('#licenseBatchDownload')?.classList.add('hidden');
 }
 
 function showAdminLogin(message = '') {
+  const revealDialog = admin$('#licenseCodeRevealDialog');
+  if (revealDialog?.open) revealDialog.close();
   clearCustomerInviteLink();
   admin$('#adminPortalView').classList.add('hidden');
   admin$('#adminLoginView').classList.remove('hidden');
@@ -143,9 +154,179 @@ async function loadAdminOverview() {
       }).join('')
       : '<p class="admin-empty-inline">No recent activity has been recorded.</p>';
     admin$('#adminOverviewUpdated').textContent = `Refreshed ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    void loadAdminD1Operations();
   } catch (loadError) {
     error.textContent = `Dashboard data could not be loaded: ${loadError.message}`;
     error.className = 'state-panel error-state';
+  }
+}
+
+function adminFormatBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes.toLocaleString()} B`;
+  const units = ['kB', 'MB', 'GB', 'TB'];
+  let size = bytes;
+  let unitIndex = -1;
+  do {
+    size /= 1000;
+    unitIndex += 1;
+  } while (size >= 1000 && unitIndex < units.length - 1);
+  return `${size.toFixed(size < 10 ? 1 : 0)} ${units[unitIndex]}`;
+}
+
+function adminD1UsageState(percent) {
+  if (percent >= 90) return { label: 'Critical', className: 'critical' };
+  if (percent >= 75) return { label: 'Warning', className: 'warning' };
+  return { label: 'Healthy', className: '' };
+}
+
+function adminD1Percent(bytes, limit) {
+  return limit > 0 ? Math.max(0, (Number(bytes) || 0) / limit * 100) : 0;
+}
+
+function adminD1FullEstimate(samples, limit) {
+  if (samples.length < 2) return 'Not enough data';
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const elapsedDays = (Date.parse(last.sampled_at) - Date.parse(first.sampled_at)) / 86400000;
+  if (!Number.isFinite(elapsedDays) || elapsedDays < 1) return 'Not enough data';
+  const growthPerDay = (Number(last.size_bytes) - Number(first.size_bytes)) / elapsedDays;
+  if (!Number.isFinite(growthPerDay)) return 'Not enough data';
+  if (growthPerDay <= 0) return 'No growth observed';
+  const remainingDays = (limit - Number(last.size_bytes)) / growthPerDay;
+  if (remainingDays <= 0) return 'At or over limit';
+  return `About ${Math.ceil(remainingDays).toLocaleString()} days`;
+}
+
+function adminD1AccountFullEstimate(byDatabase, databaseNames, limit) {
+  if (!databaseNames.length) return 'Not enough data';
+  const samplesByDay = new Map();
+  for (const [databaseName, rows] of byDatabase.entries()) {
+    for (const row of rows) {
+      const date = String(row.sampled_at).slice(0, 10);
+      if (!samplesByDay.has(date)) samplesByDay.set(date, new Map());
+      const dailySamples = samplesByDay.get(date);
+      const current = dailySamples.get(databaseName);
+      if (!current || Date.parse(row.sampled_at) > Date.parse(current.sampled_at)) {
+        dailySamples.set(databaseName, row);
+      }
+    }
+  }
+  const completeDays = [...samplesByDay.values()]
+    .filter((dailySamples) => databaseNames.every((name) => dailySamples.has(name)))
+    .map((dailySamples) => {
+      const rows = [...dailySamples.values()];
+      return {
+        sampled_at: rows.reduce((latest, row) => Date.parse(row.sampled_at) > Date.parse(latest) ? row.sampled_at : latest, rows[0].sampled_at),
+        size_bytes: rows.reduce((total, row) => total + (Number(row.size_bytes) || 0), 0),
+      };
+    })
+    .sort((a, b) => Date.parse(a.sampled_at) - Date.parse(b.sampled_at));
+  return adminD1FullEstimate(completeDays, limit);
+}
+
+async function loadAdminD1Operations() {
+  const state = admin$('#adminD1State');
+  const content = admin$('#adminD1Content');
+  state.className = 'state-panel';
+  state.textContent = 'Loading D1 capacity monitoring...';
+  content.classList.add('hidden');
+  try {
+    const data = await adminApi('admin/d1-operations');
+    const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+    const limits = data.limits || {};
+    const databases = Array.isArray(data.databases) ? data.databases : [];
+    const byDatabase = new Map(databases.map((name) => [name, []]));
+    for (const snapshot of snapshots) {
+      if (!byDatabase.has(snapshot.database_name)) byDatabase.set(snapshot.database_name, []);
+      byDatabase.get(snapshot.database_name).push(snapshot);
+    }
+    for (const rows of byDatabase.values()) {
+      rows.sort((a, b) => Date.parse(a.sampled_at) - Date.parse(b.sampled_at));
+    }
+    const latestRows = [...byDatabase.entries()]
+      .filter(([, rows]) => rows.length)
+      .map(([, rows]) => rows[rows.length - 1]);
+    const totalBytes = latestRows.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0);
+    const hasCompleteAccountSample = latestRows.length === databases.length;
+    const accountFreePercent = adminD1Percent(totalBytes, Number(limits.free_account_bytes));
+    const accountPaidPercent = adminD1Percent(totalBytes, Number(limits.paid_account_bytes));
+    const accountFreeEstimate = adminD1AccountFullEstimate(byDatabase, databases, Number(limits.free_account_bytes));
+    const accountPaidEstimate = adminD1AccountFullEstimate(byDatabase, databases, Number(limits.paid_account_bytes));
+    const freeState = adminD1UsageState(accountFreePercent);
+    const paidState = adminD1UsageState(accountPaidPercent);
+
+    admin$('#adminD1Summary').innerHTML = `
+      <article class="card admin-ops-card">
+        <span class="stat-label">${databases.length === 1 ? 'Monitored database' : 'Monitored databases'}</span>
+        <strong class="stat-value">${adminEscape(databases.length)}</strong>
+        <span class="admin-metric-note">Account max: Free ${adminEscape(Number(limits.free_databases_per_account).toLocaleString())} / Paid ${adminEscape(Number(limits.paid_databases_per_account).toLocaleString())}</span>
+      </article>
+      <article class="card admin-ops-card">
+        <span class="stat-label">Database size</span>
+        <strong class="stat-value">${adminEscape(hasCompleteAccountSample ? adminFormatBytes(totalBytes) : 'Pending')}</strong>
+        <span class="admin-metric-note">${adminEscape(latestRows.length)} of ${adminEscape(databases.length)} ${databases.length === 1 ? 'database' : 'databases'} sampled</span>
+      </article>
+      <article class="card admin-ops-card">
+        <span class="stat-label">Free plan account cap</span>
+        <strong class="stat-value">${adminEscape(hasCompleteAccountSample ? `${accountFreePercent.toFixed(2)}%` : 'Pending')}</strong>
+        <span class="admin-metric-note">${adminEscape(hasCompleteAccountSample ? adminFormatBytes(totalBytes) : 'Incomplete sample')} / ${adminEscape(adminFormatBytes(limits.free_account_bytes))} · <span class="admin-d1-status ${hasCompleteAccountSample ? freeState.className : ''}">${adminEscape(hasCompleteAccountSample ? freeState.label : 'Waiting')}</span></span>
+        <span class="admin-metric-note">Estimated to cap: ${adminEscape(hasCompleteAccountSample ? accountFreeEstimate : 'Pending')}</span>
+      </article>
+      <article class="card admin-ops-card">
+        <span class="stat-label">Paid plan account cap</span>
+        <strong class="stat-value">${adminEscape(hasCompleteAccountSample ? `${accountPaidPercent.toFixed(2)}%` : 'Pending')}</strong>
+        <span class="admin-metric-note">${adminEscape(hasCompleteAccountSample ? adminFormatBytes(totalBytes) : 'Incomplete sample')} / ${adminEscape(adminFormatBytes(limits.paid_account_bytes))} · <span class="admin-d1-status ${hasCompleteAccountSample ? paidState.className : ''}">${adminEscape(hasCompleteAccountSample ? paidState.label : 'Waiting')}</span></span>
+        <span class="admin-metric-note">Estimated to cap: ${adminEscape(hasCompleteAccountSample ? accountPaidEstimate : 'Pending')}</span>
+      </article>`;
+
+    admin$('#adminD1Databases').innerHTML = databases.map((name) => {
+      const rows = byDatabase.get(name) || [];
+      const latest = rows[rows.length - 1];
+      if (!latest) {
+        return `<article class="card admin-d1-card"><h4>${adminEscape(name)}</h4><p>Waiting for the first scheduled size sample.</p></article>`;
+      }
+      const size = Number(latest.size_bytes) || 0;
+      const freePercent = adminD1Percent(size, Number(limits.free_per_database_bytes));
+      const paidPercent = adminD1Percent(size, Number(limits.paid_per_database_bytes));
+      const freeStatus = adminD1UsageState(freePercent);
+      const paidStatus = adminD1UsageState(paidPercent);
+      const freeEstimate = adminD1FullEstimate(rows, Number(limits.free_per_database_bytes));
+      const paidEstimate = adminD1FullEstimate(rows, Number(limits.paid_per_database_bytes));
+      const meterClass = freeStatus.className;
+      return `<article class="card admin-d1-card">
+        <h4>${adminEscape(name)}</h4>
+        <p>Latest sample: <strong>${adminEscape(adminFormatBytes(size))}</strong> · ${adminEscape(adminFormatDateTime(latest.sampled_at))}</p>
+        <div class="admin-d1-meter" role="img" aria-label="Free plan usage ${adminEscape(freePercent.toFixed(2))} percent">
+          <span class="${meterClass}" style="width:${Math.min(100, freePercent).toFixed(2)}%"></span>
+        </div>
+        <p>Free: ${adminEscape(freePercent.toFixed(2))}% of ${adminEscape(adminFormatBytes(limits.free_per_database_bytes))} · <span class="admin-d1-status ${freeStatus.className}">${adminEscape(freeStatus.label)}</span></p>
+        <p>Paid: ${adminEscape(paidPercent.toFixed(2))}% of ${adminEscape(adminFormatBytes(limits.paid_per_database_bytes))} · <span class="admin-d1-status ${paidStatus.className}">${adminEscape(paidStatus.label)}</span></p>
+        <div class="admin-d1-estimates">
+          <div><small>Estimate at Free limit</small><strong>${adminEscape(freeEstimate)}</strong></div>
+          <div><small>Estimate at Paid limit</small><strong>${adminEscape(paidEstimate)}</strong></div>
+        </div>
+      </article>`;
+    }).join('');
+
+    const historyRows = snapshots
+      .slice()
+      .sort((a, b) => Date.parse(b.sampled_at) - Date.parse(a.sampled_at))
+      .map((row) => `<tr><td>${adminEscape(row.database_name)}</td><td>${adminEscape(adminFormatDateTime(row.sampled_at))}</td><td>${adminEscape(adminFormatBytes(row.size_bytes))}</td></tr>`)
+      .join('');
+    admin$('#adminD1History').innerHTML = historyRows
+      ? `<table class="admin-table"><thead><tr><th>Database</th><th>Sampled</th><th>Size</th></tr></thead><tbody>${historyRows}</tbody></table>`
+      : '<p class="admin-empty-inline">No storage samples are available yet.</p>';
+
+    admin$('#adminD1Backups').innerHTML = data.backup_status === 'disabled'
+      ? '<p class="admin-empty-inline">Automated backups are disabled. No backups or restore points are being created.</p>'
+      : '<p class="admin-empty-inline">Backup status is unavailable.</p>';
+
+    state.classList.add('hidden');
+    content.classList.remove('hidden');
+  } catch (loadError) {
+    state.textContent = `D1 monitoring data could not be loaded: ${loadError.message}`;
+    state.className = 'state-panel error-state';
   }
 }
 
@@ -183,12 +364,47 @@ async function loadAdminUsers() {
 async function loadAdminOrganizations() {
   try {
     const data = await adminApi('admin/organizations');
+    adminState.organizations = data.organizations || [];
+    populateOrganizationSelectors();
     if (!data.organizations.length) return adminStatePanel('adminOrganizationsState', 'adminOrganizationsList', 'No organizations found.');
     admin$('#adminOrganizationsState').classList.add('hidden');
     const list = admin$('#adminOrganizationsList');
     list.classList.remove('hidden');
-    list.innerHTML = `<table class="admin-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th><th>Members</th></tr></thead><tbody>${data.organizations.map((organization) => `<tr><td>${adminEscape(organization.name)}</td><td>${adminEscape(organization.legal_name || 'Not provided')}</td><td><span class="status">${adminEscape(organization.status)}</span></td><td>${adminEscape(organization.member_count)}</td></tr>`).join('')}</tbody></table>`;
+    list.innerHTML = `<table class="admin-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Relationships</th><th>Status</th><th>Members</th></tr></thead><tbody>${data.organizations.map((organization) => `<tr><td>${adminEscape(organization.name)}</td><td>${adminEscape(organization.legal_name || 'Not provided')}</td><td>${adminEscape((organization.relationship_types || '').split(',').filter(Boolean).join(', ') || 'Unclassified')}</td><td><span class="status">${adminEscape(organization.status)}</span></td><td>${adminEscape(organization.member_count)}</td></tr>`).join('')}</tbody></table>`;
   } catch (error) { adminStatePanel('adminOrganizationsState', 'adminOrganizationsList', 'Organizations are unavailable.', true); }
+}
+
+function populateOrganizationSelectors() {
+  const selectableOrganizations = adminState.organizations.filter((organization) =>
+    organization.status === 'active' && organization.name.trim().toLowerCase() !== 'smritisys internal');
+  const customerSelect = admin$('#customerInviteOrganization');
+  const selectedCustomerOrganization = customerSelect.value;
+  customerSelect.innerHTML = `<option value="">Create a new organization</option>${selectableOrganizations.map((organization) => `<option value="${adminEscape(organization.id)}">${adminEscape(organization.name)}${organization.legal_name && organization.legal_name !== organization.name ? ` — ${adminEscape(organization.legal_name)}` : ''}</option>`).join('')}`;
+  if ([...customerSelect.options].some((option) => option.value === selectedCustomerOrganization)) customerSelect.value = selectedCustomerOrganization;
+  const partnerSelect = admin$('#partnerContactOrganization');
+  const selectedPartnerOrganization = partnerSelect.value;
+  const partnerOrganizations = selectableOrganizations.filter((organization) =>
+    !(organization.relationship_types || '').split(',').some((type) => type.trim() === 'customer'));
+  partnerSelect.innerHTML = `<option value="">Create a new partner organization</option>${partnerOrganizations.map((organization) => `<option value="${adminEscape(organization.id)}">${adminEscape(organization.name)}${organization.relationship_types ? ` · ${adminEscape(organization.relationship_types.replace(/,/g, ', '))}` : ''}</option>`).join('')}`;
+  if ([...partnerSelect.options].some((option) => option.value === selectedPartnerOrganization)) partnerSelect.value = selectedPartnerOrganization;
+  updateCustomerInviteOrganizationFields();
+  updatePartnerOrganizationFields();
+}
+
+function updateCustomerInviteOrganizationFields() {
+  const hasOrganization = Boolean(admin$('#customerInviteOrganization').value);
+  const company = admin$('#customerInviteCompany');
+  admin$('#customerInviteCompanyWrap').classList.toggle('hidden', hasOrganization);
+  company.required = !hasOrganization;
+  company.disabled = hasOrganization;
+}
+
+function updatePartnerOrganizationFields() {
+  const hasOrganization = Boolean(admin$('#partnerContactOrganization').value);
+  const name = admin$('#partnerOrganizationName');
+  admin$('#partnerOrganizationNameWrap').classList.toggle('hidden', hasOrganization);
+  name.required = !hasOrganization;
+  name.disabled = hasOrganization;
 }
 
 async function loadAdminCustomerInvites() {
@@ -213,6 +429,79 @@ async function loadAdminCustomerInvites() {
     }));
   } catch (error) {
     adminStatePanel('adminCustomerInvitesState', 'adminCustomerInvitesList', 'Customer invitations are unavailable.', true);
+  }
+}
+
+async function loadAdminPartners() {
+  try {
+    const data = await adminApi('admin/partners');
+    adminState.partners = data.partners || [];
+    const partnerSelect = admin$('#partnerLinkPartner');
+    partnerSelect.innerHTML = adminState.partners
+      .filter((partner) => partner.status === 'active')
+      .map((partner) => `<option value="${adminEscape(partner.id)}">${adminEscape(partner.name)} · ${adminEscape(partner.partner_type)}</option>`)
+      .join('');
+    if (!partnerSelect.options.length) partnerSelect.innerHTML = '<option value="">No active partners</option>';
+    const customerOrganizations = adminState.organizations.filter((organization) =>
+      organization.status === 'active' &&
+      organization.name.trim().toLowerCase() !== 'smritisys internal' &&
+      (organization.relationship_types || '').split(',').includes('customer'));
+    const customerSelect = admin$('#partnerLinkCustomer');
+    customerSelect.innerHTML = customerOrganizations
+      .map((organization) => `<option value="${adminEscape(organization.id)}">${adminEscape(organization.name)}</option>`)
+      .join('');
+    if (!customerSelect.options.length) customerSelect.innerHTML = '<option value="">No customer organizations</option>';
+
+    const state = admin$('#adminPartnersState');
+    const list = admin$('#adminPartnersList');
+    if (!adminState.partners.length) {
+      adminStatePanel('adminPartnersState', 'adminPartnersList', 'No partner organizations found.');
+    } else {
+      state.classList.add('hidden');
+      list.classList.remove('hidden');
+      list.innerHTML = `<h3>Partner organizations</h3><table class="admin-table"><thead><tr><th>Organization</th><th>Type</th><th>Members</th><th>Customer links</th><th>Pending invites</th></tr></thead><tbody>${adminState.partners.map((partner) => `<tr><td>${adminEscape(partner.name)}</td><td>${adminEscape(partner.partner_type)}</td><td>${adminEscape(partner.member_count)}</td><td>${adminEscape(partner.linked_customer_count)}</td><td>${adminEscape(partner.pending_invite_count)}</td></tr>`).join('')}</tbody></table><h3>Customer links</h3>${data.links.length ? `<table class="admin-table"><thead><tr><th>Partner</th><th>Customer</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.links.map((link) => `<tr><td>${adminEscape(link.partner_name)}</td><td>${adminEscape(link.customer_name)}</td><td><span class="status">${adminEscape(link.status)}</span></td><td>${link.status === 'active' ? `<button class="text-button" type="button" data-partner-link-revoke="${adminEscape(link.partner_organization_id)}:${adminEscape(link.customer_organization_id)}">Unlink</button>` : '—'}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No customer links recorded.</p>'}`;
+      list.querySelectorAll('[data-partner-link-revoke]').forEach((button) => button.addEventListener('click', async () => {
+        if (!window.confirm('Revoke this partner-to-customer link?')) return;
+        const [partnerId, customerId] = button.dataset.partnerLinkRevoke.split(':');
+        button.disabled = true;
+        try {
+          await adminApi(`admin/partners/${partnerId}/customers/${customerId}/revoke`, { method: 'POST', body: '{}' });
+          await loadAdminPartners();
+        } catch (error) {
+          adminMessage(admin$('#adminError'), error.message, false);
+          admin$('#adminError').className = 'state-panel error-state';
+          button.disabled = false;
+        }
+      }));
+    }
+    await loadAdminPartnerInvites();
+  } catch (error) {
+    adminStatePanel('adminPartnersState', 'adminPartnersList', 'Partner organizations are unavailable.', true);
+  }
+}
+
+async function loadAdminPartnerInvites() {
+  try {
+    const data = await adminApi('admin/partner-invites');
+    const list = admin$('#adminPartnerInvitesList');
+    if (!data.invites.length) return adminStatePanel('adminPartnerInvitesState', 'adminPartnerInvitesList', 'No partner invitations found.');
+    admin$('#adminPartnerInvitesState').classList.add('hidden');
+    list.classList.remove('hidden');
+    list.innerHTML = `<table class="admin-table"><thead><tr><th>Email</th><th>Partner</th><th>Type / role</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${data.invites.map((invite) => `<tr><td>${adminEscape(invite.email)}</td><td>${adminEscape(invite.partner_name)}</td><td>${adminEscape(invite.partner_type)} · ${adminEscape(invite.partner_role)}</td><td><span class="status">${adminEscape(invite.status)}</span></td><td>${adminEscape(invite.expires_at)}</td><td>${invite.status === 'pending' ? `<button class="text-button" type="button" data-partner-invite-revoke="${adminEscape(invite.id)}">Revoke</button>` : '—'}</td></tr>`).join('')}</tbody></table>`;
+    list.querySelectorAll('[data-partner-invite-revoke]').forEach((button) => button.addEventListener('click', async () => {
+      if (!window.confirm('Revoke this partner setup invitation?')) return;
+      button.disabled = true;
+      try {
+        await adminApi(`admin/partner-invites/${button.dataset.partnerInviteRevoke}/revoke`, { method: 'POST', body: '{}' });
+        await loadAdminPartnerInvites();
+      } catch (error) {
+        adminMessage(admin$('#adminError'), error.message, false);
+        admin$('#adminError').className = 'state-panel error-state';
+        button.disabled = false;
+      }
+    }));
+  } catch (error) {
+    adminStatePanel('adminPartnerInvitesState', 'adminPartnerInvitesList', 'Partner invitations are unavailable.', true);
   }
 }
 
@@ -254,7 +543,7 @@ async function loadAdminProducts() {
     ]);
     await loadLicensePolicy();
     admin$('#licenseBatchStartDate').value ||= new Date().toISOString().slice(0, 10);
-    renderAdminLicenses();
+    await loadLicenseRegistrations();
   } catch (error) {
     admin$('#adminProductsState').className = 'state-panel error-state';
     admin$('#adminProductsState').textContent = error.status === 403 ? 'Super admin license permissions are required.' : 'Products, organizations, or licenses are unavailable.';
@@ -291,11 +580,19 @@ async function loadLicenseCodeInventory(batchId) {
     code.status === 'available' && code.delivery_status === 'not_issued');
   state.classList.add('hidden');
   list.classList.remove('hidden');
-  list.innerHTML = `<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. Activation keys are never displayed here.</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Channel</th><th>Issued at</th></tr></thead><tbody>${result.codes.map((code) => {
+  const revealNote = result.key_reveal_configured
+    ? 'Available keys can be revealed one at a time after confirming your admin password. Older hash-only keys can be restored if you still have the original key.'
+    : 'Protected key reveal is not configured in this environment.';
+  list.innerHTML = `<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. ${adminEscape(revealNote)}</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Channel</th><th>Issued at</th><th>Key</th></tr></thead><tbody>${result.codes.map((code) => {
     const eligible = code.status === 'available' && code.delivery_status === 'not_issued';
     const recipient = [code.issued_to_name, code.issued_to_organization, code.issued_to_email]
       .filter(Boolean).map(adminEscape).join('<br>');
-    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td></tr>`;
+    const keyAction = code.status === 'available' && code.activation_key_recoverable
+      ? `<button class="secondary" type="button" data-license-code-reveal-serial="${adminEscape(code.serial_number)}">Reveal key</button>`
+      : code.status === 'available' && result.key_reveal_configured
+        ? `<button class="secondary" type="button" data-license-code-restore-serial="${adminEscape(code.serial_number)}">Restore existing key</button>`
+      : '<span class="muted">Unavailable</span>';
+    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td><td>${keyAction}</td></tr>`;
   }).join('')}</tbody></table>`;
 
   const updateIssueButton = () => {
@@ -310,6 +607,52 @@ async function loadLicenseCodeInventory(batchId) {
   list.querySelectorAll('input[name="serial_number"]').forEach((checkbox) => {
     checkbox.addEventListener('change', updateIssueButton);
   });
+}
+
+function openLicenseCodeReveal(serialNumber) {
+  const dialog = admin$('#licenseCodeRevealDialog');
+  const form = admin$('#licenseCodeRevealForm');
+  form.dataset.batchId = adminState.licenseCodeBatchId;
+  form.dataset.serialNumber = serialNumber;
+  admin$('#licenseCodeRevealSerial').textContent = serialNumber;
+  admin$('#licenseCodeRevealPassword').value = '';
+  admin$('#licenseCodeRevealMessage').textContent = '';
+  admin$('#licenseCodeRevealResult').classList.add('hidden');
+  admin$('#licenseCodeRevealKey').textContent = '';
+  admin$('#licenseCodeRevealSubmit').disabled = false;
+  dialog.showModal();
+  admin$('#licenseCodeRevealPassword').focus();
+}
+
+function clearLicenseCodeReveal() {
+  licenseCodeRevealRequestId += 1;
+  clearTimeout(licenseCodeRevealTimer);
+  licenseCodeRevealTimer = null;
+  admin$('#licenseCodeRevealPassword').value = '';
+  admin$('#licenseCodeRevealKey').textContent = '';
+  admin$('#licenseCodeRevealResult').classList.add('hidden');
+  admin$('#licenseCodeRevealMessage').textContent = '';
+}
+
+function openLicenseCodeRestore(serialNumber) {
+  const form = admin$('#licenseCodeRestoreForm');
+  form.dataset.batchId = adminState.licenseCodeBatchId;
+  form.dataset.serialNumber = serialNumber;
+  admin$('#licenseCodeRestoreSerial').textContent = serialNumber;
+  admin$('#licenseCodeRestoreKey').value = '';
+  admin$('#licenseCodeRestorePassword').value = '';
+  admin$('#licenseCodeRestoreMessage').textContent = '';
+  admin$('#licenseCodeRestoreSubmit').textContent = 'Verify & restore';
+  admin$('#licenseCodeRestoreSubmit').disabled = false;
+  admin$('#licenseCodeRestoreDialog').showModal();
+  admin$('#licenseCodeRestoreKey').focus();
+}
+
+function clearLicenseCodeRestore() {
+  licenseCodeRestoreRequestId += 1;
+  admin$('#licenseCodeRestoreKey').value = '';
+  admin$('#licenseCodeRestorePassword').value = '';
+  admin$('#licenseCodeRestoreMessage').textContent = '';
 }
 
 async function loadLicenseEditions(productSelect, editionSelect) {
@@ -352,49 +695,152 @@ async function loadLicensePolicy() {
   }
 }
 
-function renderAdminLicenses() {
+function renderRegistrationMetrics(metrics) {
+  const cards = [
+    { label: 'Total licenses', value: metrics.total_licenses, note: 'Across all statuses' },
+    { label: 'Active installations', value: metrics.active_installations, note: 'Currently using a license' },
+    { label: 'No activation history', value: metrics.never_activated, note: 'No installation has ever activated' },
+    { label: 'Missing registered email', value: metrics.missing_registered_email, note: 'Active installs needing attention' },
+  ];
+  admin$('#adminRegistrationMetrics').innerHTML = cards.map((metric) => `
+    <article class="card">
+      <span class="stat-label">${adminEscape(metric.label)}</span>
+      <strong class="stat-value">${adminEscape(Number(metric.value || 0).toLocaleString())}</strong>
+      <span class="admin-metric-note">${adminEscape(metric.note)}</span>
+    </article>
+  `).join('');
+}
+
+function renderAdminLicenses(data) {
   const state = admin$('#adminLicensesState');
   const list = admin$('#adminLicensesList');
-  const licensesById = new Map(adminState.licenses.map((license) => [license.id, license]));
-  const licenses = [...licensesById.values()];
-  if (!licenses.length) {
+  const pagination = admin$('#adminRegistrationPagination');
+  const registrations = data.registrations || [];
+  renderRegistrationMetrics(data.metrics || {});
+  if (!registrations.length) {
     state.classList.remove('hidden');
-    state.textContent = 'No licenses have been issued.';
+    state.textContent = data.total ? 'No registrations match these filters.' : 'No licenses have been issued.';
+    list.classList.add('hidden');
     list.innerHTML = '';
+    renderRegistrationPagination(pagination, data);
     return;
   }
   state.classList.add('hidden');
-  list.innerHTML = licenses.map((license) => {
-    const organization = adminState.organizations.find((item) => item.id === license.organization_id);
-    const canRenew = ['ACTIVE', 'EXPIRED', 'PENDING_RENEWAL'].includes(license.status);
-    return `<article class="card license-card" data-license-card="${adminEscape(license.id)}">
-      <div class="license-card-head"><div><span class="eyebrow">${adminEscape(license.product?.code || 'Product')} · ${adminEscape(license.edition?.name || 'No edition')}</span><h3>${adminEscape(organization?.name || `Organization ${license.organization_id}`)}</h3><p class="muted">${adminEscape(license.product?.name || '')} · ${adminEscape(license.serial_number)}</p></div><span class="status status-${adminEscape(String(license.status).toLowerCase())}">${adminEscape(license.status)}</span></div>
-      <div class="license-meta"><div><span>Activation key</span><strong>Shown once at issue</strong></div><div><span>Start</span><strong>${adminEscape(license.start_date || '—')}</strong></div><div><span>Expiry</span><strong>${adminEscape(license.expiry_date || 'Perpetual')}</strong></div><div><span>Activations</span><strong>${adminEscape(license.activation_count ?? 0)}</strong></div></div>
-      <div class="form-actions"><button class="secondary" type="button" data-license-details="${adminEscape(license.id)}">Inspect license</button>${license.status === 'ACTIVE' ? `<button class="secondary" type="button" data-license-suspend="${adminEscape(license.id)}">Suspend</button>` : ''}${canRenew ? `<label class="inline-date">Renew through <input type="date" data-license-renew-date="${adminEscape(license.id)}" /></label><button class="secondary" type="button" data-license-renew="${adminEscape(license.id)}">Renew</button>` : ''}</div>
-      <div class="license-details hidden" data-license-detail-panel="${adminEscape(license.id)}"></div>
-    </article>`;
-  }).join('');
+  list.classList.remove('hidden');
+  list.innerHTML = `<div class="admin-license-table-wrap"><table class="admin-license-table">
+    <thead><tr><th>Customer / product</th><th>License</th><th>Registration emails</th><th>Activation</th><th>Last seen</th><th>Actions</th></tr></thead>
+    <tbody>${registrations.map((registration) => {
+      const id = adminEscape(registration.license_id);
+      const status = String(registration.license_status || '').toLowerCase();
+      const activeCount = Number(registration.active_activation_count || 0);
+      const totalCount = Number(registration.total_activation_count || 0);
+      const activationLabel = activeCount ? 'Active' : totalCount ? 'Released' : 'Never activated';
+      const canRenew = ['ACTIVE', 'EXPIRED', 'PENDING_RENEWAL'].includes(registration.license_status);
+      return `<tr>
+        <td><strong>${adminEscape(registration.organization_name || 'Organization unavailable')}</strong><small>${adminEscape(registration.product?.name || 'Product')} · ${adminEscape(registration.edition?.name || 'No edition')}</small></td>
+        <td><strong>${adminEscape(registration.serial_number || '—')}</strong><small><span class="status status-${adminEscape(status)}">${adminEscape(registration.license_status || 'Unknown')}</span> · ${adminEscape(registration.start_date || 'No start date')} → ${adminEscape(registration.expiry_date || 'Perpetual')}</small></td>
+        <td class="registration-email"><strong>License email</strong><small>${adminEscape(registration.registered_email_masked || 'Not registered')}</small><strong>Customer contact</strong><small>${adminEscape(registration.contact_email_masked || 'Not available')}</small></td>
+        <td><strong>${adminEscape(activationLabel)}</strong><small>${adminEscape(activeCount)} active · ${adminEscape(totalCount)} total</small><small>First activation: ${adminEscape(registration.first_activation_at || '—')}</small></td>
+        <td><strong>${adminEscape(registration.last_seen_at || '—')}</strong><small>License created: ${adminEscape(registration.license_created_at || '—')}</small></td>
+        <td class="registration-actions"><button class="secondary" type="button" data-license-details="${id}">Inspect</button>${registration.license_status === 'ACTIVE' ? `<button class="secondary" type="button" data-license-suspend="${id}">Suspend</button>` : ''}${canRenew ? `<label class="inline-date">Renew through <input type="date" data-license-renew-date="${id}" /></label><button class="secondary" type="button" data-license-renew="${id}">Renew</button>` : ''}</td>
+      </tr><tr class="admin-license-detail-row" data-license-detail-row="${id}" hidden><td colspan="6"><div class="license-details hidden" data-license-detail-panel="${id}"></div></td></tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+  renderRegistrationPagination(pagination, data);
+}
+
+function renderRegistrationPagination(container, data) {
+  const pageCount = Math.max(1, Math.ceil(Number(data.total || 0) / Number(data.page_size || 25)));
+  container.innerHTML = `
+    <p>${adminEscape(Number(data.total || 0).toLocaleString())} licenses · Page ${adminEscape(data.page || 1)} of ${adminEscape(pageCount)}</p>
+    <div class="form-actions">
+      <button class="secondary" type="button" data-registration-page="previous" ${Number(data.page || 1) <= 1 ? 'disabled' : ''}>Previous</button>
+      <button class="secondary" type="button" data-registration-page="next" ${Number(data.page || 1) >= pageCount ? 'disabled' : ''}>Next</button>
+    </div>`;
+}
+
+async function loadLicenseRegistrations({ resetPage = false } = {}) {
+  const state = admin$('#adminLicensesState');
+  const list = admin$('#adminLicensesList');
+  if (resetPage) adminState.registrationPage = 1;
+  const values = new FormData(admin$('#adminRegistrationFilters'));
+  const params = new URLSearchParams({
+    page: String(adminState.registrationPage),
+    page_size: '25',
+  });
+  for (const key of ['q', 'status', 'activation', 'email', 'from', 'to']) {
+    const value = String(values.get(key) || '').trim();
+    if (value) params.set(key, value);
+  }
+  const requestId = ++adminState.registrationRequestId;
+  state.className = 'state-panel';
+  state.textContent = 'Loading registration records...';
+  list.classList.add('hidden');
+  try {
+    const data = await adminApi(`admin/license-registrations?${params.toString()}`);
+    if (requestId !== adminState.registrationRequestId) return;
+    renderAdminLicenses(data);
+  } catch (error) {
+    if (requestId !== adminState.registrationRequestId) return;
+    state.className = 'state-panel error-state';
+    state.textContent = `Registration monitoring is unavailable: ${error.message}`;
+    admin$('#adminRegistrationMetrics').innerHTML = '';
+    list.innerHTML = '';
+    admin$('#adminRegistrationPagination').innerHTML = '';
+  }
 }
 
 function renderLicenseDetails(licenseId, data) {
+  const registration = data.registration.registration;
+  const registrationGroups = [
+    {
+      title: 'Customer contact',
+      fields: [
+        ['Contact name', registration.contact_name],
+        ['Customer contact email', registration.account_email],
+        ['Phone', registration.contact_phone],
+        ['Account status', registration.customer_status],
+        ['Account created', registration.customer_created_at],
+      ],
+    },
+    {
+      title: 'Institution',
+      fields: [
+        ['Organization', registration.organization_name],
+        ['Legal name', registration.organization_legal_name],
+        ['City / state', [registration.organization_city, registration.organization_state].filter(Boolean).join(', ')],
+      ],
+    },
+    {
+      title: 'License lifecycle',
+      fields: [
+        ['License-registered email', registration.registered_email],
+        ['License created', registration.license_created_at],
+        ['First activation', registration.first_activation_at],
+        ['Last seen', registration.last_seen_at],
+        ['Installations', `${registration.active_activation_count} active / ${registration.total_activation_count} total`],
+      ],
+    },
+  ].map((group) => `<section><h4>${adminEscape(group.title)}</h4><dl>${group.fields.map(([label, value]) => `<dt>${adminEscape(label)}</dt><dd>${adminEscape(value || 'Not available')}</dd>`).join('')}</dl></section>`).join('');
   const entitlements = data.entitlements.entitlements.map((item) => `<div><dt>${adminEscape(item.key)}</dt><dd>${adminEscape(typeof item.value === 'object' ? JSON.stringify(item.value) : item.value)}</dd></div>`).join('');
-  const activations = data.activations.activations.map((item) => `<li><strong>${adminEscape(item.installation_id)}</strong> · ${adminEscape(item.status)} · Last seen ${adminEscape(item.last_seen_at || '—')}${item.status === 'active' ? ` <button type="button" class="text-button" data-activation-revoke="${adminEscape(item.id)}" data-license-id="${adminEscape(licenseId)}">Revoke</button>` : ''}</li>`).join('');
+  const activations = data.activations.activations.map((item, index) => `<li><strong>Installation ${index + 1} (${adminEscape(String(item.installation_id || '').slice(-4) || '—')})</strong> · ${adminEscape(item.status)} · Last seen ${adminEscape(item.last_seen_at || '—')}${item.status === 'active' ? ` <button type="button" class="text-button" data-activation-revoke="${adminEscape(item.id)}" data-license-id="${adminEscape(licenseId)}">Revoke</button>` : ''}</li>`).join('');
   const artifacts = data.artifacts.artifacts.map((item) => `<li>${adminEscape(item.document_id)} · ${adminEscape(item.algorithm)} · key ${adminEscape(item.key_id)} · ${adminEscape(item.issued_at)}</li>`).join('');
   const events = data.events.events.map((item) => `<li>${adminEscape(item.created_at)} · ${adminEscape(item.event_type)} · ${adminEscape(item.previous_status || '—')} → ${adminEscape(item.new_status || '—')}</li>`).join('');
-  return `<div class="license-detail-grid"><section><h4>Entitlements</h4><dl class="entitlement-list">${entitlements || '<dd>None</dd>'}</dl></section><section><h4>Activations</h4><ul>${activations || '<li>None</li>'}</ul></section><section><h4>Signed artifacts</h4><ul>${artifacts || '<li>None</li>'}</ul></section><section><h4>Lifecycle events</h4><ul>${events || '<li>None</li>'}</ul></section></div>`;
+  return `<div class="registration-detail-grid">${registrationGroups}</div><div class="license-detail-grid"><section><h4>Entitlements</h4><dl class="entitlement-list">${entitlements || '<dd>None</dd>'}</dl></section><section><h4>Activations</h4><ul>${activations || '<li>None</li>'}</ul></section><section><h4>Signed artifacts</h4><ul>${artifacts || '<li>None</li>'}</ul></section><section><h4>Lifecycle timeline</h4><ul>${events || '<li>No lifecycle events recorded</li>'}</ul></section></div>`;
 }
 
 async function loadLicenseDetails(licenseId, panel) {
   panel.textContent = 'Loading license details...';
   panel.classList.remove('hidden');
   try {
-    const [entitlements, activations, artifacts, events] = await Promise.all([
+    const [entitlements, activations, artifacts, events, registration] = await Promise.all([
       adminApi(`licenses/${licenseId}/entitlements`),
       adminApi(`licenses/${licenseId}/activations`),
       adminApi(`licenses/${licenseId}/artifacts`),
       adminApi(`licenses/${licenseId}/events`),
+      adminApi(`admin/license-registrations/${licenseId}`),
     ]);
-    panel.innerHTML = renderLicenseDetails(licenseId, { entitlements, activations, artifacts, events });
+    panel.innerHTML = renderLicenseDetails(licenseId, { entitlements, activations, artifacts, events, registration });
     panel.dataset.loaded = 'true';
   } catch (error) {
     panel.textContent = `License details could not be loaded: ${error.message}`;
@@ -471,7 +917,7 @@ function navigateAdmin(view, productTab = null) {
   if (view === 'overview') loadAdminOverview();
   if (view === 'users') loadAdminUsers();
   if (view === 'organizations') {
-    loadAdminOrganizations();
+    loadAdminOrganizations().then(loadAdminPartners);
     loadAdminCustomerInvites();
   }
   if (view === 'products') {
@@ -510,6 +956,7 @@ admin$$('.admin-product-tab').forEach((tab, index, tabs) => {
 selectAdminProductTab('overview');
 admin$$('.admin-refresh').forEach((button) => button.addEventListener('click', () => navigateAdmin(button.dataset.refresh)));
 admin$('#adminOverviewRefresh').addEventListener('click', loadAdminOverview);
+admin$('#adminD1Refresh').addEventListener('click', loadAdminD1Operations);
 
 admin$('#adminLoginForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -540,15 +987,100 @@ admin$('#customerInviteForm').addEventListener('submit', async (event) => {
         email: values.get('email'),
         name: values.get('name'),
         company: values.get('company'),
+        organization_id: values.get('organization_id'),
       }),
     });
-    admin$('#customerInviteLink').value = new URL(result.setup_path, window.location.origin).href;
-    admin$('#customerInviteResult').classList.remove('hidden');
+    if (result.setup_path) {
+      admin$('#customerInviteLink').value = new URL(result.setup_path, window.location.origin).href;
+      admin$('#customerInviteResult').classList.remove('hidden');
+    }
     formElement.reset();
-    adminMessage(admin$('#customerInviteMessage'), 'Invite created. Copy the link now and share it only with the intended customer.', true);
+    updateCustomerInviteOrganizationFields();
+    adminMessage(
+      admin$('#customerInviteMessage'),
+      result.setup_path
+        ? 'Invite created. Copy the link now and share it only with the intended customer.'
+        : result.message || 'Existing customer added to the organization.',
+      true,
+    );
     await loadAdminCustomerInvites();
+    await loadAdminOrganizations();
+    await loadAdminPartners();
   } catch (error) {
     adminMessage(admin$('#customerInviteMessage'), error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+admin$('#customerInviteOrganization').addEventListener('change', updateCustomerInviteOrganizationFields);
+admin$('#partnerContactOrganization').addEventListener('change', updatePartnerOrganizationFields);
+
+admin$('#partnerContactForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const values = new FormData(formElement);
+  const button = admin$('#partnerContactButton');
+  button.disabled = true;
+  admin$('#partnerInviteResult').classList.add('hidden');
+  adminMessage(admin$('#partnerContactMessage'), 'Saving partner organization and contact...', true);
+  try {
+    const result = await adminApi('admin/partners', {
+      method: 'POST',
+      body: JSON.stringify({
+        organization_id: values.get('organization_id'),
+        organization_name: values.get('organization_name'),
+        partner_type: values.get('partner_type'),
+        partner_role: values.get('partner_role'),
+        email: values.get('email'),
+        name: values.get('name'),
+      }),
+    });
+    if (result.setup_path) {
+      admin$('#partnerInviteLink').value = new URL(result.setup_path, window.location.origin).href;
+      admin$('#partnerInviteResult').classList.remove('hidden');
+      adminMessage(admin$('#partnerContactMessage'), 'Partner invitation created. Copy and share the one-time setup link securely.', true);
+    } else {
+      adminMessage(admin$('#partnerContactMessage'), 'Existing customer account added as a partner contact.', true);
+    }
+    formElement.reset();
+    updatePartnerOrganizationFields();
+    await loadAdminOrganizations();
+    await loadAdminPartners();
+  } catch (error) {
+    adminMessage(admin$('#partnerContactMessage'), error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+admin$('#partnerInviteCopy').addEventListener('click', async () => {
+  const input = admin$('#partnerInviteLink');
+  try {
+    await navigator.clipboard.writeText(input.value);
+    adminMessage(admin$('#partnerContactMessage'), 'Partner setup link copied. Share it only with the intended contact.', true);
+  } catch {
+    input.focus();
+    input.select();
+    adminMessage(admin$('#partnerContactMessage'), 'Select and copy the partner setup link manually.', false);
+  }
+});
+
+admin$('#partnerCustomerLinkForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const values = new FormData(event.currentTarget);
+  const button = admin$('#partnerCustomerLinkButton');
+  button.disabled = true;
+  adminMessage(admin$('#partnerCustomerLinkMessage'), 'Linking organizations...', true);
+  try {
+    await adminApi(`admin/partners/${values.get('partner_organization_id')}/customers`, {
+      method: 'POST',
+      body: JSON.stringify({ customer_organization_id: values.get('customer_organization_id') }),
+    });
+    adminMessage(admin$('#partnerCustomerLinkMessage'), 'Customer organization linked to the partner.', true);
+    await loadAdminPartners();
+  } catch (error) {
+    adminMessage(admin$('#partnerCustomerLinkMessage'), error.message, false);
   } finally {
     button.disabled = false;
   }
@@ -703,6 +1235,102 @@ admin$('#adminLicenseBatchesList').addEventListener('click', async (event) => {
   }
 });
 
+admin$('#adminLicenseCodesList').addEventListener('click', (event) => {
+  const revealButton = event.target.closest('[data-license-code-reveal-serial]');
+  const restoreButton = event.target.closest('[data-license-code-restore-serial]');
+  if (!adminState.licenseCodeBatchId) return;
+  if (revealButton) openLicenseCodeReveal(revealButton.dataset.licenseCodeRevealSerial);
+  if (restoreButton) openLicenseCodeRestore(restoreButton.dataset.licenseCodeRestoreSerial);
+});
+
+admin$('#licenseCodeRevealDialog').addEventListener('close', clearLicenseCodeReveal);
+admin$('#licenseCodeRevealCancel').addEventListener('click', () => {
+  admin$('#licenseCodeRevealDialog').close();
+});
+
+admin$('#licenseCodeRestoreDialog').addEventListener('close', clearLicenseCodeRestore);
+admin$('#licenseCodeRestoreCancel').addEventListener('click', () => {
+  admin$('#licenseCodeRestoreDialog').close();
+});
+
+admin$('#licenseCodeRestoreForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dialog = admin$('#licenseCodeRestoreDialog');
+  const activationKeyInput = admin$('#licenseCodeRestoreKey');
+  const passwordInput = admin$('#licenseCodeRestorePassword');
+  const submitButton = admin$('#licenseCodeRestoreSubmit');
+  const activationKey = activationKeyInput.value;
+  const password = passwordInput.value;
+  activationKeyInput.value = '';
+  passwordInput.value = '';
+  submitButton.disabled = true;
+  adminMessage(admin$('#licenseCodeRestoreMessage'), 'Verifying key and password...', true);
+  const requestId = ++licenseCodeRestoreRequestId;
+  let restored = false;
+
+  try {
+    await adminApi(
+      `licenses/batches/${encodeURIComponent(form.dataset.batchId)}/codes/${encodeURIComponent(form.dataset.serialNumber)}/restore`,
+      { method: 'POST', body: JSON.stringify({ activation_key: activationKey, password }) },
+    );
+    restored = true;
+    if (!dialog.open || requestId !== licenseCodeRestoreRequestId) return;
+    try {
+      await loadLicenseCodeInventory(form.dataset.batchId);
+      if (!dialog.open || requestId !== licenseCodeRestoreRequestId) return;
+      adminMessage(admin$('#licenseCodeRestoreMessage'), 'Key verified and stored securely. The inventory now offers the normal reveal action.', true);
+      submitButton.textContent = 'Restored';
+    } catch (error) {
+      adminMessage(admin$('#licenseCodeRestoreMessage'), `Key was restored, but inventory could not refresh: ${error.message || 'refresh failed'}. Close this dialog and refresh the batch.`, false);
+    }
+  } catch (error) {
+    if (dialog.open && requestId === licenseCodeRestoreRequestId) {
+      adminMessage(admin$('#licenseCodeRestoreMessage'), error.message || 'The key could not be restored.', false);
+    }
+  } finally {
+    if (dialog.open && requestId === licenseCodeRestoreRequestId) submitButton.disabled = restored;
+  }
+});
+
+admin$('#licenseCodeRevealForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dialog = admin$('#licenseCodeRevealDialog');
+  const passwordInput = admin$('#licenseCodeRevealPassword');
+  const submitButton = admin$('#licenseCodeRevealSubmit');
+  const password = passwordInput.value;
+  passwordInput.value = '';
+  submitButton.disabled = true;
+  adminMessage(admin$('#licenseCodeRevealMessage'), 'Checking password...', true);
+  const requestId = ++licenseCodeRevealRequestId;
+  let revealed = false;
+
+  try {
+    const result = await adminApi(
+      `licenses/batches/${encodeURIComponent(form.dataset.batchId)}/codes/${encodeURIComponent(form.dataset.serialNumber)}/reveal`,
+      { method: 'POST', body: JSON.stringify({ password }) },
+    );
+    if (!dialog.open || requestId !== licenseCodeRevealRequestId) return;
+    admin$('#licenseCodeRevealKey').textContent = result.activation_key;
+    admin$('#licenseCodeRevealResult').classList.remove('hidden');
+    adminMessage(admin$('#licenseCodeRevealMessage'), 'Key revealed. It will be hidden automatically after 30 seconds.', true);
+    revealed = true;
+    licenseCodeRevealTimer = setTimeout(() => {
+      if (requestId !== licenseCodeRevealRequestId) return;
+      admin$('#licenseCodeRevealKey').textContent = '';
+      admin$('#licenseCodeRevealResult').classList.add('hidden');
+      adminMessage(admin$('#licenseCodeRevealMessage'), 'The key was hidden. Close this window when finished.', true);
+    }, 30000);
+  } catch (error) {
+    if (dialog.open && requestId === licenseCodeRevealRequestId) {
+      adminMessage(admin$('#licenseCodeRevealMessage'), error.message || 'The key could not be revealed.', false);
+    }
+  } finally {
+    if (dialog.open && requestId === licenseCodeRevealRequestId) submitButton.disabled = revealed;
+  }
+});
+
 admin$('#licenseCodeIssueForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const batchId = adminState.licenseCodeBatchId;
@@ -777,7 +1405,7 @@ admin$('#licenseBatchForm').addEventListener('submit', async (event) => {
     admin$('#licenseBatchDownload').classList.remove('hidden');
     adminMessage(
       admin$('#licenseBatchMessage'),
-      `Generated ${result.count} codes. Download and store the CSV securely; the activation keys cannot be retrieved after this page is closed.`,
+      `Generated ${result.count} codes. Download and store the CSV securely. New keys can be revealed individually later; older hash-only codes can be restored if you still have the original key.`,
       true,
     );
     await loadAdminProducts();
@@ -895,8 +1523,15 @@ admin$('#adminLicensesList').addEventListener('click', async (event) => {
   const detailsButton = event.target.closest('[data-license-details]');
   if (detailsButton) {
     const panel = admin$(`[data-license-detail-panel="${detailsButton.dataset.licenseDetails}"]`);
-    if (panel.dataset.loaded === 'true') panel.classList.toggle('hidden');
-    else await loadLicenseDetails(detailsButton.dataset.licenseDetails, panel);
+    const detailRow = admin$(`[data-license-detail-row="${detailsButton.dataset.licenseDetails}"]`);
+    if (panel.dataset.loaded === 'true') {
+      const show = detailRow.hidden;
+      detailRow.hidden = !show;
+      panel.classList.toggle('hidden', !show);
+    } else {
+      detailRow.hidden = false;
+      await loadLicenseDetails(detailsButton.dataset.licenseDetails, panel);
+    }
     return;
   }
 
@@ -952,6 +1587,23 @@ admin$('#adminLicensesList').addEventListener('click', async (event) => {
       renewButton.disabled = false;
     }
   }
+});
+
+admin$('#adminRegistrationFilters').addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadLicenseRegistrations({ resetPage: true });
+});
+
+admin$('#adminRegistrationReset').addEventListener('click', () => {
+  admin$('#adminRegistrationFilters').reset();
+  loadLicenseRegistrations({ resetPage: true });
+});
+
+admin$('#adminRegistrationPagination').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-registration-page]');
+  if (!button || button.disabled) return;
+  adminState.registrationPage += button.dataset.registrationPage === 'next' ? 1 : -1;
+  loadLicenseRegistrations();
 });
 
 showAdminPortal();

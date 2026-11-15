@@ -11,11 +11,12 @@
  *
  * @version     1.0.0
  * @created     2026-11-14
- * @updated     2026-11-14
+ * @updated     2026-11-16
  *
- * @description Completes one-time customer account setup from an invitation.
+ * @description Completes one-time customer or partner account setup from an invitation.
  */
 let inviteToken = null;
+let inviteType = 'customer';
 const inviteForm = document.querySelector('#inviteForm');
 const inviteMessage = document.querySelector('#inviteMessage');
 const inviteSubmit = document.querySelector('#inviteSubmit');
@@ -25,8 +26,19 @@ function showInviteMessage(message, success = false) {
   inviteMessage.style.color = success ? 'var(--turquoise)' : 'var(--red)';
 }
 
-const tokenMatch = window.location.hash.match(/^#token=([a-f0-9]{48})$/);
-if (tokenMatch) inviteToken = tokenMatch[1];
+const inviteParams = new URLSearchParams(window.location.hash.slice(1));
+const token = inviteParams.get('token');
+if (/^[a-f0-9]{48}$/.test(token || '')) inviteToken = token;
+if (inviteParams.get('type') === 'partner') inviteType = 'partner';
+if (inviteType === 'partner') {
+  document.querySelector('#inviteHeroTitle').textContent = 'Set up your partner access.';
+  document.querySelector('#inviteHeroDescription').textContent = 'Choose a password to finish joining your partner organization.';
+  document.querySelector('#inviteEyebrow').textContent = 'Partner onboarding';
+  document.querySelector('#invitePanelTitle').textContent = 'Create your password';
+  document.querySelector('#inviteCompleteText').textContent = 'Your partner access is ready. Sign in with the invited email and the password you just created.';
+  document.querySelector('#inviteSignIn').href = '/partner.html';
+  document.querySelector('#inviteSignIn').textContent = 'Go to partner sign in';
+}
 window.history.replaceState(null, '', window.location.pathname);
 
 if (!inviteToken) {
@@ -48,7 +60,7 @@ inviteForm.addEventListener('submit', async (event) => {
   inviteSubmit.disabled = true;
   showInviteMessage('Creating your account...', true);
   try {
-    const response = await fetch('/api/customer-invites/accept', {
+    const response = await fetch(`/api/${inviteType}-invites/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'omit',

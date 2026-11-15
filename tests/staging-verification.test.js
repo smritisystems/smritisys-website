@@ -16,10 +16,14 @@
  * @description Exercises authenticated control-plane and customer portal workflows.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { hashCustomerInviteToken, onRequest } from "../functions/api/[[path]].js";
+import { sampleD1Database } from "../d1-ops/src/index.js";
+
+const TEST_LICENSE_CODE_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 
 // Initialize in-memory SQLite with D1-like interface
 function createD1Mock() {
@@ -115,14 +119,103 @@ async function callApi(env, path, options = {}) {
 
   const res = await onRequest({
     request: req,
-    env: { DB: env, ...(options.bindings || {}) },
+    env: {
+      DB: env,
+      LICENSE_CODE_ENCRYPTION_KEY: TEST_LICENSE_CODE_ENCRYPTION_KEY,
+      ...(options.bindings || {}),
+    },
     params: { path: path.split("/").filter(Boolean) },
   });
 
   const contentType = res.headers.get("content-type") || "";
   const data = contentType.includes("application/json") ? await res.json() : await res.text();
-  return { status: res.status, ok: res.ok, data };
+  return { status: res.status, ok: res.ok, data, headers: res.headers };
 }
+
+test("D1 capacity monitoring is restricted to super admins and reports backups disabled", async () => {
+  const d1 = createD1Mock();
+  const anonymous = await callApi(d1, "admin/d1-operations");
+  assert.equal(anonymous.status, 403);
+
+  const token = "d1-operations-test-session";
+  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+1 hour'))")
+    .run(token);
+  d1.raw.prepare(
+    "INSERT INTO d1_storage_snapshots (database_id, database_name, sampled_at, size_bytes) VALUES (?, ?, ?, ?)"
+  ).run("db-old", "smritisys-db-recovery", "2026-11-15T02:00:00.000Z", 921600);
+  d1.raw.prepare(
+    "INSERT INTO d1_storage_snapshots (database_id, database_name, sampled_at, size_bytes) VALUES (?, ?, ?, ?)"
+  ).run("db-main", "smritisys-db", "2026-11-15T02:00:00.000Z", 716800);
+
+  const response = await callApi(d1, "admin/d1-operations", { token });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.data.databases, ["smritisys-db"]);
+  assert.deepEqual(response.data.snapshots.map((snapshot) => snapshot.database_name), ["smritisys-db"]);
+  assert.equal(response.data.snapshots[0].size_bytes, 716800);
+  assert.equal(response.data.backup_status, "disabled");
+  assert.deepEqual(response.data.backups, []);
+});
+
+test("D1 sampler records a scheduled size sample for the canonical database", async () => {
+  const recorded = [];
+  const database = {
+    prepare(query) {
+      if (query === "SELECT 1 AS health_check") {
+        return {
+          async run() {
+            return { meta: { size_after: 716800 } };
+          },
+        };
+      }
+      assert.match(query, /INSERT INTO d1_storage_snapshots/);
+      return {
+        bind(...values) {
+          return {
+            async run() {
+              recorded.push(values);
+            },
+          };
+        },
+      };
+    },
+  };
+  const scheduledAt = Date.parse("2026-11-15T02:00:00.000Z");
+
+  await sampleD1Database({
+    DATABASE_ID: "db-main",
+    DATABASE_NAME: "smritisys-db",
+    DB: database,
+  }, scheduledAt);
+
+  assert.deepEqual(recorded, [
+    ["db-main", "smritisys-db", "2026-11-15T02:00:00.000Z", 716800],
+  ]);
+});
+
+test("D1 sampler fails explicitly when the size metadata is unavailable", async () => {
+  let recorded = false;
+  const primary = {
+    prepare() {
+      return {
+        bind() {
+          return { async run() { recorded = true; } };
+        },
+      };
+    },
+  };
+  const unavailable = {
+    prepare() {
+      return { async run() { return { meta: {} }; } };
+    },
+  };
+
+  await assert.rejects(sampleD1Database({
+    DATABASE_ID: "db-main",
+    DATABASE_NAME: "smritisys-db",
+    DB: unavailable,
+  }, Date.parse("2026-11-15T02:00:00.000Z")), /size metadata was unavailable/);
+  assert.equal(recorded, false);
+});
 
 test("announcement migration preserves existing notices", () => {
   const db = new DatabaseSync(":memory:");
@@ -148,6 +241,84 @@ test("announcement migration preserves existing notices", () => {
   assert.equal(migrated.starts_at, "2026-09-01");
   assert.equal(migrated.severity, "info");
   assert.equal(db.prepare("SELECT title FROM announcements_legacy WHERE id = 1").get().title, "Existing notice");
+});
+
+test("D1 operations migration creates idempotent storage snapshots only", () => {
+  const db = new DatabaseSync(":memory:");
+  const migration = fs.readFileSync(new URL("../migrations/0024_d1_operations_monitoring.sql", import.meta.url), "utf8");
+  db.exec(migration);
+  db.exec(migration);
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'd1_storage_snapshots'").all();
+  assert.deepEqual(tables.map((row) => row.name), ["d1_storage_snapshots"]);
+  assert.doesNotMatch(migration, /d1_backup_runs/);
+});
+
+test("customer and partner administration migration classifies existing organizations", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE organizations (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      legal_name TEXT,
+      status TEXT DEFAULT 'active'
+    );
+    CREATE TABLE customers (id INTEGER PRIMARY KEY);
+    CREATE TABLE people (id INTEGER PRIMARY KEY);
+    CREATE TABLE organization_members (
+      id INTEGER PRIMARY KEY,
+      organization_id INTEGER NOT NULL,
+      account_type TEXT NOT NULL,
+      account_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'active'
+    );
+    CREATE TABLE relationships (
+      id INTEGER PRIMARY KEY,
+      organization_id INTEGER NOT NULL,
+      relationship_type TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      UNIQUE(organization_id, relationship_type)
+    );
+    CREATE TABLE partner_memberships (
+      id INTEGER PRIMARY KEY,
+      partner_organization_id INTEGER NOT NULL,
+      account_type TEXT NOT NULL,
+      account_id INTEGER NOT NULL,
+      partner_type TEXT NOT NULL
+    );
+    CREATE TABLE customer_invites (
+      id INTEGER PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      email TEXT NOT NULL,
+      name TEXT,
+      company TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_by INTEGER,
+      customer_id INTEGER,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      accepted_at TEXT
+    );
+    INSERT INTO organizations (id, name, legal_name) VALUES
+      (1, 'Customer One', 'Customer One Pvt Ltd'),
+      (2, 'Partner One', 'Partner One Pvt Ltd'),
+      (3, 'SMRITISYS Internal', 'SMRITISYS Internal');
+    INSERT INTO organization_members (organization_id, account_type, account_id)
+      VALUES (1, 'customer', 10);
+    INSERT INTO partner_memberships (partner_organization_id, account_type, account_id, partner_type)
+      VALUES (2, 'customer', 20, 'reseller');
+  `);
+  const migration = fs.readFileSync(new URL("../migrations/0025_customer_partner_administration.sql", import.meta.url), "utf8");
+  db.exec(migration);
+
+  const inviteColumns = db.prepare("PRAGMA table_info(customer_invites)").all().map((column) => column.name);
+  assert.ok(inviteColumns.includes("organization_id"));
+  const relationships = db.prepare("SELECT organization_id, relationship_type FROM relationships ORDER BY organization_id").all();
+  assert.deepEqual(relationships.map((row) => ({ organization_id: row.organization_id, relationship_type: row.relationship_type })), [
+    { organization_id: 1, relationship_type: "customer" },
+    { organization_id: 2, relationship_type: "reseller" },
+    { organization_id: 3, relationship_type: "internal" },
+  ]);
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'partner_invites'").get());
 });
 
 test("staff bootstrap uses Worker-supported PBKDF2 and can log in", async () => {
@@ -322,6 +493,167 @@ test("customer invitations can be revoked or expire before acceptance", async ()
   assert.equal(expiredAcceptance.status, 410);
 });
 
+test("customer contacts reuse an organization and inactive activation-only accounts can be converted", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-customer-org-reuse";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const organizationCount = d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count;
+
+  const invite = await callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email: "second-contact@example.test", name: "Second Contact", organization_id: 101 },
+  });
+  assert.equal(invite.status, 201);
+  assert.equal(d1.raw.prepare("SELECT organization_id FROM customer_invites WHERE id = ?").get(invite.data.invite_id).organization_id, 101);
+  const token = invite.data.setup_path.match(/#token=([a-f0-9]{48})$/)[1];
+  const accepted = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token, password: "Second-contact-passphrase-2026!" },
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT COUNT(*) AS count FROM organization_members WHERE organization_id = 101 AND account_type = 'customer' AND status = 'active'").get().count,
+    2,
+  );
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count, organizationCount);
+
+  const alreadyMember = await callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email: "customer.a@smritibooks.com", organization_id: 101 },
+  });
+  assert.equal(alreadyMember.status, 200);
+  assert.equal(alreadyMember.data.membership_added, false);
+
+  d1.raw.prepare("UPDATE customers SET status = 'inactive' WHERE id = 102").run();
+  d1.raw.prepare("UPDATE organization_members SET status = 'inactive' WHERE organization_id = 102 AND account_id = 102").run();
+  const conversion = await callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email: "customer.b@example.com", organization_id: 102 },
+  });
+  assert.equal(conversion.status, 201);
+  const conversionInviteId = conversion.data.invite_id;
+  const conversionToken = conversion.data.setup_path.match(/#token=([a-f0-9]{48})$/)[1];
+  const converted = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token: conversionToken, password: "Converted-customer-passphrase-2026!" },
+  });
+  assert.equal(converted.status, 200);
+  assert.equal(d1.raw.prepare("SELECT status FROM customers WHERE id = 102").get().status, "active");
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM organization_members WHERE organization_id = 102 AND account_id = 102").get().status,
+    "active",
+  );
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM customers WHERE lower(email) = 'customer.b@example.com'").get().count, 1);
+  assert.equal(d1.raw.prepare("SELECT status FROM customer_invites WHERE id = ?").get(conversionInviteId).status, "accepted");
+});
+
+test("partner onboarding, customer links, and partner setup invitations are scoped and audited", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-partner-administration";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+
+  const denied = await callApi(d1, "admin/partners");
+  assert.equal(denied.status, 403);
+  const created = await callApi(d1, "admin/partners", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      organization_name: "New Implementation Partner",
+      partner_type: "implementation_partner",
+      partner_role: "partner_admin",
+      email: "partner-admin@example.test",
+      name: "Partner Admin",
+    },
+  });
+  assert.equal(created.status, 201);
+  const partnerId = created.data.partner_organization_id;
+  const inviteToken = created.data.setup_path.match(/#type=partner&token=([a-f0-9]{48})$/)[1];
+  const customerOrganizationAsPartner = await callApi(d1, "admin/partners", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      organization_id: 101,
+      partner_type: "channel_partner",
+      email: "customer-org-partner@example.test",
+    },
+  });
+  assert.equal(customerOrganizationAsPartner.status, 404);
+  const misclassifiedCustomerInvite = await callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email: "wrong-organization@example.test", organization_id: partnerId },
+  });
+  assert.equal(misclassifiedCustomerInvite.status, 400);
+  const listed = await callApi(d1, "admin/partners", { token: adminToken });
+  assert.equal(listed.status, 200);
+  assert.ok(listed.data.partners.some((partner) => partner.id === partnerId && partner.partner_type === "implementation_partner"));
+  assert.ok(listed.data.partners.find((partner) => partner.id === partnerId).pending_invite_count === 1);
+
+  const inviteList = await callApi(d1, "admin/partner-invites", { token: adminToken });
+  assert.equal(inviteList.status, 200);
+  assert.equal(inviteList.data.invites[0].email, "partner-admin@example.test");
+  const password = "Partner-admin-passphrase-2026!";
+  const accepted = await callApi(d1, "partner-invites/accept", {
+    method: "POST",
+    body: { token: inviteToken, password },
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT COUNT(*) AS count FROM partner_memberships WHERE partner_organization_id = ? AND account_type = 'customer'").get(partnerId).count,
+    1,
+  );
+  assert.equal(
+    d1.raw.prepare("SELECT COUNT(*) AS count FROM relationships WHERE organization_id = ? AND relationship_type = 'customer'").get(partnerId).count,
+    0,
+  );
+
+  const login = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "customer", email: "partner-admin@example.test", password },
+  });
+  assert.equal(login.status, 200);
+  const customerLicenseAccess = await callApi(d1, "licenses", { token: login.data.token });
+  assert.equal(customerLicenseAccess.status, 403);
+  const customerOrganizationAccess = await callApi(d1, "organization", { token: login.data.token });
+  assert.equal(customerOrganizationAccess.status, 403);
+  const partnerMe = await callApi(d1, "partner/me", { token: login.data.token });
+  assert.equal(partnerMe.status, 200);
+  assert.equal(partnerMe.data.partner.partner_type, "implementation_partner");
+
+  const linked = await callApi(d1, `admin/partners/${partnerId}/customers`, {
+    method: "POST",
+    token: adminToken,
+    body: { customer_organization_id: 101 },
+  });
+  assert.equal(linked.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM partner_customer_links WHERE partner_organization_id = ? AND customer_organization_id = 101").get(partnerId).status,
+    "active",
+  );
+  const partnerCustomers = await callApi(d1, "partner/customers", { token: login.data.token });
+  assert.equal(partnerCustomers.status, 200);
+  assert.equal(partnerCustomers.data.customers[0].id, 101);
+
+  const revoked = await callApi(d1, `admin/partners/${partnerId}/customers/101/revoke`, {
+    method: "POST",
+    token: adminToken,
+    body: {},
+  });
+  assert.equal(revoked.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM partner_customer_links WHERE partner_organization_id = ? AND customer_organization_id = 101").get(partnerId).status,
+    "revoked",
+  );
+  assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'PARTNER_CUSTOMER_LINK_REVOKED'").get());
+});
+
 test("direct license issuance registers an activation-only customer and reveals the key once", async () => {
   const d1 = createD1Mock();
   const adminToken = "test-token-direct-license";
@@ -339,6 +671,12 @@ test("direct license issuance registers an activation-only customer and reveals 
   d1.raw.prepare(
     "INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status) VALUES (201, 'customer', 300, 'customer', 'active')"
   ).run();
+  d1.raw.prepare(
+    "INSERT INTO organizations (name, legal_name, status) VALUES (?, ?, 'active')"
+  ).run("Example Coaching Academy", "Example Coaching Academy");
+  const preexistingOrganizationId = d1.raw.prepare(
+    "SELECT id FROM organizations WHERE name = ?"
+  ).get("Example Coaching Academy").id;
   const body = {
     customer_mode: "new",
     customer_email: "license-only@example.test",
@@ -377,23 +715,71 @@ test("direct license issuance registers an activation-only customer and reveals 
   ).get("license-only@example.test").count, 0);
 
   const organization = d1.raw.prepare(
-    `SELECT o.id, o.legal_name, om.status
+    `SELECT o.id, o.name, o.legal_name, om.status
      FROM organizations o
      JOIN organization_members om ON om.organization_id = o.id
      WHERE om.account_type = 'customer' AND om.account_id = ?`
   ).get(customer.id);
+  assert.notEqual(organization.id, preexistingOrganizationId);
+  assert.equal(organization.name, `Example Coaching Academy #${customer.id}`);
   assert.equal(organization.legal_name, "Example Coaching Academy");
   assert.equal(organization.status, "active");
 
   const storedLicense = d1.raw.prepare(
-    "SELECT customer_id, seats, status FROM licenses WHERE id = ?"
+    "SELECT customer_id, seats, status, offline_validity_days FROM licenses WHERE id = ?"
   ).get(licenseId);
   assert.equal(storedLicense.customer_id, customer.id);
   assert.equal(storedLicense.seats, 1);
   assert.equal(storedLicense.status, "ACTIVE");
+  assert.equal(storedLicense.offline_validity_days, 14);
   assert.equal(d1.raw.prepare(
     "SELECT value_text FROM license_entitlements WHERE license_id = ? AND entitlement_key = 'company.binding'"
   ).get(licenseId).value_text, "PA001");
+
+  d1.raw.prepare("UPDATE licenses SET registered_email = ? WHERE id = ?")
+    .run("verified-contact@example.test", licenseId);
+  d1.raw.prepare(
+    `INSERT INTO license_activations
+     (license_id, installation_id, activation_identifier, status)
+     VALUES (?, 'installation-private-1234', 'activation-private-test', 'active')`
+  ).run(licenseId);
+  const unauthenticatedRegistrations = await callApi(d1, "admin/license-registrations");
+  assert.equal(unauthenticatedRegistrations.status, 403);
+  const registrations = await callApi(
+    d1,
+    "admin/license-registrations?q=Example%20Coaching%20Academy&activation=active",
+    { token: adminToken },
+  );
+  assert.equal(registrations.status, 200);
+  assert.equal(registrations.data.total, 1);
+  const monitoredRegistration = registrations.data.registrations[0];
+  assert.equal(monitoredRegistration.organization_name, "Example Coaching Academy");
+  assert.equal(monitoredRegistration.contact_email_masked, "l***y@example.test");
+  assert.equal(monitoredRegistration.registered_email_masked, "v***t@example.test");
+  assert.equal(monitoredRegistration.active_activation_count, 1);
+  assert.equal(JSON.stringify(registrations.data).includes("license-only@example.test"), false);
+  const registrationDetails = await callApi(
+    d1,
+    `admin/license-registrations/${licenseId}`,
+    { token: adminToken },
+  );
+  assert.equal(registrationDetails.status, 200);
+  assert.equal(registrationDetails.data.registration.contact_name, "License Contact");
+  assert.equal(registrationDetails.data.registration.account_email, "license-only@example.test");
+  assert.equal(registrationDetails.data.registration.registered_email, "verified-contact@example.test");
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'ADMIN_LICENSE_REGISTRATION_VIEWED' AND resource_id = ?"
+  ).get(String(licenseId)).count, 1);
+  const invalidRegistrationFilter = await callApi(d1, "admin/license-registrations?status=UNKNOWN", {
+    token: adminToken,
+  });
+  assert.equal(invalidRegistrationFilter.status, 400);
+  const overlongRegistrationSearch = await callApi(
+    d1,
+    `admin/license-registrations?q=${"x".repeat(101)}`,
+    { token: adminToken },
+  );
+  assert.equal(overlongRegistrationSearch.status, 400);
 
   const licenseList = await callApi(d1, "licenses", { token: adminToken });
   const listedLicense = licenseList.data.licenses.find((license) => license.id === licenseId);
@@ -466,7 +852,63 @@ test("license code inventory migration upgrades existing license and organizatio
   assert.equal(existingClaim.issued_at, "2026-02-01 10:00:00");
 });
 
-test("pre-generated license codes are hash-only, claim once, and issue installation-bound 90-day artifacts", async () => {
+test("license account transfer migration backfills registered email and adds verification challenges", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT);
+    CREATE TABLE licenses (id INTEGER PRIMARY KEY, customer_id INTEGER, product_id INTEGER);
+    CREATE TABLE license_code_inventory (license_id INTEGER, contact_email TEXT, issued_to_email TEXT);
+  `);
+  db.prepare("INSERT INTO customers (id, email) VALUES (1, 'customer@example.test')").run();
+  db.prepare("INSERT INTO licenses (id, customer_id) VALUES (7, 1)").run();
+  db.prepare(
+    "INSERT INTO license_code_inventory (license_id, contact_email, issued_to_email) VALUES (7, 'registered@example.test', NULL)"
+  ).run();
+  db.exec(fs.readFileSync(new URL("../migrations/0021_license_account_transfers.sql", import.meta.url), "utf8"));
+
+  assert.equal(db.prepare("SELECT registered_email FROM licenses WHERE id = 7").get().registered_email, "registered@example.test");
+  assert.ok(db.prepare(
+    "SELECT name FROM pragma_table_info('license_email_verifications') WHERE name = 'current_email_verified_at'"
+  ).get());
+});
+
+test("license transfer policy migration adds cooldown state and sets the offline lease baseline", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE licenses (id INTEGER PRIMARY KEY, offline_validity_days INTEGER NOT NULL);
+    CREATE TABLE license_code_inventory (
+      id INTEGER PRIMARY KEY,
+      offline_validity_days INTEGER NOT NULL
+    );
+    INSERT INTO licenses (id, offline_validity_days) VALUES (1, 7), (2, 90);
+    INSERT INTO license_code_inventory (id, offline_validity_days) VALUES (1, 90), (2, 14);
+  `);
+  db.exec(fs.readFileSync(new URL("../migrations/0022_license_transfer_policy.sql", import.meta.url), "utf8"));
+
+  assert.ok(db.prepare(
+    "SELECT name FROM pragma_table_info('licenses') WHERE name = 'last_self_service_transfer_at'"
+  ).get());
+  assert.ok(db.prepare(
+    "SELECT name FROM pragma_table_info('licenses') WHERE name = 'last_self_service_transfer_id'"
+  ).get());
+  assert.deepEqual(db.prepare("SELECT offline_validity_days FROM licenses ORDER BY id").all()
+    .map((row) => row.offline_validity_days), [14, 14]);
+  assert.deepEqual(db.prepare("SELECT offline_validity_days FROM license_code_inventory ORDER BY id").all()
+    .map((row) => row.offline_validity_days), [14, 14]);
+});
+
+test("encrypted license code migration adds nullable ciphertext storage", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE license_code_inventory (id INTEGER PRIMARY KEY, activation_key_hash TEXT NOT NULL)");
+  db.exec(fs.readFileSync(new URL("../migrations/0023_license_code_encrypted_keys.sql", import.meta.url), "utf8"));
+  const column = db.prepare(
+    "SELECT type, \"notnull\" AS notnull_flag FROM pragma_table_info('license_code_inventory') WHERE name = 'activation_key_ciphertext'"
+  ).get();
+  assert.equal(column.type, "TEXT");
+  assert.equal(column.notnull_flag, 0);
+});
+
+test("pre-generated license codes retain hash and encrypted key, claim once, and issue installation-bound 14-day artifacts", async () => {
   const d1 = createD1Mock();
   const adminToken = "test-token-license-code-batch";
   d1.prepare(
@@ -514,7 +956,7 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   assert.match(storedCode.activation_key_hash, /^[a-f0-9]{64}$/);
   assert.notEqual(storedCode.activation_key_hash, code.activation_key);
   assert.equal(storedCode.status, "available");
-  assert.equal(storedCode.offline_validity_days, 90);
+  assert.equal(storedCode.offline_validity_days, 14);
   const batchList = await callApi(d1, "licenses/batches", { token: adminToken });
   assert.equal(batchList.status, 200);
   assert.equal(batchList.data.batches[0].available, 2);
@@ -591,7 +1033,7 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   assert.equal(issued.status, 201);
   const payload = JSON.parse(Buffer.from(issued.data.artifact.payload, "base64url").toString("utf8"));
   assert.equal(payload.serial_number, code.serial_number);
-  assert.equal(payload.offline_validity_days, 90);
+  assert.equal(payload.offline_validity_days, 14);
   assert.equal(payload.company_binding, activation.company_binding);
   assert.equal(payload.installation_id, activation.installation_id);
   const claimed = d1.raw.prepare(
@@ -618,7 +1060,7 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   assert.equal(JSON.parse(claimAudit.new_value).delivery_status, "issued");
   assert.equal(JSON.parse(claimAudit.new_value).issued_to_name, "Priya Sharma");
   assert.equal(claimed.serial_number, code.serial_number);
-  assert.equal(claimed.offline_validity_days, 90);
+  assert.equal(claimed.offline_validity_days, 14);
   assert.equal(claimed.address, "12 Academy Road");
   assert.equal(claimed.tax_id, "TAX-123");
 
@@ -652,6 +1094,459 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   });
   assert.equal(otherInstallation.status, 409);
   assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM licenses WHERE serial_number = ?").get(code.serial_number).count, 1);
+
+  const managementTimestamp = Date.now();
+  const managementNonce = crypto.randomUUID();
+  const managementMessage = [
+    "license-management-v1",
+    "deactivate",
+    activation.product_code,
+    activation.company_binding,
+    activation.installation_id,
+    activation.activation_identifier,
+    managementTimestamp,
+    managementNonce,
+  ].join("\n");
+  const managementSignature = Buffer.from(await crypto.subtle.sign(
+    { name: "Ed25519" },
+    refreshPair.privateKey,
+    Buffer.from(managementMessage),
+  )).toString("base64url");
+  const deactivated = await callApi(d1, "license/manage", {
+    method: "POST",
+    body: {
+      action: "deactivate",
+      product_code: activation.product_code,
+      company_binding: activation.company_binding,
+      installation_id: activation.installation_id,
+      activation_identifier: activation.activation_identifier,
+      timestamp: managementTimestamp,
+      nonce: managementNonce,
+      signature: managementSignature,
+    },
+    bindings,
+  });
+  assert.equal(deactivated.status, 200);
+  assert.equal(d1.raw.prepare(
+    "SELECT status FROM license_activations WHERE license_id = (SELECT id FROM licenses WHERE serial_number = ?) AND activation_identifier = ?"
+  ).get(code.serial_number, activation.activation_identifier).status, "revoked");
+  const replayedDeactivation = await callApi(d1, "license/manage", {
+    method: "POST",
+    body: {
+      action: "deactivate",
+      product_code: activation.product_code,
+      company_binding: activation.company_binding,
+      installation_id: activation.installation_id,
+      activation_identifier: activation.activation_identifier,
+      timestamp: managementTimestamp,
+      nonce: managementNonce,
+      signature: managementSignature,
+    },
+    bindings,
+  });
+  assert.equal(replayedDeactivation.status, 409);
+
+  const originalFetch = globalThis.fetch;
+  const emailMessages = [];
+  globalThis.fetch = async (_url, options) => {
+    const message = JSON.parse(options.body);
+    emailMessages.push(message);
+    return Response.json({ success: true, result: { delivered: message.to } });
+  };
+  try {
+    const emailBindings = {
+      ...bindings,
+      LICENSE_EMAIL_CODE_SECRET: "license-email-verification-secret-for-tests",
+      CLOUDFLARE_EMAIL_ACCOUNT_ID: "test-account",
+      CLOUDFLARE_EMAIL_API_TOKEN: "test-token",
+      LICENSE_EMAIL_FROM: "licenses@prathamone.example",
+    };
+    const invalidEmailPurpose = await callApi(d1, "license/email/request", {
+      method: "POST",
+      body: {
+        purpose: "unknown",
+        email: "priya@newacademy.example",
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(invalidEmailPurpose.status, 400);
+    const emailRequest = await callApi(d1, "license/email/request", {
+      method: "POST",
+      body: {
+        purpose: "activation",
+        email: "priya@newacademy.example",
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(emailRequest.status, 202);
+    const activationCode = emailMessages.at(-1).text.match(/\b\d{8}\b/)[0];
+    const invalidEmailCode = await callApi(d1, "license/email/verify", {
+      method: "POST",
+      body: {
+        challenge_id: emailRequest.data.challenge_id,
+        code: activationCode === "00000000" ? "00000001" : "00000000",
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(invalidEmailCode.status, 400);
+    const emailVerification = await callApi(d1, "license/email/verify", {
+      method: "POST",
+      body: { challenge_id: emailRequest.data.challenge_id, code: activationCode },
+      bindings: emailBindings,
+    });
+    assert.equal(emailVerification.status, 200);
+    const selectedLicense = emailVerification.data.licenses.find((license) => license.serial_number === code.serial_number);
+    assert.ok(selectedLicense);
+    const emailActivation = await callApi(d1, "license/activate", {
+      method: "POST",
+      body: {
+        email: "priya@newacademy.example",
+        email_challenge_id: emailRequest.data.challenge_id,
+        license_id: selectedLicense.license_id,
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+        installation_id: "12111111-2222-4333-8444-555555555555",
+        activation_identifier: "12111111-2222-4333-8444-666666666666",
+        refresh_public_key: refreshPublicKey,
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(emailActivation.status, 201);
+    const replayedEmailActivation = await callApi(d1, "license/activate", {
+      method: "POST",
+      body: {
+        email: "priya@newacademy.example",
+        email_challenge_id: emailRequest.data.challenge_id,
+        license_id: selectedLicense.license_id,
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+        installation_id: "22111111-2222-4333-8444-555555555555",
+        activation_identifier: "22111111-2222-4333-8444-666666666666",
+        refresh_public_key: refreshPublicKey,
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(replayedEmailActivation.status, 403);
+
+    const transferTimestamp = Date.now();
+    const transferNonce = crypto.randomUUID();
+    const transferInstallationId = "12111111-2222-4333-8444-555555555555";
+    const transferActivationId = "12111111-2222-4333-8444-666666666666";
+    const transferSignature = Buffer.from(await crypto.subtle.sign(
+      { name: "Ed25519" },
+      refreshPair.privateKey,
+      Buffer.from([
+        "license-management-v1",
+        "deactivate",
+        activation.product_code,
+        activation.company_binding,
+        transferInstallationId,
+        transferActivationId,
+        transferTimestamp,
+        transferNonce,
+      ].join("\n")),
+    )).toString("base64url");
+    const blockedTransfer = await callApi(d1, "license/manage", {
+      method: "POST",
+      body: {
+        action: "deactivate",
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+        installation_id: transferInstallationId,
+        activation_identifier: transferActivationId,
+        timestamp: transferTimestamp,
+        nonce: transferNonce,
+        signature: transferSignature,
+      },
+      bindings,
+    });
+    assert.equal(blockedTransfer.status, 429);
+    assert.match(blockedTransfer.data.error, /temporarily unavailable/i);
+    assert.equal(d1.raw.prepare(
+      "SELECT status FROM license_activations WHERE license_id = ? AND activation_identifier = ?"
+    ).get(selectedLicense.license_id, transferActivationId).status, "active");
+
+    const changeRequest = await callApi(d1, "license/email/request", {
+      method: "POST",
+      body: {
+        purpose: "email_change",
+        email: "priya@newacademy.example",
+        target_email: "renewed@newacademy.example",
+        serial_number: code.serial_number,
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(changeRequest.status, 202);
+    const oldEmailCode = emailMessages.at(-1).text.match(/\b\d{8}\b/)[0];
+    const oldEmailVerification = await callApi(d1, "license/email/verify", {
+      method: "POST",
+      body: { challenge_id: changeRequest.data.challenge_id, code: oldEmailCode },
+      bindings: emailBindings,
+    });
+    assert.equal(oldEmailVerification.data.stage, "target_email");
+    const newEmailCode = emailMessages.at(-1).text.match(/\b\d{8}\b/)[0];
+    const newEmailVerification = await callApi(d1, "license/email/verify", {
+      method: "POST",
+      body: { challenge_id: changeRequest.data.challenge_id, code: newEmailCode },
+      bindings: emailBindings,
+    });
+    assert.equal(newEmailVerification.status, 200);
+    assert.equal(newEmailVerification.data.registered_email, "renewed@newacademy.example");
+    assert.equal(d1.raw.prepare("SELECT registered_email FROM licenses WHERE serial_number = ?")
+      .get(code.serial_number).registered_email, "renewed@newacademy.example");
+    assert.equal(d1.raw.prepare(
+      "SELECT event_type FROM license_events WHERE license_id = ? ORDER BY id DESC LIMIT 1"
+    ).get(selectedLicense.license_id).event_type, "LICENSE_EMAIL_CHANGED");
+    assert.equal(d1.raw.prepare("SELECT registered_email FROM licenses WHERE serial_number = ?")
+      .get(secondCode.serial_number).registered_email, "priya@newacademy.example");
+
+    for (let index = 0; index < 4; index += 1) {
+      const request = await callApi(d1, "license/email/request", {
+        method: "POST",
+        headers: { "CF-Connecting-IP": `198.51.100.${index + 1}` },
+        body: {
+          purpose: "activation",
+          email: "renewed@newacademy.example",
+          product_code: activation.product_code,
+          company_binding: activation.company_binding,
+        },
+        bindings: emailBindings,
+      });
+      assert.equal(request.status, 202);
+    }
+    const addressRateLimited = await callApi(d1, "license/email/request", {
+      method: "POST",
+      headers: { "CF-Connecting-IP": "198.51.100.99" },
+      body: {
+        purpose: "activation",
+        email: "renewed@newacademy.example",
+        product_code: activation.product_code,
+        company_binding: activation.company_binding,
+      },
+      bindings: emailBindings,
+    });
+    assert.equal(addressRateLimited.status, 429);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("single-code reveal requires password confirmation, audits safely, and rejects legacy or claimed codes", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-license-code-reveal";
+  const adminPassword = "reveal-test-password";
+  const passwordHash = createHash("sha256")
+    .update(`${adminPassword}smritisys-salt-v1`)
+    .digest("hex");
+  d1.prepare("UPDATE users SET password_hash = ? WHERE id = 201").bind(passwordHash).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(product.id);
+  const created = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      count: 2,
+      product_id: product.id,
+      edition_id: edition.id,
+      license_model: "on_premise_subscription",
+      start_date: "2026-11-16",
+      expiry_date: "2027-11-16",
+    },
+  });
+  assert.equal(created.status, 201);
+
+  const code = created.data.codes[0];
+  const inventory = await callApi(d1, `licenses/batches/${created.data.batch_id}/codes`, { token: adminToken });
+  assert.equal(inventory.status, 200);
+  assert.equal(inventory.data.codes[0].activation_key_recoverable, true);
+  assert.equal(JSON.stringify(inventory.data).includes("activation_key_ciphertext"), false);
+  assert.equal(JSON.stringify(inventory.data).includes("activation_key_hash"), false);
+  assert.equal(JSON.stringify(inventory.data).includes(code.activation_key), false);
+  const stored = d1.raw.prepare(
+    "SELECT activation_key_hash, activation_key_ciphertext FROM license_code_inventory WHERE serial_number = ?"
+  ).get(code.serial_number);
+  assert.match(stored.activation_key_hash, /^[a-f0-9]{64}$/);
+  assert.match(stored.activation_key_ciphertext, /^v1\./);
+  assert.notEqual(stored.activation_key_ciphertext, code.activation_key);
+
+  const revealPath = `licenses/batches/${created.data.batch_id}/codes/${code.serial_number}/reveal`;
+  const unauthorized = await callApi(d1, revealPath, {
+    method: "POST",
+    body: { password: adminPassword },
+  });
+  assert.equal(unauthorized.status, 403);
+  assert.equal(unauthorized.headers.get("cache-control"), "no-store");
+  const rejected = await callApi(d1, revealPath, {
+    method: "POST",
+    token: adminToken,
+    body: { password: "incorrect-password" },
+  });
+  assert.equal(rejected.status, 403);
+  assert.equal(rejected.headers.get("cache-control"), "no-store");
+  assert.equal(rejected.data.activation_key, undefined);
+  const revealed = await callApi(d1, revealPath, {
+    method: "POST",
+    token: adminToken,
+    body: { password: adminPassword },
+  });
+  assert.equal(revealed.status, 200);
+  assert.equal(revealed.data.activation_key, code.activation_key);
+  assert.equal(revealed.headers.get("cache-control"), "no-store");
+
+  const audit = d1.raw.prepare(
+    "SELECT resource_id, new_value FROM audit_logs WHERE action = 'LICENSE_CODE_REVEALED'"
+  ).get();
+  assert.equal(audit.resource_id, code.serial_number);
+  assert.equal(audit.new_value, JSON.stringify({ batch_id: created.data.batch_id }));
+  assert.equal(JSON.stringify(audit).includes(code.activation_key), false);
+
+  const legacyCode = created.data.codes[1];
+  d1.raw.prepare(
+    "UPDATE license_code_inventory SET activation_key_ciphertext = NULL WHERE serial_number = ?"
+  ).run(legacyCode.serial_number);
+  const legacyReveal = await callApi(
+    d1,
+    `licenses/batches/${created.data.batch_id}/codes/${legacyCode.serial_number}/reveal`,
+    { method: "POST", token: adminToken, body: { password: adminPassword } },
+  );
+  assert.equal(legacyReveal.status, 409);
+
+  const restorePath = `licenses/batches/${created.data.batch_id}/codes/${legacyCode.serial_number}/restore`;
+  const unauthorizedRestore = await callApi(d1, restorePath, {
+    method: "POST",
+    body: { activation_key: legacyCode.activation_key, password: adminPassword },
+  });
+  assert.equal(unauthorizedRestore.status, 403);
+  assert.equal(unauthorizedRestore.headers.get("cache-control"), "no-store");
+  const wrongPasswordRestore = await callApi(d1, restorePath, {
+    method: "POST",
+    token: adminToken,
+    body: { activation_key: legacyCode.activation_key, password: "incorrect-password" },
+  });
+  assert.equal(wrongPasswordRestore.status, 403);
+  const unavailableStorageRestore = await callApi(d1, restorePath, {
+    method: "POST",
+    token: adminToken,
+    body: { activation_key: legacyCode.activation_key, password: adminPassword },
+    bindings: { LICENSE_CODE_ENCRYPTION_KEY: "" },
+  });
+  assert.equal(unavailableStorageRestore.status, 503);
+  const mismatchedKeyRestore = await callApi(d1, restorePath, {
+    method: "POST",
+    token: adminToken,
+    body: { activation_key: code.activation_key, password: adminPassword },
+  });
+  assert.equal(mismatchedKeyRestore.status, 400);
+  assert.equal(mismatchedKeyRestore.data.ok, false);
+  assert.equal(
+    d1.raw.prepare("SELECT activation_key_ciphertext FROM license_code_inventory WHERE serial_number = ?")
+      .get(legacyCode.serial_number).activation_key_ciphertext,
+    null,
+  );
+
+  const restored = await callApi(d1, restorePath, {
+    method: "POST",
+    token: adminToken,
+    body: { activation_key: legacyCode.activation_key, password: adminPassword },
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(JSON.stringify(restored.data).includes(legacyCode.activation_key), false);
+  assert.equal(restored.headers.get("cache-control"), "no-store");
+  const restoredStored = d1.raw.prepare(
+    "SELECT activation_key_hash, activation_key_ciphertext, status FROM license_code_inventory WHERE serial_number = ?"
+  ).get(legacyCode.serial_number);
+  assert.equal(restoredStored.activation_key_hash, createHash("sha256").update(legacyCode.activation_key).digest("hex"));
+  assert.match(restoredStored.activation_key_ciphertext, /^v1\./);
+  assert.equal(restoredStored.status, "available");
+  const restoredInventory = await callApi(
+    d1,
+    `licenses/batches/${created.data.batch_id}/codes`,
+    { token: adminToken },
+  );
+  assert.equal(restoredInventory.data.codes.find((item) => item.serial_number === legacyCode.serial_number).activation_key_recoverable, true);
+
+  const duplicateRestore = await callApi(d1, restorePath, {
+    method: "POST",
+    token: adminToken,
+    body: { activation_key: legacyCode.activation_key, password: adminPassword },
+  });
+  assert.equal(duplicateRestore.status, 409);
+  const restoreAudit = d1.raw.prepare(
+    "SELECT resource_id, new_value FROM audit_logs WHERE action = 'LICENSE_CODE_KEY_RESTORED'"
+  ).get();
+  assert.equal(restoreAudit.resource_id, legacyCode.serial_number);
+  assert.equal(restoreAudit.new_value, JSON.stringify({ batch_id: created.data.batch_id }));
+  assert.equal(JSON.stringify(restoreAudit).includes(legacyCode.activation_key), false);
+
+  d1.raw.prepare(
+    "UPDATE license_code_inventory SET status = 'claimed', activation_key_ciphertext = NULL WHERE serial_number = ?"
+  ).run(code.serial_number);
+  const claimedRestore = await callApi(d1, revealPath.replace(/\/reveal$/, "/restore"), {
+    method: "POST",
+    token: adminToken,
+    headers: { "CF-Connecting-IP": "192.0.2.20" },
+    body: { activation_key: code.activation_key, password: adminPassword },
+  });
+  assert.equal(claimedRestore.status, 409);
+  const claimedReveal = await callApi(d1, revealPath, {
+    method: "POST",
+    token: adminToken,
+    body: { password: adminPassword },
+  });
+  assert.equal(claimedReveal.status, 409);
+  const finalAllowedAttempt = await callApi(d1, revealPath, {
+    method: "POST",
+    token: adminToken,
+    body: { password: adminPassword },
+  });
+  assert.equal(finalAllowedAttempt.status, 409);
+  const rateLimited = await callApi(d1, revealPath, {
+    method: "POST",
+    token: adminToken,
+    body: { password: adminPassword },
+  });
+  assert.equal(rateLimited.status, 429);
+  assert.equal(rateLimited.headers.get("cache-control"), "no-store");
+});
+
+test("license code batch generation fails closed when protected storage is not configured", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-license-code-no-encryption";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(product.id);
+  const body = {
+    count: 1,
+    product_id: product.id,
+    edition_id: edition.id,
+    license_model: "on_premise_subscription",
+    start_date: "2026-11-16",
+  };
+  for (const secret of ["", "not-base64"]) {
+    const result = await callApi(d1, "licenses/batches", {
+      method: "POST",
+      token: adminToken,
+      body,
+      bindings: { LICENSE_CODE_ENCRYPTION_KEY: secret },
+    });
+    assert.equal(result.status, 503);
+  }
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM license_code_inventory").get().count, 0);
 });
 
 test("license code batches allow 200 new-format codes and safely revoke unused batches", async () => {

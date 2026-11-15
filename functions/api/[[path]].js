@@ -71,7 +71,7 @@ function clearedSessionCookie() {
   return sessionCookie("", 0);
 }
 
-async function enforceRateLimit(env, request, scope, limit, windowSeconds, identity = "") {
+async function enforceRateLimit(env, request, scope, limit, windowSeconds, identity = "", failClosed = false) {
   const client = request.headers.get("CF-Connecting-IP") || "unknown";
   const suffix = identity ? `:${identity}` : "";
   const bucketKey = `${scope}:${client}${suffix}`.slice(0, 240);
@@ -93,7 +93,7 @@ async function enforceRateLimit(env, request, scope, limit, windowSeconds, ident
     return { allowed: Number(row?.request_count || 0) <= limit, retryAfter };
   } catch (error) {
     console.error("Rate-limit storage unavailable", error);
-    return { allowed: true, retryAfter: windowSeconds };
+    return { allowed: !failClosed, unavailable: failClosed, retryAfter: windowSeconds };
   }
 }
 
@@ -150,7 +150,7 @@ async function hashPassword(password) {
 
 async function verifyPassword(password, storedHash) {
   if (!storedHash?.startsWith("pbkdf2-sha256$")) {
-    return (await hashLegacyPassword(password)) === storedHash;
+    return constantTimeStringEqual(await hashLegacyPassword(password), storedHash);
   }
 
   const [, prefix, algorithm, iterationsText, saltHex, expectedHash] = storedHash.match(/^(pbkdf2)-(sha256)\$(\d+)\$([0-9a-f]+)\$([0-9a-f]+)$/) || [];
@@ -161,7 +161,7 @@ async function verifyPassword(password, storedHash) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, key, 256);
   const actualHash = [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return actualHash === expectedHash;
+  return constantTimeStringEqual(actualHash, expectedHash);
 }
 
 function makeToken() {
@@ -205,6 +205,393 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function decodeBase64(value) {
+  if (typeof value !== "string" ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null;
+  try {
+    return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function encodeBase64(value) {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function loadLicenseCodeEncryptionKey(env) {
+  const secret = env.LICENSE_CODE_ENCRYPTION_KEY;
+  if (secret == null || secret === "") return { configured: false, key: null };
+  const rawKey = decodeBase64(secret);
+  if (!rawKey || rawKey.length !== 32) return { configured: true, key: null };
+  const key = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return { configured: true, key };
+}
+
+async function encryptLicenseActivationKey(activationKey, encryptionKey, batchId, serialNumber) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const additionalData = new TextEncoder().encode(`${batchId}:${serialNumber}`);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData },
+    encryptionKey,
+    new TextEncoder().encode(activationKey),
+  );
+  return `v1.${encodeBase64(iv)}.${encodeBase64(new Uint8Array(encrypted))}`;
+}
+
+async function decryptLicenseActivationKey(ciphertext, encryptionKey, batchId, serialNumber) {
+  const [version, encodedIv, encodedCiphertext, ...extra] = String(ciphertext || "").split(".");
+  const iv = decodeBase64(encodedIv);
+  const encrypted = decodeBase64(encodedCiphertext);
+  if (version !== "v1" || extra.length || iv?.length !== 12 || !encrypted || encrypted.length < 16) {
+    throw new TypeError("Invalid encrypted activation-key format");
+  }
+  const additionalData = new TextEncoder().encode(`${batchId}:${serialNumber}`);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv, additionalData },
+    encryptionKey,
+    encrypted,
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
+async function licenseEmailCodeHash(env, challengeId, code) {
+  const secret = boundedString(env.LICENSE_EMAIL_CODE_SECRET, 256);
+  if (!secret || secret.length < 32) return null;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${challengeId}\n${code}`),
+  );
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function makeLicenseEmailCode() {
+  const range = 100_000_000;
+  const maxAcceptedValue = Math.floor(0x1_0000_0000 / range) * range;
+  const random = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(random);
+  } while (random[0] >= maxAcceptedValue);
+  return String(random[0] % range).padStart(8, "0");
+}
+
+async function sendLicenseVerificationEmail(env, email, code, purpose) {
+  const accountId = boundedString(env.CLOUDFLARE_EMAIL_ACCOUNT_ID, 64);
+  const apiToken = boundedString(env.CLOUDFLARE_EMAIL_API_TOKEN, 512);
+  const from = validEmail(env.LICENSE_EMAIL_FROM);
+  if (!accountId || !apiToken || !from) {
+    return { error: "License verification email is not configured", status: 503 };
+  }
+
+  const subject = purpose === "email_change"
+    ? "Confirm your PrathamOne license email change"
+    : "Your PrathamOne license verification code";
+  const text = `Your PrathamOne verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`;
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/email/sending/send`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ to: [email], from, subject, text }),
+    },
+  ).catch((error) => {
+    console.error("License verification email request failed", error);
+    return null;
+  });
+  if (!response) return { error: "License verification email could not be sent", status: 503 };
+
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    console.error("License verification email service returned invalid JSON", error);
+    return { error: "License verification email service returned an invalid response", status: 502 };
+  }
+  const sentToRecipient = [
+    ...(Array.isArray(result?.result?.delivered) ? result.result.delivered : []),
+    ...(Array.isArray(result?.result?.queued) ? result.result.queued : []),
+  ].some((recipient) => String(recipient).toLowerCase() === email);
+  if (!response.ok || result?.success !== true || !sentToRecipient) {
+    console.error("License verification email service rejected a message", {
+      status: response.status,
+      success: result?.success === true,
+    });
+    return { error: "License verification email could not be delivered", status: 503 };
+  }
+  return { ok: true };
+}
+
+async function createLicenseEmailVerification(env, {
+  challengeId = crypto.randomUUID(),
+  purpose,
+  email,
+  productCode,
+  companyBinding,
+  licenseId = null,
+  targetEmail = null,
+  installationId = null,
+  activationIdentifier = null,
+}) {
+  const rateLimitedAddresses = [...new Set([email, targetEmail]
+    .filter(Boolean)
+    .map((address) => address.toLowerCase()))];
+  for (const address of rateLimitedAddresses) {
+    const recentRequests = await env.DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM license_email_verifications
+       WHERE created_at > datetime('now', '-10 minutes')
+         AND (lower(email) = ? OR lower(target_email) = ?)`
+    ).bind(address, address).first();
+    if (Number(recentRequests?.count || 0) >= 5) {
+      return { error: "Too many verification emails were requested for this address. Try again later.", status: 429 };
+    }
+  }
+
+  const code = makeLicenseEmailCode();
+  const codeHash = await licenseEmailCodeHash(env, challengeId, code);
+  if (!codeHash) return { error: "License email verification is not configured", status: 503 };
+
+  await env.DB.prepare(
+    `INSERT INTO license_email_verifications
+     (challenge_id, purpose, email, code_hash, product_code, company_binding, license_id,
+      target_email, installation_id, activation_identifier, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+10 minutes'))`
+  ).bind(
+    challengeId, purpose, email, codeHash, productCode, companyBinding, licenseId,
+    targetEmail, installationId, activationIdentifier,
+  ).run();
+
+  const delivery = await sendLicenseVerificationEmail(env, email, code, purpose);
+  if (delivery.error) {
+    await env.DB.prepare(
+      "DELETE FROM license_email_verifications WHERE challenge_id = ? AND verified_at IS NULL"
+    ).bind(challengeId).run();
+    return delivery;
+  }
+  return { challenge_id: challengeId };
+}
+
+function constantTimeStringEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+async function verifyLicenseEmailCode(env, challengeId, code) {
+  const challenge = await env.DB.prepare(
+    `SELECT challenge_id, purpose, email, code_hash, product_code, company_binding,
+            license_id, target_email, attempts, current_email_verified_at, verified_at, consumed_at
+     FROM license_email_verifications
+     WHERE challenge_id = ? AND expires_at > datetime('now') AND attempts < 5`
+  ).bind(challengeId).first();
+  if (!challenge || challenge.consumed_at) return { error: "The verification code is invalid or expired", status: 400 };
+  const submittedHash = await licenseEmailCodeHash(env, challengeId, code);
+  if (!submittedHash) return { error: "License email verification is not configured", status: 503 };
+  if (!constantTimeStringEqual(submittedHash, challenge.code_hash)) {
+    await env.DB.prepare(
+      `UPDATE license_email_verifications SET attempts = attempts + 1
+       WHERE challenge_id = ? AND attempts < 5 AND consumed_at IS NULL`
+    ).bind(challengeId).run();
+    return { error: "The verification code is invalid or expired", status: 400 };
+  }
+  return { challenge };
+}
+
+async function requestLicenseEmailCode(request, env, origin) {
+  const rateLimit = await requireRateLimit(env, request, "license-email-code", 5, 600);
+  if (rateLimit) return rateLimit;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A JSON verification request is required" }, 400, origin);
+  }
+  const purpose = body?.purpose;
+  if (!["activation", "email_change"].includes(purpose)) {
+    return json({ ok: false, error: "A supported email verification purpose is required" }, 400, origin);
+  }
+  const email = validEmail(body?.email);
+  const targetEmail = purpose === "email_change" ? validEmail(body?.target_email) : null;
+  const productCode = boundedString(body?.product_code, 100);
+  const companyBinding = boundedString(body?.company_binding, 128);
+  const licenseId = purpose === "email_change" ? numericId(body?.license_id) : null;
+  const serialNumber = purpose === "email_change"
+    ? boundedString(body?.serial_number, 80)?.toUpperCase() || null
+    : null;
+  if (!email || !productCode || !companyBinding ||
+      (purpose === "email_change" && (!targetEmail || targetEmail === email || (!licenseId && !serialNumber)))) {
+    return json({ ok: false, error: "A valid email, product, company, and verification scope are required" }, 400, origin);
+  }
+
+  let matchingLicense;
+  if (purpose === "activation") {
+    matchingLicense = await env.DB.prepare(
+      `SELECT l.id FROM licenses l
+       JOIN products p ON p.id = l.product_id AND p.slug = ?
+       JOIN license_entitlements e ON e.license_id = l.id
+         AND e.entitlement_key = 'company.binding' AND e.value_text = ?
+       WHERE lower(l.registered_email) = ? AND l.status = 'ACTIVE'
+       ORDER BY l.id DESC LIMIT 1`
+    ).bind(productCode, companyBinding, email).first();
+  } else {
+    matchingLicense = await env.DB.prepare(
+      `SELECT l.id FROM licenses l
+       JOIN products p ON p.id = l.product_id AND p.slug = ?
+       JOIN license_entitlements e ON e.license_id = l.id
+         AND e.entitlement_key = 'company.binding' AND e.value_text = ?
+       WHERE (? IS NULL OR l.id = ?) AND (? IS NULL OR l.serial_number = ?)
+         AND lower(l.registered_email) = ? AND l.status = 'ACTIVE'`
+    ).bind(productCode, companyBinding, licenseId, licenseId, serialNumber, serialNumber, email).first();
+  }
+
+  if (matchingLicense) {
+    const challenge = await createLicenseEmailVerification(env, {
+      purpose,
+      email,
+      productCode,
+      companyBinding,
+      licenseId: purpose === "email_change" ? Number(matchingLicense.id) : null,
+      targetEmail,
+    });
+    if (challenge.error) return json({ ok: false, error: challenge.error }, challenge.status, origin);
+    return json({
+      ok: true,
+      challenge_id: challenge.challenge_id,
+      message: "If an eligible license matches this email, a verification code has been sent.",
+    }, 202, origin);
+  }
+
+  return json({
+    ok: true,
+    challenge_id: crypto.randomUUID(),
+    message: "If an eligible license matches this email, a verification code has been sent.",
+  }, 202, origin);
+}
+
+async function verifyLicenseEmail(request, env, origin) {
+  const rateLimit = await requireRateLimit(env, request, "license-email-verify", 10, 600);
+  if (rateLimit) return rateLimit;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A JSON verification request is required" }, 400, origin);
+  }
+  const challengeId = boundedString(body?.challenge_id, 36);
+  const code = boundedString(body?.code, 8);
+  if (!UUID_PATTERN.test(challengeId || "") || !/^\d{8}$/.test(code || "")) {
+    return json({ ok: false, error: "A valid challenge and eight-digit verification code are required" }, 400, origin);
+  }
+  const result = await verifyLicenseEmailCode(env, challengeId, code);
+  if (result.error) return json({ ok: false, error: result.error }, result.status, origin);
+  const challenge = result.challenge;
+
+  if (challenge.purpose === "email_change") {
+    if (!challenge.current_email_verified_at && challenge.email !== challenge.target_email) {
+      const targetCode = makeLicenseEmailCode();
+      const targetHash = await licenseEmailCodeHash(env, challengeId, targetCode);
+      if (!targetHash) return json({ ok: false, error: "License email verification is not configured" }, 503, origin);
+      const delivery = await sendLicenseVerificationEmail(env, challenge.target_email, targetCode, "email_change");
+      if (delivery.error) return json({ ok: false, error: delivery.error }, delivery.status, origin);
+      await env.DB.prepare(
+        `UPDATE license_email_verifications
+         SET code_hash = ?, attempts = 0,
+             current_email_verified_at = datetime('now'), verified_at = NULL,
+             expires_at = datetime('now', '+10 minutes')
+         WHERE challenge_id = ? AND consumed_at IS NULL AND current_email_verified_at IS NULL`
+      ).bind(targetHash, challengeId).run();
+      return json({ ok: true, stage: "target_email", message: "A confirmation code was sent to the new email address." }, 200, origin);
+    }
+
+    if (!challenge.current_email_verified_at) {
+      return json({ ok: false, error: "The email change verification state is invalid" }, 409, origin);
+    }
+    const changeResults = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE license_email_verifications
+         SET verified_at = datetime('now'), consumed_at = datetime('now')
+         WHERE challenge_id = ? AND purpose = 'email_change'
+           AND email = ? AND target_email = ? AND current_email_verified_at IS NOT NULL
+           AND consumed_at IS NULL AND expires_at > datetime('now')`
+      ).bind(challengeId, challenge.email, challenge.target_email),
+      env.DB.prepare(
+        `UPDATE licenses SET registered_email = ?
+         WHERE id = ? AND lower(registered_email) = ?
+           AND EXISTS (
+             SELECT 1 FROM license_email_verifications
+             WHERE challenge_id = ? AND purpose = 'email_change'
+               AND email = ? AND target_email = ? AND current_email_verified_at IS NOT NULL
+               AND consumed_at IS NOT NULL
+           )`
+      ).bind(
+        challenge.target_email, challenge.license_id, challenge.email, challengeId,
+        challenge.email, challenge.target_email,
+      ),
+    ]);
+    if (Number(changeResults?.[0]?.meta?.changes || 0) !== 1 ||
+        Number(changeResults?.[1]?.meta?.changes || 0) !== 1) {
+      return json({ ok: false, error: "The license email could not be changed" }, 409, origin);
+    }
+    const changedLicense = await env.DB.prepare(
+      `SELECT l.id, l.status, om.organization_id
+       FROM licenses l
+       LEFT JOIN organization_members om ON om.account_type = 'customer'
+         AND om.account_id = l.customer_id AND om.status = 'active'
+       LEFT JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       WHERE l.id = ? AND (o.id IS NOT NULL OR om.id IS NULL)
+       ORDER BY om.id LIMIT 1`
+    ).bind(challenge.license_id).first();
+    const auditPrincipal = {
+      person_id: null,
+      organization_id: changedLicense?.organization_id || null,
+    };
+    await writeAudit(env, request, auditPrincipal, "LICENSE_REGISTERED_EMAIL_CHANGED",
+      "license", challenge.license_id, null, { source: "verified_self_service" });
+    if (changedLicense?.organization_id) {
+      await recordLicenseEvent(env, changedLicense, null, "LICENSE_EMAIL_CHANGED",
+        changedLicense.status, changedLicense.status, { source: "verified_self_service" });
+    }
+    return json({ ok: true, stage: "complete", registered_email: challenge.target_email }, 200, origin);
+  }
+
+  await env.DB.prepare(
+    `UPDATE license_email_verifications SET verified_at = datetime('now')
+     WHERE challenge_id = ? AND purpose = 'activation' AND consumed_at IS NULL`
+  ).bind(challengeId).run();
+  const { results } = await env.DB.prepare(
+    `SELECT l.id AS license_id, l.serial_number, l.seats,
+            (SELECT COUNT(*) FROM license_activations la
+             WHERE la.license_id = l.id AND la.status = 'active') AS activation_count
+     FROM licenses l
+     JOIN products p ON p.id = l.product_id AND p.slug = ?
+     JOIN license_entitlements e ON e.license_id = l.id
+       AND e.entitlement_key = 'company.binding' AND e.value_text = ?
+     WHERE lower(l.registered_email) = ? AND l.status = 'ACTIVE'
+     ORDER BY l.id DESC`
+  ).bind(challenge.product_code, challenge.company_binding, challenge.email).all();
+  return json({
+    ok: true,
+    stage: "complete",
+    licenses: results,
+  }, 200, origin);
+}
+
 export function isValidCustomerInviteToken(token) {
   return typeof token === "string" && /^[a-f0-9]{48}$/.test(token);
 }
@@ -243,6 +630,10 @@ async function getIdentitySession(request, env) {
 
 async function hasPermission(env, principal, permission) {
   if (!principal) return false;
+  if (principal.account_type === "customer" &&
+      ["partner_admin", "partner_member"].includes(principal.member_role)) {
+    return false;
+  }
   const row = await env.DB.prepare(
     `SELECT 1 FROM organization_members m
      JOIN roles r ON r.name = m.member_role
@@ -573,7 +964,7 @@ async function buildSignedLicenseArtifact(env, license, installationId, activati
     status: status || license.status,
     starts_at: license.starts_at,
     expires_at: license.expires_at,
-    offline_validity_days: Number(license.offline_validity_days || 7),
+    offline_validity_days: Number(license.offline_validity_days || 14),
     subscription_grace_days: Math.min(30, Math.max(0, Number(editionPolicy?.subscription_grace_days ?? 7))),
     rollout_stage: editionPolicy?.rollout_stage || "shadow",
     evaluation_policy: evaluationPolicy,
@@ -740,11 +1131,11 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   ).bind(institutionName, address, city, state, pincode, taxId, website, orgIdBinding, code.id));
   statements.push(env.DB.prepare(
     `INSERT INTO licenses
-     (customer_id, product_id, license_key, serial_number, seats, starts_at, expires_at, offline_validity_days, status)
-     SELECT ${customerIdExpression}, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'
+     (customer_id, product_id, license_key, serial_number, registered_email, seats, starts_at, expires_at, offline_validity_days, status)
+     SELECT ${customerIdExpression}, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'
      WHERE EXISTS (SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming')`
   ).bind(
-    customerIdBinding, code.product_id, generatedLicenseKey, code.serial_number, code.seats,
+    customerIdBinding, code.product_id, generatedLicenseKey, code.serial_number, customerEmail, code.seats,
     code.starts_at, code.expires_at, code.offline_validity_days, code.id,
   ));
   statements.push(env.DB.prepare(
@@ -835,10 +1226,17 @@ async function activateLicense(request, env, origin) {
   const companyBinding = body?.company_binding == null ? null : boundedString(body.company_binding, 128);
   const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
+  const emailChallengeId = boundedString(body?.email_challenge_id, 36);
+  const activationEmail = validEmail(body?.email);
+  const requestedLicenseId = numericId(body?.license_id);
   const usesActivationCode = Boolean(serialNumber || activationKey);
-  if ((!licenseKey && !usesActivationCode) || (usesActivationCode && (!serialNumber || !activationKey || licenseKey)) ||
+  const usesEmailVerification = Boolean(emailChallengeId || activationEmail || requestedLicenseId);
+  if ((!licenseKey && !usesActivationCode && !usesEmailVerification) ||
+      (usesActivationCode && (!serialNumber || !activationKey || licenseKey || usesEmailVerification)) ||
+      (usesEmailVerification && (!emailChallengeId || !activationEmail || !requestedLicenseId || licenseKey)) ||
+      (licenseKey && usesActivationCode) ||
       !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
-    return json({ ok: false, error: "Provide either a license key or a serial number and activation key, with product and installation identifiers" }, 400, origin);
+    return json({ ok: false, error: "Provide a license key, serial and activation key, or verified email activation details with product and installation identifiers" }, 400, origin);
   }
   if (usesActivationCode && !/^(?:\d{1,9}|SMR-LIC-(?:\d{8}|[A-F0-9]{20}))$/.test(serialNumber)) {
     return json({ ok: false, error: "The serial number format is invalid" }, 400, origin);
@@ -851,6 +1249,20 @@ async function activateLicense(request, env, origin) {
   }
   if (body?.company_binding != null && !companyBinding) {
     return json({ ok: false, error: "Company binding must be a non-empty string of at most 128 characters" }, 400, origin);
+  }
+
+  let emailChallenge = null;
+  if (usesEmailVerification) {
+    emailChallenge = await env.DB.prepare(
+      `SELECT challenge_id, email, product_code, company_binding, verified_at, consumed_at
+       FROM license_email_verifications
+       WHERE challenge_id = ? AND purpose = 'activation' AND expires_at > datetime('now')`
+    ).bind(emailChallengeId).first();
+    if (!emailChallenge || emailChallenge.email !== activationEmail ||
+        emailChallenge.product_code !== productCode || emailChallenge.company_binding !== companyBinding ||
+        !emailChallenge.verified_at || emailChallenge.consumed_at) {
+      return json({ ok: false, error: "Email verification is invalid or expired" }, 403, origin);
+    }
   }
 
   let license;
@@ -869,6 +1281,7 @@ async function activateLicense(request, env, origin) {
     license = await env.DB.prepare(
       `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
               l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
+              l.registered_email, c.email AS customer_email,
               p.slug AS product_code, p.billing_period,
               le.edition_id, pe.code AS edition_code, om.organization_id
        FROM licenses l
@@ -876,6 +1289,7 @@ async function activateLicense(request, env, origin) {
        JOIN organization_members om ON om.account_type = 'customer'
          AND om.account_id = l.customer_id AND om.status = 'active'
        JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       LEFT JOIN customers c ON c.id = l.customer_id
        LEFT JOIN license_editions le ON le.license_id = l.id
        LEFT JOIN product_editions pe ON pe.id = le.edition_id
        WHERE l.id = ? AND p.slug = ?
@@ -885,6 +1299,7 @@ async function activateLicense(request, env, origin) {
     license = await env.DB.prepare(
       `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
               l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
+              l.registered_email, c.email AS customer_email,
               p.slug AS product_code, p.billing_period,
             le.edition_id, pe.code AS edition_code, om.organization_id
        FROM licenses l
@@ -892,15 +1307,42 @@ async function activateLicense(request, env, origin) {
        JOIN organization_members om ON om.account_type = 'customer'
          AND om.account_id = l.customer_id AND om.status = 'active'
        JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       LEFT JOIN customers c ON c.id = l.customer_id
        LEFT JOIN license_editions le ON le.license_id = l.id
        LEFT JOIN product_editions pe ON pe.id = le.edition_id
        WHERE l.license_key = ? AND p.slug = ?
        ORDER BY om.id LIMIT 1`
     ).bind(licenseKey, productCode).first();
   }
+  if (usesEmailVerification) {
+    license = await env.DB.prepare(
+      `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
+              l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
+              l.registered_email, c.email AS customer_email,
+              p.slug AS product_code, p.billing_period, le.edition_id, pe.code AS edition_code,
+              om.organization_id
+       FROM licenses l
+       JOIN products p ON p.id = l.product_id
+       JOIN organization_members om ON om.account_type = 'customer'
+         AND om.account_id = l.customer_id AND om.status = 'active'
+       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       LEFT JOIN customers c ON c.id = l.customer_id
+       LEFT JOIN license_editions le ON le.license_id = l.id
+       LEFT JOIN product_editions pe ON pe.id = le.edition_id
+       WHERE l.id = ? AND p.slug = ? AND l.status = 'ACTIVE'
+         AND lower(l.registered_email) = lower(?)
+       ORDER BY om.id LIMIT 1`
+    ).bind(requestedLicenseId, productCode, activationEmail).first();
+  }
   if (!license) return json({ ok: false, error: "License not found for this product" }, 404, origin);
   if (license.status === "DRAFT") {
     return json({ ok: false, error: "Draft licenses cannot be activated" }, 409, origin);
+  }
+  license.registered_email = license.registered_email || license.customer_email || null;
+  if (license.registered_email) {
+    await env.DB.prepare(
+      "UPDATE licenses SET registered_email = ? WHERE id = ? AND registered_email IS NULL"
+    ).bind(license.registered_email, license.id).run();
   }
 
   const existing = await env.DB.prepare(
@@ -940,18 +1382,38 @@ async function activateLicense(request, env, origin) {
   if (signed.error) return json({ ok: false, error: signed.error }, signed.status, origin);
 
   const metadata = JSON.stringify({ source: "signed_license_activation", company_binding: companyBinding });
-  const artifactResult = await env.DB.batch([
+  const activationStatements = [];
+  if (emailChallenge) {
+    activationStatements.push(env.DB.prepare(
+      `UPDATE license_email_verifications
+       SET consumed_at = datetime('now'), installation_id = ?, activation_identifier = ?
+       WHERE challenge_id = ? AND purpose = 'activation' AND email = ?
+         AND product_code = ? AND company_binding = ?
+         AND verified_at IS NOT NULL AND consumed_at IS NULL
+         AND expires_at > datetime('now')`
+    ).bind(installationId, activationIdentifier, emailChallengeId, activationEmail, productCode, companyBinding));
+  }
+  activationStatements.push(
     env.DB.prepare(
       `INSERT OR IGNORE INTO license_activations
        (license_id, installation_id, activation_identifier, refresh_public_key, metadata_json)
        SELECT ?, ?, ?, ?, ?
-       WHERE EXISTS (
+       WHERE (? IS NULL OR EXISTS (
+         SELECT 1 FROM license_email_verifications
+         WHERE challenge_id = ? AND purpose = 'activation' AND consumed_at IS NOT NULL
+           AND installation_id = ? AND activation_identifier = ?
+       ))
+       AND (EXISTS (
          SELECT 1 FROM license_activations
          WHERE license_id = ? AND activation_identifier = ? AND installation_id = ? AND status = 'active'
        ) OR (
          SELECT COUNT(*) FROM license_activations WHERE license_id = ? AND status = 'active'
-       ) < ?`
-    ).bind(license.id, installationId, activationIdentifier, refreshPublicKey, metadata, license.id, activationIdentifier, installationId, license.id, Number(license.seats || 1)),
+       ) < ?)`
+    ).bind(
+      license.id, installationId, activationIdentifier, refreshPublicKey, metadata,
+      emailChallenge ? emailChallengeId : null, emailChallengeId, installationId, activationIdentifier,
+      license.id, activationIdentifier, installationId, license.id, Number(license.seats || 1),
+    ),
     env.DB.prepare(
       `UPDATE license_activations SET last_seen_at = datetime('now'), refresh_public_key = ?
        WHERE license_id = ? AND activation_identifier = ? AND installation_id = ? AND status = 'active'`
@@ -965,8 +1427,11 @@ async function activateLicense(request, env, origin) {
          WHERE license_id = ? AND activation_identifier = ? AND installation_id = ? AND status = 'active'
        )`
     ).bind(signed.document_id, license.id, installationId, activationIdentifier, signed.key_id, signed.payload, signed.signature, signed.issued_at, license.id, activationIdentifier, installationId),
-  ]);
-  if (Number(artifactResult?.[2]?.meta?.changes || 0) !== 1) {
+  );
+  const artifactResult = await env.DB.batch(activationStatements);
+  const artifactInsertIndex = emailChallenge ? 3 : 2;
+  if ((emailChallenge && Number(artifactResult?.[0]?.meta?.changes || 0) !== 1) ||
+      Number(artifactResult?.[artifactInsertIndex]?.meta?.changes || 0) !== 1) {
     return json({ ok: false, error: "The license activation limit was reached during registration" }, 409, origin);
   }
 
@@ -981,6 +1446,7 @@ async function activateLicense(request, env, origin) {
 
   return json({
     ok: true,
+    registered_email: license.registered_email,
     artifact: {
       document_id: signed.document_id,
       algorithm: "Ed25519",
@@ -1114,6 +1580,165 @@ async function refreshLicense(request, env, origin) {
       payload: signed.payload,
       signature: signed.signature,
     },
+  }, 200, origin);
+}
+
+async function manageLicenseActivation(request, env, origin) {
+  const rateLimit = await requireRateLimit(env, request, "license-management", 10, 60);
+  if (rateLimit) return rateLimit;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A JSON license management request is required" }, 400, origin);
+  }
+  const action = body?.action;
+  const productCode = boundedString(body?.product_code, 100);
+  const installationId = boundedString(body?.installation_id, 36);
+  const activationIdentifier = boundedString(body?.activation_identifier, 36);
+  const companyBinding = boundedString(body?.company_binding, 128);
+  const timestamp = Number(body?.timestamp);
+  const nonce = boundedString(body?.nonce, 36);
+  const signature = decodeBase64Url(body?.signature);
+  if (
+    action !== "deactivate" ||
+    !productCode ||
+    !UUID_PATTERN.test(installationId || "") ||
+    !UUID_PATTERN.test(activationIdentifier || "") ||
+    !companyBinding ||
+    !Number.isSafeInteger(timestamp) ||
+    Math.abs(Date.now() - timestamp) > 5 * 60 * 1000 ||
+    !UUID_PATTERN.test(nonce || "") ||
+    !signature ||
+    signature.length !== 64
+  ) {
+    return json({ ok: false, error: "The signed license management request is invalid or expired" }, 400, origin);
+  }
+  const license = await env.DB.prepare(
+    `SELECT l.id, l.status, l.last_self_service_transfer_at,
+            p.slug AS product_code, om.organization_id,
+            la.status AS activation_status, la.refresh_public_key
+     FROM licenses l
+     JOIN products p ON p.id = l.product_id
+     JOIN organization_members om ON om.account_type = 'customer'
+       AND om.account_id = l.customer_id AND om.status = 'active'
+     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+     JOIN license_activations la ON la.license_id = l.id
+       AND la.installation_id = ? AND la.activation_identifier = ?
+     JOIN license_entitlements e ON e.license_id = l.id
+       AND e.entitlement_key = 'company.binding' AND e.value_text = ?
+     WHERE p.slug = ?
+     ORDER BY om.id LIMIT 1`
+  ).bind(installationId, activationIdentifier, companyBinding, productCode).first();
+  if (!license || license.product_code !== productCode) {
+    return json({ ok: false, error: "License activation not found" }, 404, origin);
+  }
+  if (license.status !== "ACTIVE" || license.activation_status !== "active") {
+    return json({ ok: false, error: "This license activation is not active" }, 409, origin);
+  }
+  const publicKeyBytes = decodeBase64Url(license.refresh_public_key);
+  if (!publicKeyBytes || publicKeyBytes.length !== 32) {
+    return json({ ok: false, error: "Installation management credentials are not registered" }, 409, origin);
+  }
+  const message = new TextEncoder().encode([
+    "license-management-v1", action, productCode, companyBinding,
+    installationId, activationIdentifier, timestamp, nonce,
+  ].join("\n"));
+  try {
+    const publicKey = await crypto.subtle.importKey("raw", publicKeyBytes, { name: "Ed25519" }, false, ["verify"]);
+    if (!(await crypto.subtle.verify({ name: "Ed25519" }, publicKey, signature, message))) {
+      return json({ ok: false, error: "Installation management signature is invalid" }, 403, origin);
+    }
+  } catch (error) {
+    console.error("Installation management signature verification failed", error);
+    return json({ ok: false, error: "Installation management signature could not be verified" }, 403, origin);
+  }
+
+  const cooldown = await env.DB.prepare(
+    `SELECT datetime(last_self_service_transfer_at, '+30 days') AS transfer_available_at
+     FROM licenses
+     WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
+       AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
+  ).bind(license.id).first();
+  if (cooldown) {
+    return json({
+      ok: false,
+      error: "Self-service device transfer is temporarily unavailable. Contact the license administrator for assistance.",
+      transfer_available_at: cooldown.transfer_available_at,
+    }, 429, origin);
+  }
+
+  await env.DB.prepare(
+    "DELETE FROM license_refresh_nonces WHERE created_at < datetime('now', '-10 minutes')"
+  ).run();
+  const nonceResult = await env.DB.prepare(
+    `INSERT OR IGNORE INTO license_refresh_nonces (license_id, activation_identifier, nonce)
+     VALUES (?, ?, ?)`
+  ).bind(license.id, activationIdentifier, nonce).run();
+  if (Number(nonceResult?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "License management request has already been used" }, 409, origin);
+  }
+  const deactivationResults = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE licenses SET last_self_service_transfer_at = datetime('now'),
+                           last_self_service_transfer_id = ?
+       WHERE id = ?
+         AND (last_self_service_transfer_at IS NULL
+              OR julianday(last_self_service_transfer_at) <= julianday('now', '-30 days'))
+         AND EXISTS (
+           SELECT 1 FROM license_activations
+           WHERE license_id = ? AND installation_id = ?
+             AND activation_identifier = ? AND status = 'active'
+         )`
+    ).bind(nonce, license.id, license.id, installationId, activationIdentifier),
+    env.DB.prepare(
+      `UPDATE license_activations SET status = 'revoked', deactivated_at = datetime('now')
+       WHERE license_id = ? AND installation_id = ? AND activation_identifier = ? AND status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM licenses
+           WHERE id = ? AND last_self_service_transfer_id = ?
+         )`
+    ).bind(license.id, installationId, activationIdentifier, license.id, nonce),
+  ]);
+  if (Number(deactivationResults?.[0]?.meta?.changes || 0) !== 1 ||
+      Number(deactivationResults?.[1]?.meta?.changes || 0) !== 1) {
+    const activeCooldown = await env.DB.prepare(
+      `SELECT datetime(last_self_service_transfer_at, '+30 days') AS transfer_available_at
+       FROM licenses
+       WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
+         AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
+    ).bind(license.id).first();
+    if (activeCooldown) {
+      return json({
+        ok: false,
+        error: "Self-service device transfer is temporarily unavailable. Contact the license administrator for assistance.",
+        transfer_available_at: activeCooldown.transfer_available_at,
+      }, 429, origin);
+    }
+    return json({ ok: false, error: "License activation could not be deactivated" }, 409, origin);
+  }
+  const transferPolicy = await env.DB.prepare(
+    "SELECT datetime(last_self_service_transfer_at, '+30 days') AS transfer_available_at FROM licenses WHERE id = ?"
+  ).bind(license.id).first();
+  await recordLicenseEvent(env, { id: license.id, organization_id: license.organization_id }, null,
+    "ACTIVATION_REVOKED", license.status, license.status,
+    {
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      source: "customer_self_deactivation",
+      transfer_available_at: transferPolicy?.transfer_available_at || null,
+    });
+  await writeAudit(env, request, { person_id: null, organization_id: license.organization_id },
+    "LICENSE_ACTIVATION_DEACTIVATED", "license", license.id, null,
+    {
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      transfer_available_at: transferPolicy?.transfer_available_at || null,
+    });
+  return json({
+    ok: true,
+    deactivated: true,
+    transfer_available_at: transferPolicy?.transfer_available_at || null,
   }, 200, origin);
 }
 
@@ -1445,8 +2070,8 @@ async function createLicense(request, env) {
     ] : [];
     statements.push(
       env.DB.prepare(
-        `INSERT INTO licenses (customer_id, product_id, license_key, seats, starts_at, expires_at, status)
-         VALUES (${customerIdExpression}, ?, ?, 1, ?, ?, ?)`
+        `INSERT INTO licenses          (customer_id, product_id, license_key, seats, starts_at, expires_at, offline_validity_days, status)
+         VALUES (${customerIdExpression}, ?, ?, 1, ?, ?, 14, ?)`
       ).bind(...(provisionCustomer
         ? [customerEmail, productId, licenseKey, startsAt, expiresAt, status]
         : [customer.account_id, productId, licenseKey, startsAt, expiresAt, status])),
@@ -1570,6 +2195,15 @@ async function handleLicenseCodeBatches(request, env) {
      WHERE p.id = ? AND e.id = ? AND p.status = 'active' AND e.status = 'active'`
   ).bind(productId, editionId).first();
   if (!product) return json({ ok: false, error: "Product and edition do not match or are inactive" }, 400);
+  const encryption = await loadLicenseCodeEncryptionKey(env);
+  if (!encryption.key) {
+    return json({
+      ok: false,
+      error: encryption.configured
+        ? "Protected activation-key storage is invalid"
+        : "Protected activation-key storage is not configured",
+    }, 503);
+  }
 
   const batchId = crypto.randomUUID();
   const batchEntitlements = "[]";
@@ -1592,15 +2226,18 @@ async function handleLicenseCodeBatches(request, env) {
     while (usedActivationKeys.has(activationKey)) activationKey = makeLicenseActivationKey();
     usedActivationKeys.add(activationKey);
     const activationKeyHash = await sha256Hex(activationKey);
+    const activationKeyCiphertext = await encryptLicenseActivationKey(
+      activationKey, encryption.key, batchId, serialNumber,
+    );
     codes.push({ serial_number: serialNumber, activation_key: activationKey });
     statements.push(env.DB.prepare(
       `INSERT INTO license_code_inventory
-       (batch_id, serial_number, activation_key_hash, product_id, edition_id,
+       (batch_id, serial_number, activation_key_hash, activation_key_ciphertext, product_id, edition_id,
         starts_at, expires_at, license_model, seats, entitlements_json,
         offline_validity_days, created_by_person_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 90, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 14, ?)`
     ).bind(
-      batchId, serialNumber, activationKeyHash, productId, editionId,
+      batchId, serialNumber, activationKeyHash, activationKeyCiphertext, productId, editionId,
       startsAt, expiresAt, licenseModelName, seats, batchEntitlements, principal.person_id,
     ));
   }
@@ -1616,7 +2253,7 @@ async function handleLicenseCodeBatches(request, env) {
   ));
 
   await env.DB.batch(statements);
-  return json({ ok: true, batch_id: batchId, count, codes, offline_validity_days: 90 }, 201);
+  return json({ ok: true, batch_id: batchId, count, codes, offline_validity_days: 14 }, 201);
 }
 
 async function getLicenseCodeBatchCodes(request, env, batchId) {
@@ -1634,12 +2271,220 @@ async function getLicenseCodeBatchCodes(request, env, batchId) {
   const { results } = await env.DB.prepare(
     `SELECT serial_number, status, delivery_status, issued_to_name,
             issued_to_organization, issued_to_email, delivery_channel,
-            delivery_reference, issued_at
+            delivery_reference, issued_at, activation_key_ciphertext
      FROM license_code_inventory
      WHERE batch_id = ?
      ORDER BY serial_number LIMIT 500`
   ).bind(batchId).all();
-  return json({ ok: true, batch_id: batchId, codes: results || [] });
+  const encryption = await loadLicenseCodeEncryptionKey(env);
+  return json({
+    ok: true,
+    batch_id: batchId,
+    key_reveal_configured: Boolean(encryption.key),
+    codes: (results || []).map((code) => ({
+      serial_number: code.serial_number,
+      status: code.status,
+      delivery_status: code.delivery_status,
+      issued_to_name: code.issued_to_name,
+      issued_to_organization: code.issued_to_organization,
+      issued_to_email: code.issued_to_email,
+      delivery_channel: code.delivery_channel,
+      delivery_reference: code.delivery_reference,
+      issued_at: code.issued_at,
+      activation_key_recoverable: Boolean(code.activation_key_ciphertext && encryption.key),
+    })),
+  });
+}
+
+async function revealLicenseCode(request, env, batchId, serialNumber) {
+  const noStoreHeaders = { "Cache-Control": "no-store", Pragma: "no-cache" };
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403, null, noStoreHeaders);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(batchId) ||
+      !/^\d{9}$/.test(serialNumber)) {
+    return json({ ok: false, error: "A valid batch and serial number are required" }, 400, null, noStoreHeaders);
+  }
+
+  const rateLimit = await enforceRateLimit(
+    env, request, "license-code-reveal", 5, 900, String(principal.account_id), true,
+  );
+  if (rateLimit.unavailable) {
+    return json({ ok: false, error: "Protected key reveal is temporarily unavailable" }, 503, null, noStoreHeaders);
+  }
+  if (!rateLimit.allowed) {
+    return json(
+      { ok: false, error: "Too many requests. Please try again later." },
+      429,
+      null,
+      { ...noStoreHeaders, "Retry-After": String(rateLimit.retryAfter) },
+    );
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A password confirmation is required" }, 400, null, noStoreHeaders);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      typeof body.password !== "string" || body.password.length < 1 || body.password.length > 256) {
+    return json({ ok: false, error: "A valid password confirmation is required" }, 400, null, noStoreHeaders);
+  }
+
+  const user = await env.DB.prepare(
+    "SELECT password_hash FROM users WHERE id = ? AND status = 'active'"
+  ).bind(principal.account_id).first();
+  if (!user || !(await verifyPassword(body.password, user.password_hash))) {
+    return json({ ok: false, error: "Password confirmation failed" }, 403, null, noStoreHeaders);
+  }
+
+  const code = await env.DB.prepare(
+    `SELECT activation_key_ciphertext, activation_key_hash, status
+     FROM license_code_inventory WHERE batch_id = ? AND serial_number = ?`
+  ).bind(batchId, serialNumber).first();
+  if (!code) return json({ ok: false, error: "License code not found" }, 404, null, noStoreHeaders);
+  if (code.status !== "available") {
+    return json({ ok: false, error: "Only unclaimed, available codes can be revealed" }, 409, null, noStoreHeaders);
+  }
+  if (!code.activation_key_ciphertext) {
+    return json({ ok: false, error: "This older code has no recoverable key" }, 409, null, noStoreHeaders);
+  }
+
+  const encryption = await loadLicenseCodeEncryptionKey(env);
+  if (!encryption.key) {
+    return json({ ok: false, error: "Protected activation-key storage is unavailable" }, 503, null, noStoreHeaders);
+  }
+
+  let activationKey;
+  try {
+    activationKey = await decryptLicenseActivationKey(
+      code.activation_key_ciphertext, encryption.key, batchId, serialNumber,
+    );
+  } catch {
+    console.error("Activation key reveal decryption failed", { batchId, serialNumber });
+    return json({ ok: false, error: "The activation key could not be decrypted" }, 503, null, noStoreHeaders);
+  }
+  if (!/^[A-Z0-9]{16}$/.test(activationKey)) {
+    console.error("Activation key reveal returned an invalid key format", { batchId, serialNumber });
+    return json({ ok: false, error: "The activation key could not be decrypted" }, 503, null, noStoreHeaders);
+  }
+  if (!constantTimeStringEqual(await sha256Hex(activationKey), code.activation_key_hash)) {
+    console.error("Activation key reveal hash verification failed", { batchId, serialNumber });
+    return json({ ok: false, error: "The activation key could not be verified" }, 503, null, noStoreHeaders);
+  }
+
+  await writeAudit(
+    env, request, principal, "LICENSE_CODE_REVEALED",
+    "license_code_inventory", serialNumber, null, { batch_id: batchId },
+  );
+  return json({ ok: true, activation_key: activationKey }, 200, null, noStoreHeaders);
+}
+
+async function restoreLegacyLicenseCode(request, env, batchId, serialNumber) {
+  const noStoreHeaders = { "Cache-Control": "no-store", Pragma: "no-cache" };
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403, null, noStoreHeaders);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(batchId) ||
+      !/^\d{9}$/.test(serialNumber)) {
+    return json({ ok: false, error: "A valid batch and serial number are required" }, 400, null, noStoreHeaders);
+  }
+
+  const rateLimit = await enforceRateLimit(
+    env, request, "license-code-restore", 5, 900, String(principal.account_id), true,
+  );
+  if (rateLimit.unavailable) {
+    return json({ ok: false, error: "Protected key recovery is temporarily unavailable" }, 503, null, noStoreHeaders);
+  }
+  if (!rateLimit.allowed) {
+    return json(
+      { ok: false, error: "Too many requests. Please try again later." },
+      429,
+      null,
+      { ...noStoreHeaders, "Retry-After": String(rateLimit.retryAfter) },
+    );
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A key and password confirmation are required" }, 400, null, noStoreHeaders);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      typeof body.password !== "string" || body.password.length < 1 || body.password.length > 256 ||
+      typeof body.activation_key !== "string" || !/^[A-Z0-9]{16}$/.test(body.activation_key)) {
+    return json({ ok: false, error: "A valid activation key and password confirmation are required" }, 400, null, noStoreHeaders);
+  }
+
+  const user = await env.DB.prepare(
+    "SELECT password_hash FROM users WHERE id = ? AND status = 'active'"
+  ).bind(principal.account_id).first();
+  if (!user || !(await verifyPassword(body.password, user.password_hash))) {
+    return json({ ok: false, error: "Password confirmation failed" }, 403, null, noStoreHeaders);
+  }
+
+  const code = await env.DB.prepare(
+    `SELECT activation_key_ciphertext, activation_key_hash, status
+     FROM license_code_inventory WHERE batch_id = ? AND serial_number = ?`
+  ).bind(batchId, serialNumber).first();
+  if (!code) return json({ ok: false, error: "License code not found" }, 404, null, noStoreHeaders);
+  if (code.status !== "available") {
+    return json({ ok: false, error: "Only unclaimed, available codes can be restored" }, 409, null, noStoreHeaders);
+  }
+  if (code.activation_key_ciphertext) {
+    return json({ ok: false, error: "This code already has protected key storage" }, 409, null, noStoreHeaders);
+  }
+
+  const encryption = await loadLicenseCodeEncryptionKey(env);
+  if (!encryption.key) {
+    return json({ ok: false, error: "Protected activation-key storage is unavailable" }, 503, null, noStoreHeaders);
+  }
+  if (!constantTimeStringEqual(await sha256Hex(body.activation_key), code.activation_key_hash)) {
+    return json({ ok: false, error: "The activation key does not match this serial number" }, 400, null, noStoreHeaders);
+  }
+
+  let ciphertext;
+  try {
+    ciphertext = await encryptLicenseActivationKey(body.activation_key, encryption.key, batchId, serialNumber);
+  } catch {
+    console.error("Activation key recovery encryption failed", { batchId, serialNumber });
+    return json({ ok: false, error: "The activation key could not be stored securely" }, 503, null, noStoreHeaders);
+  }
+
+  const newValue = JSON.stringify({ batch_id: batchId });
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE license_code_inventory
+       SET activation_key_ciphertext = ?
+       WHERE batch_id = ? AND serial_number = ? AND status = 'available'
+         AND activation_key_ciphertext IS NULL AND activation_key_hash = ?`
+    ).bind(ciphertext, batchId, serialNumber, code.activation_key_hash),
+    env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       SELECT ?, ?, 'LICENSE_CODE_KEY_RESTORED', 'license_code_inventory', ?, NULL, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM license_code_inventory
+         WHERE batch_id = ? AND serial_number = ? AND status = 'available'
+           AND activation_key_ciphertext = ? AND activation_key_hash = ?
+       )`
+    ).bind(
+      principal.person_id || null,
+      principal.organization_id || null,
+      serialNumber,
+      newValue,
+      request.headers.get("CF-Connecting-IP") || null,
+      batchId,
+      serialNumber,
+      ciphertext,
+      code.activation_key_hash,
+    ),
+  ]);
+  if (results[0]?.meta?.changes !== 1 || results[1]?.meta?.changes !== 1) {
+    return json({ ok: false, error: "The code changed before its key could be restored" }, 409, null, noStoreHeaders);
+  }
+
+  return json({ ok: true }, 200, null, noStoreHeaders);
 }
 
 async function issueLicenseCodes(request, env, batchId) {
@@ -2007,6 +2852,14 @@ async function patchLicense(request, env, licenseId) {
 async function handleLicenses(request, env, segments) {
   if (segments[0] === "batches") {
     if (segments.length === 1) return await handleLicenseCodeBatches(request, env);
+    if (segments.length === 5 && segments[2] === "codes" &&
+        segments[4] === "reveal" && request.method === "POST") {
+      return await revealLicenseCode(request, env, segments[1], segments[3]);
+    }
+    if (segments.length === 5 && segments[2] === "codes" &&
+        segments[4] === "restore" && request.method === "POST") {
+      return await restoreLegacyLicenseCode(request, env, segments[1], segments[3]);
+    }
     if (segments.length === 3 && segments[2] === "codes" && request.method === "GET") {
       return await getLicenseCodeBatchCodes(request, env, segments[1]);
     }
@@ -2099,9 +2952,252 @@ async function handleAdminUsers(request, env) {
   return json({ ok: true, message: "User updated" });
 }
 
+function maskRegistrationEmail(email) {
+  if (typeof email !== "string") return null;
+  const at = email.lastIndexOf("@");
+  if (at < 1 || at === email.length - 1) return null;
+  const local = email.slice(0, at);
+  const visible = local.length > 2 ? `${local[0]}***${local.slice(-1)}` : `${local[0]}***`;
+  return `${visible}${email.slice(at)}`;
+}
+
+function isValidDateOnly(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+async function listAdminLicenseRegistrations(request, env) {
+  const url = new URL(request.url);
+  const readFilter = (name, maxLength) => {
+    const raw = url.searchParams.get(name);
+    if (raw === null) return "";
+    const value = raw.trim();
+    return value.length <= maxLength ? value : null;
+  };
+  const search = readFilter("q", 100);
+  const licenseStatusValue = readFilter("status", 32);
+  const licenseStatus = licenseStatusValue === null ? null : licenseStatusValue.toUpperCase();
+  const activationStatus = readFilter("activation", 24);
+  const emailStatus = readFilter("email", 16);
+  const createdAfter = readFilter("from", 10);
+  const createdBefore = readFilter("to", 10);
+  const requestedPage = Number(url.searchParams.get("page") || 1);
+  const pageSize = Number(url.searchParams.get("page_size") || 25);
+  const validStatuses = LICENSE_STATUSES;
+  if ([search, licenseStatus, activationStatus, emailStatus, createdAfter, createdBefore].some((value) => value === null) ||
+      (licenseStatus && !validStatuses.includes(licenseStatus)) ||
+      !["", "active", "never_activated", "released"].includes(activationStatus) ||
+      !["", "registered", "missing"].includes(emailStatus) ||
+      (createdAfter && !isValidDateOnly(createdAfter)) ||
+      (createdBefore && !isValidDateOnly(createdBefore)) ||
+      (createdAfter && createdBefore && createdAfter > createdBefore) ||
+      !Number.isInteger(requestedPage) || requestedPage < 1 ||
+      ![25, 50, 100].includes(pageSize)) {
+    return json({ ok: false, error: "Registration filters are invalid" }, 400);
+  }
+
+  const registrationsCte = `
+    WITH registration_rows AS (
+      SELECT l.id AS license_id, l.serial_number, upper(l.status) AS license_status,
+             l.starts_at AS start_date, l.expires_at AS expiry_date,
+             l.registered_email, c.email AS account_email, c.name AS contact_name,
+             COALESCE(NULLIF(o.legal_name, ''), o.name) AS organization_name,
+             o.legal_name AS organization_legal_name,
+             p.slug AS product_code, p.name AS product_name,
+             pe.code AS edition_code, pe.name AS edition_name,
+             COALESCE(
+               (SELECT MIN(ev.created_at) FROM license_events ev
+                WHERE ev.license_id = l.id AND ev.event_type = 'LICENSE_CREATED'),
+               c.created_at
+             ) AS license_created_at,
+             (SELECT MIN(la.activated_at) FROM license_activations la WHERE la.license_id = l.id) AS first_activation_at,
+             (SELECT MAX(la.last_seen_at) FROM license_activations la WHERE la.license_id = l.id) AS last_seen_at,
+             (SELECT COUNT(*) FROM license_activations la WHERE la.license_id = l.id) AS total_activation_count,
+             (SELECT COUNT(*) FROM license_activations la
+              WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count
+      FROM licenses l
+      JOIN customers c ON c.id = l.customer_id
+      JOIN products p ON p.id = l.product_id
+      JOIN organizations o ON o.id = (
+        SELECT om.organization_id
+        FROM organization_members om
+        JOIN organizations candidate ON candidate.id = om.organization_id AND candidate.status = 'active'
+        WHERE om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
+        ORDER BY om.id LIMIT 1
+      )
+      LEFT JOIN license_editions le ON le.license_id = l.id
+      LEFT JOIN product_editions pe ON pe.id = le.edition_id
+    )
+  `;
+  const conditions = ["1 = 1"];
+  const bindings = [];
+  if (search) {
+    conditions.push(`(
+      instr(lower(coalesce(organization_name, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(organization_legal_name, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(contact_name, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(account_email, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(registered_email, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(serial_number, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(product_name, '')), lower(?)) > 0 OR
+      instr(lower(coalesce(product_code, '')), lower(?)) > 0
+    )`);
+    bindings.push(search, search, search, search, search, search, search, search);
+  }
+  if (licenseStatus) {
+    conditions.push("license_status = ?");
+    bindings.push(licenseStatus);
+  }
+  if (activationStatus === "active") conditions.push("active_activation_count > 0");
+  if (activationStatus === "never_activated") conditions.push("total_activation_count = 0");
+  if (activationStatus === "released") {
+    conditions.push("total_activation_count > 0 AND active_activation_count = 0");
+  }
+  if (emailStatus === "registered") conditions.push("NULLIF(trim(registered_email), '') IS NOT NULL");
+  if (emailStatus === "missing") conditions.push("NULLIF(trim(registered_email), '') IS NULL");
+  if (createdAfter) {
+    conditions.push("date(license_created_at) >= date(?)");
+    bindings.push(createdAfter);
+  }
+  if (createdBefore) {
+    conditions.push("date(license_created_at) <= date(?)");
+    bindings.push(createdBefore);
+  }
+  const whereSql = `WHERE ${conditions.join(" AND ")}`;
+  const [total, page, metrics] = await Promise.all([
+    env.DB.prepare(`${registrationsCte} SELECT COUNT(*) AS count FROM registration_rows ${whereSql}`)
+      .bind(...bindings).first(),
+    env.DB.prepare(
+      `${registrationsCte} SELECT * FROM registration_rows ${whereSql}
+       ORDER BY license_created_at DESC, license_id DESC LIMIT ? OFFSET ?`
+    ).bind(...bindings, pageSize, (requestedPage - 1) * pageSize).all(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS total_licenses,
+              (SELECT COUNT(*) FROM license_activations WHERE status = 'active') AS active_installations,
+              SUM(CASE WHEN NOT EXISTS (
+                SELECT 1 FROM license_activations la WHERE la.license_id = l.id
+              ) THEN 1 ELSE 0 END) AS never_activated,
+              SUM(CASE WHEN NULLIF(trim(l.registered_email), '') IS NULL AND EXISTS (
+                SELECT 1 FROM license_activations la
+                WHERE la.license_id = l.id AND la.status = 'active'
+              ) THEN 1 ELSE 0 END) AS missing_registered_email
+       FROM licenses l`
+    ).first(),
+  ]);
+  return json({
+    ok: true,
+    registrations: (page.results || []).map((record) => ({
+      license_id: Number(record.license_id),
+      serial_number: record.serial_number,
+      license_status: record.license_status,
+      start_date: record.start_date,
+      expiry_date: record.expiry_date,
+      product: { code: record.product_code, name: record.product_name },
+      edition: record.edition_code ? { code: record.edition_code, name: record.edition_name } : null,
+      organization_name: record.organization_name,
+      contact_email_masked: maskRegistrationEmail(record.account_email),
+      registered_email_masked: maskRegistrationEmail(record.registered_email),
+      license_created_at: record.license_created_at || null,
+      first_activation_at: record.first_activation_at || null,
+      last_seen_at: record.last_seen_at || null,
+      total_activation_count: Number(record.total_activation_count || 0),
+      active_activation_count: Number(record.active_activation_count || 0),
+    })),
+    total: Number(total?.count || 0),
+    page: requestedPage,
+    page_size: pageSize,
+    metrics: {
+      total_licenses: Number(metrics?.total_licenses || 0),
+      active_installations: Number(metrics?.active_installations || 0),
+      never_activated: Number(metrics?.never_activated || 0),
+      missing_registered_email: Number(metrics?.missing_registered_email || 0),
+    },
+  });
+}
+
+async function getAdminLicenseRegistration(request, env, session, licenseId) {
+  const id = numericId(licenseId);
+  if (!id) return json({ ok: false, error: "A valid license id is required" }, 400);
+  const registration = await env.DB.prepare(
+    `SELECT l.id AS license_id, l.serial_number, upper(l.status) AS license_status,
+            l.starts_at AS start_date, l.expires_at AS expiry_date, l.registered_email,
+            c.email AS account_email, c.name AS contact_name, c.phone AS contact_phone,
+            c.company AS customer_company, c.status AS customer_status, c.created_at AS customer_created_at,
+            COALESCE(NULLIF(o.legal_name, ''), o.name) AS organization_name,
+            o.legal_name AS organization_legal_name,
+            o.city AS organization_city, o.state AS organization_state,
+            COALESCE(
+              (SELECT MIN(ev.created_at) FROM license_events ev
+               WHERE ev.license_id = l.id AND ev.event_type = 'LICENSE_CREATED'),
+              c.created_at
+            ) AS license_created_at,
+            (SELECT MIN(la.activated_at) FROM license_activations la WHERE la.license_id = l.id) AS first_activation_at,
+            (SELECT MAX(la.last_seen_at) FROM license_activations la WHERE la.license_id = l.id) AS last_seen_at,
+            (SELECT COUNT(*) FROM license_activations la WHERE la.license_id = l.id) AS total_activation_count,
+            (SELECT COUNT(*) FROM license_activations la
+             WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count
+     FROM licenses l
+     JOIN customers c ON c.id = l.customer_id
+     LEFT JOIN organizations o ON o.id = (
+       SELECT om.organization_id
+       FROM organization_members om
+       JOIN organizations candidate ON candidate.id = om.organization_id AND candidate.status = 'active'
+       WHERE om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
+       ORDER BY om.id LIMIT 1
+     )
+     WHERE l.id = ?`
+  ).bind(id).first();
+  if (!registration) return json({ ok: false, error: "License registration not found" }, 404);
+
+  await writeAudit(env, request, session, "ADMIN_LICENSE_REGISTRATION_VIEWED", "license", id, null, {
+    view: "registration_details",
+  });
+  return json({
+    ok: true,
+    registration: {
+      ...registration,
+      registered_email: registration.registered_email || null,
+      license_created_at: registration.license_created_at || null,
+      first_activation_at: registration.first_activation_at || null,
+      last_seen_at: registration.last_seen_at || null,
+      total_activation_count: Number(registration.total_activation_count || 0),
+      active_activation_count: Number(registration.active_activation_count || 0),
+    },
+  });
+}
+
 async function handleAdminControl(request, env, resource) {
   const session = await requireSuperAdmin(request, env);
   if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (resource === "d1-operations") {
+    const snapshots = await env.DB.prepare(
+      `SELECT database_name, sampled_at, size_bytes
+       FROM d1_storage_snapshots
+       WHERE database_name = 'smritisys-db'
+       ORDER BY sampled_at DESC LIMIT 60`
+    ).all();
+    return json({
+      ok: true,
+      databases: ["smritisys-db"],
+      backup_status: "disabled",
+      limits: {
+        free_per_database_bytes: 500000000,
+        paid_per_database_bytes: 10000000000,
+        free_account_bytes: 5000000000,
+        paid_account_bytes: 1000000000000,
+        free_databases_per_account: 10,
+        paid_databases_per_account: 1000000,
+      },
+      snapshots: snapshots.results || [],
+      backups: [],
+    });
+  }
+
+  if (resource === "license-registrations") return listAdminLicenseRegistrations(request, env);
+  const registrationMatch = resource.match(/^license-registration:(\d+)$/);
+  if (registrationMatch) return getAdminLicenseRegistration(request, env, session, registrationMatch[1]);
 
   if (resource === "overview") {
     const [users, customers, organizations, products, licenses, codeInventory, recentActivity, licenseStatuses] = await Promise.all([
@@ -2159,9 +3255,11 @@ async function handleAdminControl(request, env, resource) {
   if (resource === "organizations") {
     const { results } = await env.DB.prepare(
       `SELECT o.id, o.name, o.legal_name, o.status, o.created_at,
-              COUNT(DISTINCT m.id) AS member_count
+              COUNT(DISTINCT m.id) AS member_count,
+              GROUP_CONCAT(DISTINCT r.relationship_type) AS relationship_types
        FROM organizations o
        LEFT JOIN organization_members m ON m.organization_id = o.id AND m.status = 'active'
+       LEFT JOIN relationships r ON r.organization_id = o.id AND r.status = 'active'
        GROUP BY o.id ORDER BY o.created_at DESC, o.id DESC`
     ).all();
     return json({ ok: true, organizations: results });
@@ -2876,10 +3974,49 @@ async function handleDemo(request, env) {
   return json({ ok: true, message: "Demo request received. We will contact you soon." });
 }
 
-function customerIdentityStatements(env, customerIdExpression, customerIdBindings, personStatus, memberStatus, memberRole) {
-  const organizationName = "COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), 'Customer') || ' #' || c.id";
-  const organizationLegalName = `COALESCE(NULLIF(c.company, ''), NULLIF(c.name, ''), ${organizationName})`;
+function customerIdentityStatements(
+  env,
+  customerIdExpression,
+  customerIdBindings,
+  personStatus,
+  memberStatus,
+  memberRole,
+  organizationIdExpression = null,
+  organizationIdBindings = [],
+) {
+  const companyName = "COALESCE(NULLIF(trim(c.company), ''), NULLIF(trim(c.name), ''), 'Customer')";
+  const organizationName = organizationIdExpression
+    ? companyName
+    : `(${companyName} || ' #' || c.id)`;
+  const matchingOrganizationId = `(SELECT o.id FROM organizations o
+    WHERE (lower(trim(COALESCE(NULLIF(o.legal_name, ''), o.name))) = lower(trim(${companyName}))
+       OR lower(trim(o.name)) = lower(trim(${companyName})))
+      AND lower(trim(o.name)) <> 'smritisys internal'
+      AND (
+        EXISTS (
+          SELECT 1 FROM relationships r
+          WHERE r.organization_id = o.id
+            AND r.relationship_type = 'customer'
+            AND r.status = 'active'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM relationships r
+          WHERE r.organization_id = o.id
+        )
+      )
+    ORDER BY o.id LIMIT 1)`;
+  const organizationId = organizationIdExpression
+    ? `COALESCE(${organizationIdExpression}, ${matchingOrganizationId})`
+    : `(SELECT o.id FROM organizations o
+        WHERE lower(trim(o.name)) = lower(trim(${organizationName}))
+          AND o.status = 'active'
+        ORDER BY o.id LIMIT 1)`;
+  const organizationExists = organizationIdExpression
+    ? `(lower(trim(COALESCE(NULLIF(o.legal_name, ''), o.name))) = lower(trim(${companyName}))
+        OR lower(trim(o.name)) = lower(trim(${companyName})))`
+    : `lower(trim(o.name)) = lower(trim(${organizationName}))`;
   const bindCustomerId = () => [...customerIdBindings];
+  const bindOrganizationId = () => [...organizationIdBindings];
 
   return [
     env.DB.prepare(
@@ -2889,19 +4026,32 @@ function customerIdentityStatements(env, customerIdExpression, customerIdBinding
     ).bind(personStatus, ...bindCustomerId()),
     env.DB.prepare(
       `INSERT INTO organizations (name, legal_name, status)
-       SELECT ${organizationName}, ${organizationLegalName}, 'active'
+       SELECT ${organizationName}, ${companyName}, 'active'
        FROM customers c
        WHERE c.id = ${customerIdExpression}
-         AND NOT EXISTS (SELECT 1 FROM organizations WHERE name = ${organizationName})`
-    ).bind(...bindCustomerId()),
+         ${organizationIdExpression ? `AND (${organizationIdExpression}) IS NULL` : ""}
+         AND NOT EXISTS (
+           SELECT 1 FROM organizations o
+           WHERE ${organizationExists}
+             AND lower(trim(o.name)) <> 'smritisys internal'
+         )`
+    ).bind(...bindCustomerId(), ...bindOrganizationId()),
     env.DB.prepare(
-      `INSERT OR IGNORE INTO organization_members
+      `INSERT INTO organization_members
        (organization_id, account_type, account_id, member_role, status)
        SELECT o.id, 'customer', c.id, ?, ?
        FROM customers c
-       JOIN organizations o ON o.name = ${organizationName}
-       WHERE c.id = ${customerIdExpression}`
-    ).bind(memberRole, memberStatus, ...bindCustomerId()),
+       JOIN organizations o ON o.id = ${organizationId} AND o.status = 'active'
+       WHERE c.id = ${customerIdExpression}
+       ON CONFLICT(organization_id, account_type, account_id)
+       DO UPDATE SET status = excluded.status`
+    ).bind(memberRole, memberStatus, ...bindOrganizationId(), ...bindCustomerId()),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO relationships (organization_id, relationship_type, status)
+       SELECT ${organizationId}, 'customer', 'active'
+       FROM customers c
+       WHERE c.id = ${customerIdExpression} AND ${organizationId} IS NOT NULL`
+    ).bind(...bindOrganizationId(), ...bindCustomerId()),
   ];
 }
 
@@ -2960,10 +4110,13 @@ async function handleAdminCustomerInvites(request, env, origin) {
 
   if (request.method === "GET") {
     const { results } = await env.DB.prepare(
-     `SELECT id, email, name, company,
-             CASE WHEN status = 'pending' AND expires_at <= datetime('now') THEN 'expired' ELSE status END AS status,
-             created_at, expires_at, accepted_at
-      FROM customer_invites ORDER BY created_at DESC, id DESC LIMIT 100`
+     `SELECT i.id, i.email, i.name, COALESCE(o.legal_name, o.name, i.company) AS company,
+             i.organization_id, i.customer_id,
+             CASE WHEN i.status = 'pending' AND i.expires_at <= datetime('now') THEN 'expired' ELSE i.status END AS status,
+             i.created_at, i.expires_at, i.accepted_at
+      FROM customer_invites i
+      LEFT JOIN organizations o ON o.id = i.organization_id
+      ORDER BY i.created_at DESC, i.id DESC LIMIT 100`
     ).all();
     return json({ ok: true, invites: results }, 200, origin, { "Cache-Control": "no-store" });
   }
@@ -2982,14 +4135,116 @@ async function handleAdminCustomerInvites(request, env, origin) {
   }
 
   const email = validEmail(body.email);
-  const company = boundedString(body.company, 200);
+  const suppliedCompany = boundedString(body.company, 200);
+  const requestedOrganizationId = body.organization_id == null || body.organization_id === ""
+    ? null
+    : numericId(String(body.organization_id));
   const suppliedName = body.name;
   const name = suppliedName == null || suppliedName === "" ? null : boundedString(suppliedName, 120);
-  if (!email || !company || (suppliedName != null && suppliedName !== "" && !name)) {
-    return json({ ok: false, error: "A valid email, company, and optional name are required" }, 400);
+  if (!email || (body.organization_id != null && body.organization_id !== "" && !requestedOrganizationId) ||
+      (suppliedName != null && suppliedName !== "" && !name)) {
+    return json({ ok: false, error: "A valid email, optional organization, and optional name are required" }, 400);
   }
-  if (await emailAlreadyRegistered(env, email)) {
+
+  const existingUser = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").bind(email).first();
+  if (existingUser) return json({ ok: false, error: "This email belongs to an internal user account" }, 409);
+
+  const existingCustomer = await env.DB.prepare(
+    "SELECT id, status, company FROM customers WHERE lower(email) = ? LIMIT 1"
+  ).bind(email).first();
+  let organization = null;
+  if (requestedOrganizationId) {
+    organization = await env.DB.prepare(
+      `SELECT id, name, legal_name, status FROM organizations
+       WHERE id = ? AND status = 'active' AND lower(trim(name)) <> 'smritisys internal'
+         AND EXISTS (
+           SELECT 1 FROM relationships r
+           WHERE r.organization_id = organizations.id
+             AND r.relationship_type = 'customer'
+             AND r.status = 'active'
+         )`
+    ).bind(requestedOrganizationId).first();
+    if (!organization) return json({ ok: false, error: "Select an active organization" }, 400);
+  } else if (!suppliedCompany) {
+    return json({ ok: false, error: "An organization name is required when creating a new organization" }, 400);
+  }
+
+  if (existingCustomer && existingCustomer.status === "active") {
+    if (!organization) {
+      return json({ ok: false, error: "This account already exists. Select its organization to add it as a contact." }, 409);
+    }
+    const memberships = await env.DB.prepare(
+      `SELECT organization_id FROM organization_members
+       WHERE account_type = 'customer' AND account_id = ? AND status = 'active'`
+    ).bind(existingCustomer.id).all();
+    const activeOrganizationIds = (memberships.results || []).map((membership) => Number(membership.organization_id));
+    if (activeOrganizationIds.some((id) => id !== Number(organization.id))) {
+      return json({ ok: false, error: "This account is already assigned to another organization" }, 409);
+    }
+    if (!activeOrganizationIds.includes(Number(organization.id))) {
+      await env.DB.batch([
+        ...customerIdentityStatements(
+          env,
+          "?",
+          [existingCustomer.id],
+          "active",
+          "active",
+          "customer",
+          "?",
+          [organization.id],
+        ),
+      ]);
+      await writeAudit(
+        env,
+        request,
+        principal,
+        "CUSTOMER_ORGANIZATION_MEMBER_ADDED",
+        "customer",
+        existingCustomer.id,
+        null,
+        { email, organization_id: organization.id },
+      );
+    }
+    return json({
+      ok: true,
+      membership_added: !activeOrganizationIds.includes(Number(organization.id)),
+      message: activeOrganizationIds.includes(Number(organization.id))
+        ? "This customer is already a member of the selected organization."
+        : "Existing customer added to the selected organization.",
+    }, 200, origin, { "Cache-Control": "no-store" });
+  }
+
+  let company = organization ? (organization.legal_name || organization.name) : suppliedCompany;
+  let customerId = null;
+  if (existingCustomer) {
+    if (existingCustomer.status !== "inactive") {
+      return json({ ok: false, error: "This customer account cannot be converted through an invitation" }, 409);
+    }
+    const priorMembership = await env.DB.prepare(
+      `SELECT organization_id FROM organization_members
+       WHERE account_type = 'customer' AND account_id = ? ORDER BY status = 'active' DESC, id LIMIT 1`
+    ).bind(existingCustomer.id).first();
+    if (priorMembership && (!organization || Number(priorMembership.organization_id) !== Number(organization.id))) {
+      return json({ ok: false, error: "Select the organization already associated with this account" }, 409);
+    }
+    if (!organization) {
+      return json({ ok: false, error: "Select the existing organization to activate this account" }, 409);
+    }
+    customerId = existingCustomer.id;
+  } else if (await emailAlreadyRegistered(env, email)) {
     return json({ ok: false, error: "An account already exists for this email" }, 409);
+  }
+
+  if (!organization) {
+    const duplicateOrganization = await env.DB.prepare(
+      `SELECT id FROM organizations
+       WHERE lower(trim(COALESCE(NULLIF(legal_name, ''), name))) = lower(trim(?))
+          OR lower(trim(name)) = lower(trim(?))
+       ORDER BY id LIMIT 1`
+    ).bind(company, company).first();
+    if (duplicateOrganization) {
+      return json({ ok: false, error: "This organization already exists. Select it to reuse the existing record." }, 409);
+    }
   }
 
   const pendingInvite = await env.DB.prepare(
@@ -3000,7 +4255,14 @@ async function handleAdminCustomerInvites(request, env, origin) {
 
   const token = makeToken();
   const tokenHash = await hashCustomerInviteToken(token);
-  const auditValue = JSON.stringify({ email, name, company, expires_in_hours: 24 });
+  const auditValue = JSON.stringify({
+    email,
+    name,
+    company,
+    organization_id: organization?.id || null,
+    existing_customer_id: customerId,
+    expires_in_hours: 24,
+  });
   const clientIp = request.headers.get("CF-Connecting-IP") || null;
   let results;
   try {
@@ -3010,9 +4272,10 @@ async function handleAdminCustomerInvites(request, env, origin) {
          WHERE lower(email) = ? AND status = 'pending' AND expires_at <= datetime('now')`
       ).bind(email),
       env.DB.prepare(
-        `INSERT INTO customer_invites (token_hash, email, name, company, created_by, expires_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'))`
-      ).bind(tokenHash, email, name, company, principal.person_id),
+        `INSERT INTO customer_invites
+         (token_hash, email, name, company, created_by, expires_at, organization_id, customer_id)
+         VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?)`
+      ).bind(tokenHash, email, name, company, principal.person_id, organization?.id || null, customerId),
       env.DB.prepare(
         `INSERT INTO audit_logs
          (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
@@ -3091,54 +4354,90 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
 
   const tokenHash = await hashCustomerInviteToken(token);
   const invitation = await env.DB.prepare(
-    `SELECT id, email, name, company FROM customer_invites
+    `SELECT id, email, name, company, organization_id, customer_id FROM customer_invites
     WHERE token_hash = ? AND status = 'pending' AND expires_at > datetime('now')`
   ).bind(tokenHash).first();
   if (!invitation) return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
-  if (await emailAlreadyRegistered(env, invitation.email)) {
+  const existingCustomer = invitation.customer_id
+    ? await env.DB.prepare(
+     `SELECT id FROM customers
+      WHERE id = ? AND lower(email) = ? AND status = 'inactive'`
+    ).bind(invitation.customer_id, invitation.email).first()
+    : null;
+  if ((invitation.customer_id && !existingCustomer) ||
+     (!invitation.customer_id && await emailAlreadyRegistered(env, invitation.email))) {
     return json({ ok: false, error: "An account already exists for this invitation email" }, 409);
   }
 
   const passwordHash = await hashPassword(password);
   const clientIp = request.headers.get("CF-Connecting-IP") || null;
-  const auditValue = JSON.stringify({ email: invitation.email, company: invitation.company });
+  const auditValue = JSON.stringify({
+    email: invitation.email,
+    company: invitation.company,
+    organization_id: invitation.organization_id || null,
+    converted_customer_id: invitation.customer_id || null,
+  });
   try {
-    const results = await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE customer_invites SET status = 'accepted', accepted_at = datetime('now')
-         WHERE id = ? AND status = 'pending' AND expires_at > datetime('now')`
-      ).bind(invitation.id),
-      env.DB.prepare(
-        `INSERT INTO customers (email, password_hash, name, phone, company)
-         SELECT ?, ?, ?, NULL, ? WHERE changes() = 1`
-      ).bind(invitation.email, passwordHash, invitation.name, invitation.company),
-      env.DB.prepare(
-        `UPDATE customer_invites
-         SET customer_id = (SELECT id FROM customers WHERE email = ? LIMIT 1)
-         WHERE id = ? AND status = 'accepted' AND customer_id IS NULL AND changes() = 1`
-      ).bind(invitation.email, invitation.id),
-      ...customerIdentityStatements(
-        env,
-        "(SELECT customer_id FROM customer_invites WHERE id = ? AND status = 'accepted')",
-        [invitation.id],
-        "active",
-        "active",
-        "customer",
-      ),
-      env.DB.prepare(
-        `INSERT INTO audit_logs
-         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
-         SELECT p.id, om.organization_id, 'CUSTOMER_INVITE_ACCEPTED', 'customer', CAST(c.id AS TEXT),
-                NULL, ?, ?
-         FROM customer_invites i
-         JOIN customers c ON c.id = i.customer_id
-         JOIN people p ON p.source_type = 'customer' AND p.source_id = c.id
-         JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = c.id
-         WHERE i.id = ? AND i.status = 'accepted'`
-      ).bind(auditValue, clientIp, invitation.id),
-    ]);
+    const acceptInvite = env.DB.prepare(
+     `UPDATE customer_invites SET status = 'accepted', accepted_at = datetime('now')
+      WHERE id = ? AND status = 'pending' AND expires_at > datetime('now')`
+    ).bind(invitation.id);
+    const identityStatements = customerIdentityStatements(
+     env,
+     invitation.customer_id
+       ? "?"
+       : "(SELECT customer_id FROM customer_invites WHERE id = ? AND status = 'accepted')",
+     invitation.customer_id ? [invitation.customer_id] : [invitation.id],
+     "active",
+     "active",
+     "customer",
+     "(SELECT organization_id FROM customer_invites WHERE id = ?)",
+     [invitation.id],
+    );
+    const auditStatement = env.DB.prepare(
+     `INSERT INTO audit_logs
+      (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+      SELECT p.id, om.organization_id, 'CUSTOMER_INVITE_ACCEPTED', 'customer', CAST(c.id AS TEXT),
+             NULL, ?, ?
+      FROM customer_invites i
+      JOIN customers c ON c.id = i.customer_id
+      JOIN people p ON p.source_type = 'customer' AND p.source_id = c.id
+      JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = c.id AND om.status = 'active'
+      WHERE i.id = ? AND i.status = 'accepted'`
+    ).bind(auditValue, clientIp, invitation.id);
+    const results = invitation.customer_id
+     ? await env.DB.batch([
+       acceptInvite,
+       env.DB.prepare(
+         `UPDATE customers
+          SET password_hash = ?, name = COALESCE(?, name), company = ?, status = 'active'
+          WHERE id = ? AND status = 'inactive'
+            AND EXISTS (SELECT 1 FROM customer_invites WHERE id = ? AND status = 'accepted')`
+       ).bind(passwordHash, invitation.name, invitation.company, invitation.customer_id, invitation.id),
+       env.DB.prepare(
+         `UPDATE people SET name = COALESCE(?, name), status = 'active'
+          WHERE source_type = 'customer' AND source_id = ?`
+       ).bind(invitation.name, invitation.customer_id),
+       ...identityStatements,
+       auditStatement,
+     ])
+     : await env.DB.batch([
+       acceptInvite,
+       env.DB.prepare(
+         `INSERT INTO customers (email, password_hash, name, phone, company)
+          SELECT ?, ?, ?, NULL, ? WHERE changes() = 1`
+       ).bind(invitation.email, passwordHash, invitation.name, invitation.company),
+       env.DB.prepare(
+         `UPDATE customer_invites
+          SET customer_id = (SELECT id FROM customers WHERE lower(email) = lower(?) LIMIT 1)
+          WHERE id = ? AND status = 'accepted' AND customer_id IS NULL AND changes() = 1`
+       ).bind(invitation.email, invitation.id),
+       ...identityStatements,
+       auditStatement,
+     ]);
 
-    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1 || results[2].meta.changes !== 1) {
+    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1 ||
+       (!invitation.customer_id && results[2].meta.changes !== 1)) {
      return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
     }
   } catch (error) {
@@ -3149,6 +4448,480 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
   }
 
   return json({ ok: true, message: "Account setup is complete. You can now sign in." }, 200, origin, { "Cache-Control": "no-store" });
+}
+
+const ADMIN_PARTNER_TYPES = [
+  "channel_partner",
+  "reseller",
+  "implementation_partner",
+  "technology_partner",
+  "referral_partner",
+  "distributor",
+];
+
+function isAdminPartnerType(value) {
+  return ADMIN_PARTNER_TYPES.includes(value);
+}
+
+async function handleAdminPartners(request, env, origin) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (request.method === "GET") {
+    const [partners, links] = await Promise.all([
+      env.DB.prepare(
+        `SELECT o.id, o.name, o.legal_name, o.status, r.relationship_type AS partner_type,
+                COUNT(DISTINCT pm.id) AS member_count,
+                COUNT(DISTINCT CASE WHEN pcl.status = 'active' THEN pcl.id END) AS linked_customer_count,
+                (SELECT COUNT(*) FROM partner_invites pi
+                 WHERE pi.partner_organization_id = o.id AND pi.status = 'pending'
+                   AND pi.expires_at > datetime('now')) AS pending_invite_count
+         FROM organizations o
+         JOIN relationships r ON r.organization_id = o.id
+           AND r.relationship_type IN (
+             'channel_partner', 'reseller', 'implementation_partner',
+             'technology_partner', 'referral_partner', 'distributor'
+           )
+         LEFT JOIN partner_memberships pm ON pm.partner_organization_id = o.id AND pm.status = 'active'
+         LEFT JOIN partner_customer_links pcl ON pcl.partner_organization_id = o.id
+         GROUP BY o.id, r.relationship_type
+         ORDER BY o.name, r.relationship_type`
+      ).all(),
+      env.DB.prepare(
+        `SELECT pcl.id, pcl.partner_organization_id, partner.name AS partner_name,
+                pcl.customer_organization_id, customer.name AS customer_name,
+                pcl.status, pcl.created_at
+         FROM partner_customer_links pcl
+         JOIN organizations partner ON partner.id = pcl.partner_organization_id
+         JOIN organizations customer ON customer.id = pcl.customer_organization_id
+         ORDER BY partner.name, customer.name`
+      ).all(),
+    ]);
+    return json({
+      ok: true,
+      partner_types: ADMIN_PARTNER_TYPES,
+      partners: partners.results || [],
+      links: links.results || [],
+    }, 200, origin, { "Cache-Control": "no-store" });
+  }
+
+  if (request.method !== "POST") return json({ ok: false, error: "Unsupported partner operation" }, 405);
+  return createAdminPartnerContact(request, env, origin, principal, null);
+}
+
+async function createAdminPartnerContact(request, env, origin, principal, requestedPartnerId) {
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  const limited = await requireRateLimit(
+    env,
+    request,
+    "admin-partner-create",
+    30,
+    3600,
+    String(principal.person_id),
+  );
+  if (limited) return limited;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid partner request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid partner request is required" }, 400);
+  }
+
+  const email = validEmail(body.email);
+  const name = body.name == null || body.name === "" ? null : boundedString(body.name, 120);
+  const organizationName = body.organization_name == null || body.organization_name === ""
+    ? null
+    : boundedString(body.organization_name, 200);
+  const partnerType = body.partner_type;
+  const partnerRole = body.partner_role || "partner_admin";
+  const bodyOrganizationId = body.organization_id == null || body.organization_id === ""
+    ? null
+    : numericId(String(body.organization_id));
+  if (!email || (body.name != null && body.name !== "" && !name) ||
+      !isAdminPartnerType(partnerType) ||
+      !["partner_admin", "partner_member"].includes(partnerRole) ||
+      (body.organization_id != null && body.organization_id !== "" && !bodyOrganizationId) ||
+      (requestedPartnerId && bodyOrganizationId && Number(requestedPartnerId) !== bodyOrganizationId)) {
+    return json({ ok: false, error: "A valid email, partner type, role, and organization are required" }, 400);
+  }
+
+  const organizationId = requestedPartnerId || bodyOrganizationId;
+  let organization = organizationId
+    ? await env.DB.prepare(
+      `SELECT id, name, legal_name, status FROM organizations
+       WHERE id = ? AND status = 'active' AND lower(trim(name)) <> 'smritisys internal'
+         AND NOT EXISTS (
+           SELECT 1 FROM relationships r
+           WHERE r.organization_id = organizations.id
+             AND r.relationship_type = 'customer'
+         )`
+    ).bind(organizationId).first()
+    : null;
+  if (organizationId && !organization) return json({ ok: false, error: "Partner organization not found or inactive" }, 404);
+  if (!organization) {
+    if (!organizationName) return json({ ok: false, error: "A partner organization name is required" }, 400);
+    const duplicate = await env.DB.prepare(
+      `SELECT id FROM organizations
+       WHERE lower(trim(COALESCE(NULLIF(legal_name, ''), name))) = lower(trim(?))
+          OR lower(trim(name)) = lower(trim(?))
+       ORDER BY id LIMIT 1`
+    ).bind(organizationName, organizationName).first();
+    if (duplicate) {
+      return json({ ok: false, error: "This organization already exists. Select it to reuse the existing record." }, 409);
+    }
+    const created = await env.DB.prepare(
+      "INSERT INTO organizations (name, legal_name, status) VALUES (?, ?, 'active')"
+    ).bind(organizationName, organizationName).run();
+    organization = {
+      id: created.meta.last_row_id,
+      name: organizationName,
+      legal_name: organizationName,
+      status: "active",
+    };
+  }
+
+  const assignedPartnerType = await env.DB.prepare(
+    `SELECT relationship_type FROM relationships
+     WHERE organization_id = ? AND relationship_type IN (
+       'channel_partner', 'reseller', 'implementation_partner',
+       'technology_partner', 'referral_partner', 'distributor'
+     ) LIMIT 1`
+  ).bind(organization.id).first();
+  if (assignedPartnerType && assignedPartnerType.relationship_type !== partnerType) {
+    return json({ ok: false, error: "This organization is already classified as a different partner type" }, 409);
+  }
+
+  const internalUser = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").bind(email).first();
+  if (internalUser) return json({ ok: false, error: "This email belongs to an internal user account" }, 409);
+  const existingCustomer = await env.DB.prepare(
+    "SELECT id, status FROM customers WHERE lower(email) = ? LIMIT 1"
+  ).bind(email).first();
+  if (existingCustomer && existingCustomer.status !== "active") {
+    return json({ ok: false, error: "Activate this existing customer account before assigning partner access" }, 409);
+  }
+  if (!existingCustomer && await emailAlreadyRegistered(env, email)) {
+    return json({ ok: false, error: "An account already exists for this email" }, 409);
+  }
+  if (existingCustomer) {
+    const otherPartner = await env.DB.prepare(
+      `SELECT partner_organization_id FROM partner_memberships
+       WHERE account_type = 'customer' AND account_id = ? AND status = 'active'
+         AND partner_organization_id <> ? LIMIT 1`
+    ).bind(existingCustomer.id, organization.id).first();
+    if (otherPartner) {
+      return json({ ok: false, error: "This account already has access to another partner organization" }, 409);
+    }
+  }
+
+  const token = existingCustomer ? null : makeToken();
+  const tokenHash = token ? await hashCustomerInviteToken(token) : null;
+  const auditAction = existingCustomer ? "PARTNER_MEMBER_ADDED" : "PARTNER_INVITE_CREATED";
+  const auditValue = JSON.stringify({
+    email,
+    partner_type: partnerType,
+    partner_role: partnerRole,
+    organization_id: organization.id,
+    existing_customer_id: existingCustomer?.id || null,
+  });
+  const clientIp = request.headers.get("CF-Connecting-IP") || null;
+  const statements = [
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO relationships (organization_id, relationship_type, status)
+       VALUES (?, ?, 'active')`
+    ).bind(organization.id, partnerType),
+  ];
+  if (existingCustomer) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO organization_members
+         (organization_id, account_type, account_id, member_role, status)
+         VALUES (?, 'customer', ?, ?, 'active')
+         ON CONFLICT(organization_id, account_type, account_id)
+         DO UPDATE SET status = excluded.status`
+      ).bind(organization.id, existingCustomer.id, partnerRole),
+      env.DB.prepare(
+        `INSERT INTO partner_memberships
+         (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+         VALUES (?, 'customer', ?, ?, ?, 'active')
+         ON CONFLICT(partner_organization_id, account_type, account_id)
+         DO UPDATE SET partner_role = excluded.partner_role,
+                       partner_type = excluded.partner_type, status = excluded.status`
+      ).bind(organization.id, existingCustomer.id, partnerRole, partnerType),
+    );
+  } else {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO partner_invites
+         (token_hash, partner_organization_id, email, name, partner_type, partner_role, created_by, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+24 hours'))`
+      ).bind(tokenHash, organization.id, email, name, partnerType, partnerRole, principal.person_id),
+    );
+  }
+  statements.push(
+    env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       VALUES (?, ?, ?, 'partner', ?, NULL, ?, ?)`
+    ).bind(
+      principal.person_id,
+      organization.id,
+      auditAction,
+      String(organization.id),
+      auditValue,
+      clientIp,
+    ),
+  );
+
+  let results;
+  try {
+    results = await env.DB.batch(statements);
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) {
+      return json({ ok: false, error: "An active invitation already exists for this partner and email" }, 409);
+    }
+    throw error;
+  }
+  if (results[0].meta.changes !== 1 || results[results.length - 1].meta.changes !== 1) {
+    throw new Error("Partner contact change could not be recorded");
+  }
+
+  return json({
+    ok: true,
+    partner_organization_id: organization.id,
+    membership_added: Boolean(existingCustomer),
+    ...(token ? {
+      setup_path: `/accept-invite.html#type=partner&token=${token}`,
+      expires_in_hours: 24,
+    } : {}),
+  }, existingCustomer ? 200 : 201, origin, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminPartnerCustomerLink(request, env, partnerOrganizationId, customerOrganizationId, revoke = false) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (!customerOrganizationId && !revoke) {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: "A customer organization is required" }, 400);
+    }
+    customerOrganizationId = numericId(String(body?.customer_organization_id || ""));
+  }
+  if (!customerOrganizationId) return json({ ok: false, error: "A valid customer organization id is required" }, 400);
+  if (partnerOrganizationId === customerOrganizationId) {
+    return json({ ok: false, error: "An organization cannot be linked to itself" }, 400);
+  }
+  const partner = await env.DB.prepare(
+    `SELECT id FROM organizations o
+     WHERE o.id = ? AND o.status = 'active'
+       AND EXISTS (SELECT 1 FROM relationships r WHERE r.organization_id = o.id
+         AND r.relationship_type IN (
+           'channel_partner', 'reseller', 'implementation_partner',
+           'technology_partner', 'referral_partner', 'distributor'
+         ) AND r.status = 'active')`
+  ).bind(partnerOrganizationId).first();
+  if (!partner) return json({ ok: false, error: "Partner organization not found" }, 404);
+
+  const customer = await env.DB.prepare(
+    `SELECT o.id, o.name FROM organizations o
+     WHERE o.id = ? AND o.status = 'active'
+       AND EXISTS (SELECT 1 FROM relationships r WHERE r.organization_id = o.id
+         AND r.relationship_type = 'customer' AND r.status = 'active')`
+  ).bind(customerOrganizationId).first();
+  if (!customer) return json({ ok: false, error: "Select an active customer organization" }, 400);
+
+  const existing = await env.DB.prepare(
+    `SELECT id, status FROM partner_customer_links
+     WHERE partner_organization_id = ? AND customer_organization_id = ?`
+  ).bind(partnerOrganizationId, customerOrganizationId).first();
+  if (revoke) {
+    if (!existing || existing.status !== "active") {
+      return json({ ok: false, error: "Active customer link not found" }, 404);
+    }
+    const updated = await env.DB.prepare(
+      `UPDATE partner_customer_links SET status = 'revoked'
+       WHERE id = ? AND status = 'active'`
+    ).bind(existing.id).run();
+    if (updated.meta.changes !== 1) return json({ ok: false, error: "Customer link is no longer active" }, 409);
+    await writeAudit(
+      env,
+      request,
+      principal,
+      "PARTNER_CUSTOMER_LINK_REVOKED",
+      "partner_customer_link",
+      existing.id,
+      { partner_organization_id: partnerOrganizationId, customer_organization_id: customerOrganizationId },
+      null,
+    );
+    return json({ ok: true, message: "Customer link revoked" }, 200, null, { "Cache-Control": "no-store" });
+  }
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO partner_customer_links (partner_organization_id, customer_organization_id, status)
+       VALUES (?, ?, 'active')
+       ON CONFLICT(partner_organization_id, customer_organization_id)
+       DO UPDATE SET status = 'active'`
+    ).bind(partnerOrganizationId, customerOrganizationId),
+  ]);
+  if (!existing || existing.status !== "active") {
+    await writeAudit(
+      env,
+      request,
+      principal,
+      "PARTNER_CUSTOMER_LINK_CREATED",
+      "partner_customer_link",
+      existing?.id || customerOrganizationId,
+      null,
+      { partner_organization_id: partnerOrganizationId, customer_organization_id: customerOrganizationId },
+    );
+  }
+  return json({ ok: true, message: "Customer organization linked" }, 200, null, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminPartnerInvites(request, env, origin, inviteId = null) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (request.method === "GET" && !inviteId) {
+    const { results } = await env.DB.prepare(
+      `SELECT pi.id, pi.email, pi.name, pi.partner_organization_id, o.name AS partner_name,
+              pi.partner_type, pi.partner_role,
+              CASE WHEN pi.status = 'pending' AND pi.expires_at <= datetime('now') THEN 'expired' ELSE pi.status END AS status,
+              pi.created_at, pi.expires_at, pi.accepted_at
+       FROM partner_invites pi
+       JOIN organizations o ON o.id = pi.partner_organization_id
+       ORDER BY pi.created_at DESC, pi.id DESC LIMIT 100`
+    ).all();
+    return json({ ok: true, invites: results || [] }, 200, origin, { "Cache-Control": "no-store" });
+  }
+  if (request.method !== "POST" || !inviteId) return json({ ok: false, error: "Unsupported partner invitation operation" }, 405);
+
+  const invite = await env.DB.prepare(
+    "SELECT id, email, partner_organization_id, partner_type, partner_role, status FROM partner_invites WHERE id = ?"
+  ).bind(inviteId).first();
+  if (!invite) return json({ ok: false, error: "Invitation not found" }, 404);
+  if (invite.status !== "pending") return json({ ok: false, error: "Only pending invitations can be revoked" }, 409);
+  const updated = await env.DB.prepare(
+    "UPDATE partner_invites SET status = 'revoked' WHERE id = ? AND status = 'pending'"
+  ).bind(inviteId).run();
+  if (updated.meta.changes !== 1) return json({ ok: false, error: "Invitation is no longer pending" }, 409);
+  await writeAudit(
+    env,
+    request,
+    principal,
+    "PARTNER_INVITE_REVOKED",
+    "partner_invite",
+    inviteId,
+    null,
+    { email: invite.email, partner_organization_id: invite.partner_organization_id },
+  );
+  return json({ ok: true, message: "Invitation revoked" }, 200, null, { "Cache-Control": "no-store" });
+}
+
+async function handlePartnerInviteAcceptance(request, env, origin) {
+  const limited = await requireRateLimit(env, request, "partner-invite-accept", 5, 3600);
+  if (limited) return limited;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid partner setup request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid partner setup request is required" }, 400);
+  }
+  if (!isValidCustomerInviteToken(body.token) || typeof body.password !== "string" ||
+      body.password.length < 12 || body.password.length > 128) {
+    return json({ ok: false, error: "A valid invitation token and password of 12 to 128 characters are required" }, 400);
+  }
+  const tokenHash = await hashCustomerInviteToken(body.token);
+  const invitation = await env.DB.prepare(
+    `SELECT pi.id, pi.email, pi.name, pi.partner_organization_id, pi.partner_type, pi.partner_role,
+            o.name AS partner_name
+     FROM partner_invites pi
+     JOIN organizations o ON o.id = pi.partner_organization_id AND o.status = 'active'
+     JOIN relationships r ON r.organization_id = o.id
+       AND r.relationship_type = pi.partner_type AND r.status = 'active'
+     WHERE pi.token_hash = ? AND pi.status = 'pending' AND pi.expires_at > datetime('now')`
+  ).bind(tokenHash).first();
+  if (!invitation) return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+  if (await emailAlreadyRegistered(env, invitation.email)) {
+    return json({ ok: false, error: "An account already exists for this invitation email" }, 409);
+  }
+
+  const passwordHash = await hashPassword(body.password);
+  const clientIp = request.headers.get("CF-Connecting-IP") || null;
+  const auditValue = JSON.stringify({
+    email: invitation.email,
+    partner_type: invitation.partner_type,
+    partner_role: invitation.partner_role,
+  });
+  try {
+    const results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE partner_invites SET status = 'accepted', accepted_at = datetime('now')
+         WHERE id = ? AND status = 'pending' AND expires_at > datetime('now')`
+      ).bind(invitation.id),
+      env.DB.prepare(
+        `INSERT INTO customers (email, password_hash, name, phone, company)
+         SELECT ?, ?, ?, NULL, ? WHERE changes() = 1`
+      ).bind(invitation.email, passwordHash, invitation.name, invitation.partner_name),
+      env.DB.prepare(
+        `UPDATE partner_invites
+         SET customer_id = (SELECT id FROM customers WHERE lower(email) = lower(?) LIMIT 1)
+         WHERE id = ? AND status = 'accepted' AND customer_id IS NULL AND changes() = 1`
+      ).bind(invitation.email, invitation.id),
+      env.DB.prepare(
+        `INSERT INTO people (email, name, source_type, source_id, status)
+         SELECT c.email, c.name, 'customer', c.id, 'active'
+         FROM customers c JOIN partner_invites pi ON pi.customer_id = c.id
+         WHERE pi.id = ? AND pi.status = 'accepted'
+         ON CONFLICT(source_type, source_id) DO UPDATE SET status = 'active'`
+      ).bind(invitation.id),
+      env.DB.prepare(
+        `INSERT INTO organization_members
+         (organization_id, account_type, account_id, member_role, status)
+         SELECT pi.partner_organization_id, 'customer', pi.customer_id, pi.partner_role, 'active'
+         FROM partner_invites pi WHERE pi.id = ? AND pi.status = 'accepted'
+         ON CONFLICT(organization_id, account_type, account_id)
+         DO UPDATE SET member_role = excluded.member_role, status = excluded.status`
+      ).bind(invitation.id),
+      env.DB.prepare(
+        `INSERT INTO partner_memberships
+         (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+         SELECT pi.partner_organization_id, 'customer', pi.customer_id, pi.partner_role, pi.partner_type, 'active'
+         FROM partner_invites pi WHERE pi.id = ? AND pi.status = 'accepted'
+         ON CONFLICT(partner_organization_id, account_type, account_id)
+         DO UPDATE SET partner_role = excluded.partner_role,
+                       partner_type = excluded.partner_type, status = excluded.status`
+      ).bind(invitation.id),
+      env.DB.prepare(
+        `INSERT INTO audit_logs
+         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+         SELECT p.id, pi.partner_organization_id, 'PARTNER_INVITE_ACCEPTED', 'partner_member',
+                CAST(c.id AS TEXT), NULL, ?, ?
+         FROM partner_invites pi
+         JOIN customers c ON c.id = pi.customer_id
+         JOIN people p ON p.source_type = 'customer' AND p.source_id = c.id
+         WHERE pi.id = ? AND pi.status = 'accepted'`
+      ).bind(auditValue, clientIp, invitation.id),
+    ]);
+    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1 ||
+        results[2].meta.changes !== 1) {
+      return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+    }
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) {
+      return json({ ok: false, error: "An account already exists for this invitation email" }, 409);
+    }
+    throw error;
+  }
+  return json({ ok: true, message: "Partner access is ready. You can now sign in." }, 200, origin, { "Cache-Control": "no-store" });
 }
 
 async function handleSignup(request, env) {
@@ -3393,10 +5166,22 @@ export async function onRequest(context) {
   try {
     if (path === "license/activate" && request.method === "POST") return await activateLicense(request, env, origin);
     if (path === "license/refresh" && request.method === "POST") return await refreshLicense(request, env, origin);
+    if (path === "license/email/request" && request.method === "POST") {
+      return await requestLicenseEmailCode(request, env, origin);
+    }
+    if (path === "license/email/verify" && request.method === "POST") {
+      return await verifyLicenseEmail(request, env, origin);
+    }
+    if (path === "license/manage" && request.method === "POST") {
+      return await manageLicenseActivation(request, env, origin);
+    }
     if (path === "license-verification-keys" && request.method === "GET") return await handlePublicLicenseKeys(env);
     if (path === "demo" && request.method === "POST") return await handleDemo(request, env);
     if (path === "customer-invites/accept" && request.method === "POST") {
       return await handleCustomerInviteAcceptance(request, env, origin);
+    }
+    if (path === "partner-invites/accept" && request.method === "POST") {
+      return await handlePartnerInviteAcceptance(request, env, origin);
     }
     if (path === "signup" && request.method === "POST") return await handleSignup(request, env);
     if (path === "login" && request.method === "POST") return await handleLogin(request, env);
@@ -3406,6 +5191,37 @@ export async function onRequest(context) {
     if (path === "admin/password" && request.method === "POST") return await handleAdminPasswordChange(request, env);
     if (path === "admin/customer-invites" && ["GET", "POST"].includes(request.method)) {
       return await handleAdminCustomerInvites(request, env, origin);
+    }
+    if (path === "admin/partners" && ["GET", "POST"].includes(request.method)) {
+      return await handleAdminPartners(request, env, origin);
+    }
+    if (path === "admin/partner-invites" && request.method === "GET") {
+      return await handleAdminPartnerInvites(request, env, origin);
+    }
+    const partnerMemberMatch = path.match(/^admin\/partners\/(\d+)\/members$/);
+    if (partnerMemberMatch && request.method === "POST") {
+      const partnerId = numericId(partnerMemberMatch[1]);
+      if (!partnerId) return json({ ok: false, error: "A valid partner organization id is required" }, 400);
+      return await createAdminPartnerContact(request, env, origin, await requireSuperAdmin(request, env), partnerId);
+    }
+    const partnerCustomerRevoke = path.match(/^admin\/partners\/(\d+)\/customers\/(\d+)\/revoke$/);
+    if (partnerCustomerRevoke && request.method === "POST") {
+      const partnerId = numericId(partnerCustomerRevoke[1]);
+      const customerId = numericId(partnerCustomerRevoke[2]);
+      if (!partnerId || !customerId) return json({ ok: false, error: "Valid organization ids are required" }, 400);
+      return await handleAdminPartnerCustomerLink(request, env, partnerId, customerId, true);
+    }
+    const partnerCustomerLink = path.match(/^admin\/partners\/(\d+)\/customers$/);
+    if (partnerCustomerLink && request.method === "POST") {
+      const partnerId = numericId(partnerCustomerLink[1]);
+      if (!partnerId) return json({ ok: false, error: "A valid partner organization id is required" }, 400);
+      return await handleAdminPartnerCustomerLink(request, env, partnerId);
+    }
+    const partnerInviteRevocation = path.match(/^admin\/partner-invites\/(\d+)\/revoke$/);
+    if (partnerInviteRevocation && request.method === "POST") {
+      const inviteId = numericId(partnerInviteRevocation[1]);
+      if (!inviteId) return json({ ok: false, error: "A valid invitation id is required" }, 400);
+      return await handleAdminPartnerInvites(request, env, origin, inviteId);
     }
     const inviteRevocation = path.match(/^admin\/customer-invites\/(\d+)\/revoke$/);
     if (inviteRevocation && request.method === "POST") {
@@ -3481,6 +5297,16 @@ export async function onRequest(context) {
     if (path === "accounting/ledger" && request.method === "GET") return await handleAccounting(request, env, "ledger");
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
     if (path === "admin/overview" && request.method === "GET") return await handleAdminControl(request, env, "overview");
+    if (path === "admin/d1-operations" && request.method === "GET") {
+      return await handleAdminControl(request, env, "d1-operations");
+    }
+    if (path === "admin/license-registrations" && request.method === "GET") {
+      return await handleAdminControl(request, env, "license-registrations");
+    }
+    const registrationMatch = path.match(/^admin\/license-registrations\/(\d+)$/);
+    if (registrationMatch && request.method === "GET") {
+      return await handleAdminControl(request, env, `license-registration:${registrationMatch[1]}`);
+    }
     if (path === "admin/organizations" && request.method === "GET") return await handleAdminControl(request, env, "organizations");
     if (path === "admin/audit" && request.method === "GET") return await handleAdminControl(request, env, "audit");
     if (path === "admin/users" && request.method === "GET") return await handleAdminUsers(request, env);

@@ -32,11 +32,13 @@ CREATE TABLE IF NOT EXISTS customer_invites (
     CHECK (status IN ('pending', 'accepted', 'revoked')),
   created_by INTEGER,
   customer_id INTEGER UNIQUE,
+  organization_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,
   accepted_at TEXT,
   FOREIGN KEY (created_by) REFERENCES people(id),
-  FOREIGN KEY (customer_id) REFERENCES customers(id)
+  FOREIGN KEY (customer_id) REFERENCES customers(id),
+  FOREIGN KEY (organization_id) REFERENCES organizations(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_customer_invites_email_status
@@ -45,6 +47,37 @@ CREATE INDEX IF NOT EXISTS idx_customer_invites_expiry
   ON customer_invites(status, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_invites_one_pending_email
   ON customer_invites(lower(email)) WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS partner_invites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT NOT NULL UNIQUE,
+  partner_organization_id INTEGER NOT NULL,
+  email TEXT NOT NULL,
+  name TEXT,
+  partner_type TEXT NOT NULL CHECK (partner_type IN (
+    'channel_partner', 'reseller', 'implementation_partner',
+    'technology_partner', 'referral_partner', 'distributor'
+  )),
+  partner_role TEXT NOT NULL DEFAULT 'partner_admin'
+    CHECK (partner_role IN ('partner_admin', 'partner_member')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'accepted', 'revoked')),
+  created_by INTEGER,
+  customer_id INTEGER UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  FOREIGN KEY (partner_organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES people(id),
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_partner_invites_email_status
+  ON partner_invites(email, status);
+CREATE INDEX IF NOT EXISTS idx_partner_invites_expiry
+  ON partner_invites(status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_invites_one_pending_per_partner_email
+  ON partner_invites(partner_organization_id, lower(email)) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS organizations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +115,9 @@ CREATE TABLE IF NOT EXISTS relationships (
   UNIQUE(organization_id, relationship_type),
   FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_relationships_type_status
+  ON relationships(relationship_type, status, organization_id);
 
 CREATE TABLE IF NOT EXISTS partner_memberships (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -286,10 +322,13 @@ CREATE TABLE IF NOT EXISTS licenses (
   product_id INTEGER NOT NULL,
   license_key TEXT UNIQUE NOT NULL,
   serial_number TEXT UNIQUE,
+  registered_email TEXT,
+  last_self_service_transfer_at TEXT,
+  last_self_service_transfer_id TEXT,
   seats INTEGER NOT NULL DEFAULT 1,
   starts_at TEXT NOT NULL,
   expires_at TEXT,
-  offline_validity_days INTEGER NOT NULL DEFAULT 7
+  offline_validity_days INTEGER NOT NULL DEFAULT 14
     CHECK (offline_validity_days BETWEEN 1 AND 365),
   status TEXT DEFAULT 'active',
   FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
@@ -301,6 +340,7 @@ CREATE TABLE IF NOT EXISTS license_code_inventory (
   batch_id TEXT NOT NULL,
   serial_number TEXT NOT NULL UNIQUE,
   activation_key_hash TEXT NOT NULL UNIQUE,
+  activation_key_ciphertext TEXT,
   product_id INTEGER NOT NULL,
   edition_id INTEGER NOT NULL,
   starts_at TEXT NOT NULL,
@@ -311,7 +351,7 @@ CREATE TABLE IF NOT EXISTS license_code_inventory (
   )),
   seats INTEGER NOT NULL DEFAULT 1 CHECK (seats BETWEEN 1 AND 10000),
   entitlements_json TEXT NOT NULL DEFAULT '[]',
-  offline_validity_days INTEGER NOT NULL DEFAULT 90
+  offline_validity_days INTEGER NOT NULL DEFAULT 14
     CHECK (offline_validity_days BETWEEN 7 AND 365),
   status TEXT NOT NULL DEFAULT 'available'
     CHECK (status IN ('available', 'claiming', 'claimed', 'revoked')),
@@ -394,6 +434,34 @@ CREATE TABLE IF NOT EXISTS license_activations (
   UNIQUE(license_id, activation_identifier),
   FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS license_email_verifications (
+  challenge_id TEXT PRIMARY KEY,
+  purpose TEXT NOT NULL CHECK (purpose IN ('activation', 'email_change')),
+  email TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  product_code TEXT NOT NULL,
+  company_binding TEXT NOT NULL,
+  license_id INTEGER,
+  target_email TEXT,
+  installation_id TEXT,
+  activation_identifier TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  current_email_verified_at TEXT,
+  verified_at TEXT,
+  consumed_at TEXT,
+  CHECK (
+    (purpose = 'activation' AND license_id IS NULL AND target_email IS NULL)
+    OR (purpose = 'email_change' AND license_id IS NOT NULL AND target_email IS NOT NULL)
+  ),
+  FOREIGN KEY (license_id) REFERENCES licenses(id)
+);
+CREATE INDEX IF NOT EXISTS idx_license_email_verifications_email
+  ON license_email_verifications(email, purpose, created_at);
+CREATE INDEX IF NOT EXISTS idx_license_email_verifications_license
+  ON license_email_verifications(license_id, purpose, created_at);
 
 CREATE TABLE IF NOT EXISTS license_artifacts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -896,6 +964,18 @@ CREATE INDEX IF NOT EXISTS idx_licenses_customer ON licenses(customer_id);
 CREATE INDEX IF NOT EXISTS idx_amc_customer ON amc_contracts(customer_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_customer ON support_tickets(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
+
+CREATE TABLE IF NOT EXISTS d1_storage_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  database_id TEXT NOT NULL,
+  database_name TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+  UNIQUE (database_id, sampled_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_d1_storage_snapshots_database_sampled
+  ON d1_storage_snapshots(database_id, sampled_at DESC);
 CREATE INDEX IF NOT EXISTS idx_referrals_customer ON referrals(referrer_customer_id);
 CREATE INDEX IF NOT EXISTS idx_projects_customer ON implementation_projects(customer_id);
 CREATE INDEX IF NOT EXISTS idx_releases_product ON product_releases(product_id);

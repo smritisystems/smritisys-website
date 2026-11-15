@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "smritisys-d1-operations",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-15",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "DATABASE_ID": "19066da9-8183-42cb-92e3-c64d1ee799de",
+    "DATABASE_NAME": "smritisys-db"
+  },
+  "triggers": {
+    "crons": ["0 2 * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "smritisys-db",
+      "database_id": "19066da9-8183-42cb-92e3-c64d1ee799de"
+    }
+  ]
+}

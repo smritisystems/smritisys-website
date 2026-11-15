@@ -6,15 +6,15 @@ document_type: "SPECIFICATION"
 product: "PrathamOne EduOS"
 edition: "Coaching Institute Edition"
 version: "1.0.0"
-doc_version: "1.5"
+doc_version: "1.9"
 created_date: "2026-11-14"
 updated_date: "2026-11-15"
 author: "Jawahar R Mallah"
 organization: "AITDL — AI Technology & Development Lab"
 status: "In Progress"
-tags: ["licensing", "Ed25519", "activation", "entitlements", "security"]
-entities: ["License", "Activation", "Entitlement", "LicenseEvent", "LicenseCode"]
-api_routes: ["/api/license/activate", "/api/licenses", "/api/licenses/batches", "/api/licenses/batches/:batch_id/codes", "/api/licenses/batches/:batch_id/issue", "/api/products"]
+tags: ["licensing", "Ed25519", "activation", "entitlements", "security", "D1", "monitoring"]
+entities: ["License", "Activation", "Entitlement", "LicenseEvent", "LicenseCode", "D1StorageSnapshot"]
+api_routes: ["/api/license/activate", "/api/licenses", "/api/licenses/batches", "/api/licenses/batches/:batch_id/codes", "/api/licenses/batches/:batch_id/codes/:serial_number/reveal", "/api/licenses/batches/:batch_id/codes/:serial_number/restore", "/api/licenses/batches/:batch_id/issue", "/api/products", "/api/admin/d1-operations"]
 related_modules: ["12_RBAC_SECURITY", "13_SYSADMIN_SETTINGS", "16_DATABASE_API"]
 ---
 
@@ -37,7 +37,7 @@ Organizations are not accepted from the browser as ownership proof. License owne
 - `products`: product catalog; `slug` is the product code.
 - `product_editions`: product-specific edition catalog.
 - `licenses`: legacy-compatible license authority.
-- `license_code_inventory`: serial/key inventory; stores only SHA-256 activation-key hashes and claim bindings, never plaintext activation keys. Delivery status and recipient metadata are separate from activation lifecycle status.
+- `license_code_inventory`: serial/key inventory; stores SHA-256 activation-key hashes, AES-GCM ciphertext for protected per-code reveal, and claim bindings, never plaintext activation keys. Delivery status and recipient metadata are separate from activation lifecycle status.
 - `license_editions`: edition assignment for a license.
 - `license_entitlements`: extensible key/value records such as `users`, `branches`, `devices`, `modules`, `industry_pack`, and `support_level`.
 - `license_activations`: installation and activation identifiers, an installation refresh public key, and limited operational metadata.
@@ -79,7 +79,7 @@ Activation requires an installation ID, activation identifier, and an exact non-
 
 Existing licenses without a company binding require an authorized customer-to-product mapping before their next activation; the system does not invent a binding during migration. New batch codes are generated unassigned, linked to one product/edition and commercial term, and have a default one-seat limit. On first claim, the customer supplies the institution name, contact name, email and phone; address and tax ID are optional. The licensing authority reuses the canonical customer only when the contact email and organization match, otherwise it rejects conflicting identity data.
 
-Claiming creates the customer, organization membership, license, edition, entitlements, audit event and code-to-installation binding transactionally. A code can be retried only by the same installation, activation identifier and company binding. Activation keys are shown only in the batch-creation response and are not stored; lost exports cannot be recovered. The batch API returns aggregate inventory status without key hashes.
+Claiming creates the customer, organization membership, license, edition, entitlements, audit event and code-to-installation binding transactionally. A code can be retried only by the same installation, activation identifier and company binding. Generated keys are returned in the batch-creation response and encrypted at rest for protected reveal. Legacy hash-only keys are not derivable; a super admin may restore one only by supplying the original key for its existing serial, which must match the stored SHA-256 hash. The batch API returns aggregate inventory status without key hashes.
 
 DRAFT license keys are not returned to customer list responses, and the authority rejects DRAFT activation before artifact signing. PrathamOne also treats DRAFT, suspended, or cancelled signed states as non-active, including perpetual and one-time models.
 
@@ -98,7 +98,7 @@ DRAFT license keys are not returned to customer list responses, and the authorit
 
 The authenticated super-admin workspace can issue licenses for active organizations and product editions, generate batches of 1-200 unassigned activation-code pairs, review batch counts without retrieving keys, record per-serial delivery and recipient details, configure edition Evaluation Mode/grace/rollout policy, inspect entitlements, activations, signed-artifact metadata, and lifecycle events, renew or suspend licenses, and revoke activations. Batch codes use nine-digit numeric serials and 16-character uppercase alphanumeric activation keys. Delivery status (`not_issued` or `issued`) is independent of activation status. Manually marking codes issued requires available codes and records the actor, recipient, channel, reference, timestamp, and an audit event. A successful activation also marks a code issued, recording the registration contact and the `activation` channel. A batch can be revoked only while none of its codes are claimed or being claimed; revocations are audited.
 
-`POST /api/licenses` returns a stable `SMR-LIC-########` serial number and the direct-issue key once. `POST /api/licenses/batches` returns generated serial/key pairs once; the keys are hash-only at rest and absent from all list, audit and batch-summary responses. `GET /api/licenses/batches/:batch_id/codes` returns serials, activation lifecycle status, and delivery metadata without key hashes. `POST /api/licenses/batches/:batch_id/issue` marks a selected set of available, unissued serials as issued atomically and records the recipient and audit event. `POST /api/licenses/batches/:batch_id/revoke` revokes all unclaimed codes in one batch and records an audit event. The admin workspace offers a CSV download from the current response and clears the in-memory key list on sign-out. License creation and customer registration are audited without including activation keys. Existing-organization issuance remains available.
+`POST /api/licenses` returns a stable `SMR-LIC-########` serial number and the direct-issue key once. `POST /api/licenses/batches` returns generated serial/key pairs once and requires `LICENSE_CODE_ENCRYPTION_KEY`, a base64-encoded 32-byte secret. Batch keys retain their SHA-256 verification hash and an AES-256-GCM ciphertext bound to the batch and serial; generation fails if protected storage is not configured. `GET /api/licenses/batches/:batch_id/codes` returns serials, activation lifecycle status, delivery metadata, and recoverability status without key hashes or ciphertext. `POST /api/licenses/batches/:batch_id/codes/:serial_number/reveal` permits one available code at a time after a super-admin password check, applies a rate limit, and writes an audit event without the key. `POST /api/licenses/batches/:batch_id/codes/:serial_number/restore` accepts a supplied legacy key only for an available, unclaimed record with no ciphertext; after a super-admin password check and rate limit, it verifies the key against the existing hash, encrypts it with the original batch and serial as authenticated data, and atomically stores it with a redacted audit event. It does not create a new inventory row or change the code status. Claimed, revoked, mismatched, or already-protected codes cannot be restored; the endpoint never returns the supplied key. Bulk reveal is not supported. Keep the encryption secret stable: replacing it without re-encrypting stored values makes those values unrecoverable. `POST /api/licenses/batches/:batch_id/issue` marks a selected set of available, unissued serials as issued atomically and records the recipient and audit event. `POST /api/licenses/batches/:batch_id/revoke` revokes all unclaimed codes in one batch and records an audit event. The admin workspace offers a CSV download from the current response and clears the in-memory key list on sign-out. License creation and customer registration are audited without including activation keys. Existing-organization issuance remains available.
 
 Private signing material and signed artifact payload/signature bytes are not rendered in the workspace.
 
@@ -114,6 +114,7 @@ Private signing material and signed artifact payload/signature bytes are not ren
 - `GET /api/licenses/batches` (super admin; summary only)
 - `POST /api/licenses/batches` (super admin; returns key pairs once)
 - `GET /api/licenses/batches/:batch_id/codes` (super admin; serials and delivery metadata only)
+- `POST /api/licenses/batches/:batch_id/codes/:serial_number/restore` (super admin; restore a matching existing legacy key)
 - `POST /api/licenses/batches/:batch_id/issue` (super admin; mark available codes issued and audit delivery details)
 - `GET /api/licenses/:id`
 - `PATCH /api/licenses/:id` (metadata only)
@@ -130,9 +131,20 @@ Private signing material and signed artifact payload/signature bytes are not ren
 - `POST /api/license/refresh` (installation-key-authenticated snapshot refresh)
 - `POST /api/v1/license/offline-request` (authorized PrathamOne admin; creates the request file)
 - `POST /api/v1/license/offline-import` (authorized PrathamOne admin; verifies and imports a signed response)
+- `GET /api/admin/d1-operations` (super admin; read-only storage snapshots and explicit backup-disabled status)
 
 Every privileged mutation writes both a license event where applicable and a security audit event.
 
+## D1 capacity monitoring
+
+The SMRITISYS control plane monitors the two existing account databases, `smritisys-db-recovery` and `smritisys-db`; it does not provision additional databases or redirect application traffic. Adding a database later requires updating the Worker bindings and application-level database routing; an admin-panel “add database” action would not automatically append capacity. The `d1_storage_snapshots` table stores telemetry history. A daily Cron-triggered Worker samples each D1 binding's `meta.size_after`, stores trend points in the recovery database, and presents Free/Paid per-database and account-wide limit comparisons to super admins. Growth projections are withheld until there are at least two daily samples.
+
+Automated backups are disabled in the current monitoring-only rollout. The dashboard explicitly warns that no backups or restore points are being created. R2 provisioning, export credentials, backup history, and restore/download controls are not included.
+
+The account plan is not assumed. The dashboard compares both Free and Paid limits, with visual warnings at 75% and 90%. The trend is based on daily snapshots rather than extrapolating from a single size measurement. Sampling runs at 02:00 UTC and reads the two D1 databases sequentially.
+
+Production activation requires applying migration `0024_d1_operations_monitoring.sql` to `smritisys-db-recovery`, deploying the sampling Worker, and deploying the Pages changes. No R2 bucket or export token is required. This rollout does not replace a separate database backup and restore plan.
+
 ## Validation and remaining work
 
-The control-plane tests cover company-binding rejection, signed-artifact verification, direct activation-only customer registration, one-time batch generation, hash-only key storage, claim idempotency, installation binding, registration reuse, audit redaction, and the existing staging contracts. The PrathamOne tests cover signed response verification and the per-artifact offline-validity boundary. The isolated signing service still needs a provider selection, operational provisioning and key lifecycle procedures. Before production rollout, complete integration testing against the chosen signer, product-specific entitlement review, code-revocation procedures, signed release verification, and customer migration/recovery rehearsal. Migration `0019_license_code_inventory.sql` is source only; it has not been applied to production. No deployment or production license issuance has been performed.
+The control-plane tests cover company-binding rejection, signed-artifact verification, direct activation-only customer registration, one-time batch generation, hash and ciphertext storage, password-confirmed single-code reveal, hash-verified restoration of legacy keys, restoration authorization and duplicate rejection, audit redaction, claim idempotency, installation binding, registration reuse, D1 dashboard authorization, and the existing staging contracts. The PrathamOne tests cover signed response verification and the per-artifact offline-validity boundary. The isolated signing service still needs a provider selection, operational provisioning and key lifecycle procedures. Before production rollout, complete integration testing against the chosen signer, product-specific entitlement review, code-revocation procedures, signed release verification, and customer migration/recovery rehearsal. Migration `0019_license_code_inventory.sql` is source only; it has not been applied to production. The D1 monitoring migration and scheduled sampler remain code-only until deployed; automated backups are not configured.

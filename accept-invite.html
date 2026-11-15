@@ -14,13 +14,13 @@
   <section class="login-shell">
     <div class="login-art">
       <div class="brand">SMRITISYS</div>
-      <h1>Set up your customer access.</h1>
-      <p>Choose a password to finish creating your customer account.</p>
+      <h1 id="inviteHeroTitle">Set up your customer access.</h1>
+      <p id="inviteHeroDescription">Choose a password to finish creating your customer account.</p>
     </div>
     <div class="login-panel">
       <div class="login-box">
-        <span class="eyebrow">Customer onboarding</span>
-        <h2>Create your password</h2>
+        <span id="inviteEyebrow" class="eyebrow">Customer onboarding</span>
+        <h2 id="invitePanelTitle">Create your password</h2>
         <p class="muted">Use at least 12 characters. This invitation can only be used once.</p>
         <form id="inviteForm">
           <label for="invitePassword">Password</label>
@@ -31,8 +31,8 @@
         </form>
         <p id="inviteMessage" class="message" role="status" aria-live="polite"></p>
         <div id="inviteComplete" class="hidden">
-          <p>Your account is ready. Sign in with the invited email and the password you just created.</p>
-          <a class="secondary" href="/portal.html">Go to customer sign in</a>
+          <p id="inviteCompleteText">Your account is ready. Sign in with the invited email and the password you just created.</p>
+          <a id="inviteSignIn" class="secondary" href="/portal.html">Go to customer sign in</a>
         </div>
       </div>
     </div>
