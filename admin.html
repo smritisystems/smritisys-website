@@ -132,6 +132,21 @@
         <div class="section-head dashboard-head"><div><span class="eyebrow">Inventory</span><h2>Activation code batches</h2></div></div>
         <div id="adminLicenseBatchesState" class="state-panel">Loading activation code batches...</div>
         <div id="adminLicenseBatchesList" class="card hidden"></div>
+        <div class="section-head dashboard-head"><div><span class="eyebrow">Delivery tracking</span><h2>Issued serial numbers</h2></div></div>
+        <form id="licenseCodeIssueForm" class="card">
+          <p class="muted">Choose “View codes” on a batch, select unissued serial numbers, and record who received them. Activation keys are never displayed or stored in this delivery record. A successful customer activation is recorded as issued automatically.</p>
+          <div class="form-grid">
+            <div><label for="licenseCodeRecipientName">Recipient name</label><input id="licenseCodeRecipientName" name="recipient_name" maxlength="120" required /></div>
+            <div><label for="licenseCodeRecipientOrganization">Recipient organization</label><input id="licenseCodeRecipientOrganization" name="recipient_organization" maxlength="200" /></div>
+            <div><label for="licenseCodeRecipientEmail">Recipient email</label><input id="licenseCodeRecipientEmail" name="recipient_email" type="email" maxlength="254" /></div>
+            <div><label for="licenseCodeDeliveryChannel">Delivery channel</label><select id="licenseCodeDeliveryChannel" name="delivery_channel" required><option value="email">Email</option><option value="messaging">Messaging</option><option value="phone">Phone</option><option value="in_person">In person</option><option value="other">Other</option></select></div>
+            <div class="full"><label for="licenseCodeDeliveryReference">Delivery reference (optional)</label><input id="licenseCodeDeliveryReference" name="delivery_reference" maxlength="200" placeholder="Order, invoice, or dispatch reference" /></div>
+          </div>
+          <div class="form-actions"><button id="licenseCodeIssueButton" class="primary" type="submit" disabled>Mark selected codes as issued</button></div>
+          <p id="licenseCodeDeliveryMessage" class="message" role="status"></p>
+        </form>
+        <div id="adminLicenseCodesState" class="state-panel">Choose a batch to review its serial delivery status.</div>
+        <div id="adminLicenseCodesList" class="card hidden"></div>
         <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Issued licenses</h2></div></div>
         <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
         <div id="adminLicensesList" class="license-list"></div>
@@ -141,6 +156,6 @@
       <section class="admin-view" data-admin-section="security"><div class="section-head"><div><span class="eyebrow">Account security</span><h2>Change your password</h2></div></div><form id="adminPasswordForm" class="card" method="post"><label for="adminCurrentPassword">Current password</label><input id="adminCurrentPassword" name="current_password" type="password" autocomplete="current-password" required /><label for="adminNewPassword">New password</label><input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="12" required /><div class="form-actions"><button id="adminPasswordButton" class="primary" type="submit">Change password</button></div><p id="adminPasswordMessage" class="message" role="status"></p><p class="muted">Changing your password signs out all active sessions.</p></form></section>
     </div></main>
   </section>
-  <script src="js/admin.js?v=license-codes-200-v1" defer></script>
+  <script src="js/admin.js?v=license-delivery-tracking-v1" defer></script>
 </body>
 </html>

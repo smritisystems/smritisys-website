@@ -15,7 +15,15 @@
  *
  * @description Manages the authenticated admin workspace, customer invitations, and licenses.
  */
-const adminState = { token: null, announcements: [], products: [], licenses: [], organizations: [], licenseBatchCodes: null };
+const adminState = {
+  token: null,
+  announcements: [],
+  products: [],
+  licenses: [],
+  organizations: [],
+  licenseBatchCodes: null,
+  licenseCodeBatchId: null,
+};
 const admin$ = (selector) => document.querySelector(selector);
 const admin$$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -181,7 +189,44 @@ function renderLicenseBatches(batches) {
   }
   state.classList.add('hidden');
   list.classList.remove('hidden');
-  list.innerHTML = `<table class="admin-table"><thead><tr><th>Created</th><th>Product / edition</th><th>Total</th><th>Available</th><th>Claimed</th><th>Revoked</th></tr></thead><tbody>${batches.map((batch) => `<tr><td>${adminEscape(batch.created_at)}</td><td>${adminEscape(batch.product_name)} / ${adminEscape(batch.edition_name)}</td><td>${adminEscape(batch.total)}</td><td>${adminEscape(batch.available)}</td><td>${adminEscape(batch.claimed)}</td><td>${adminEscape(batch.revoked)}</td></tr>`).join('')}</tbody></table>`;
+  list.innerHTML = `<table class="admin-table"><thead><tr><th>Created</th><th>Product / edition</th><th>Total</th><th>Available</th><th>Claimed</th><th>Revoked</th><th>Not issued</th><th>Issued</th><th>Codes</th></tr></thead><tbody>${batches.map((batch) => `<tr><td>${adminEscape(batch.created_at)}</td><td>${adminEscape(batch.product_name)} / ${adminEscape(batch.edition_name)}</td><td>${adminEscape(batch.total)}</td><td>${adminEscape(batch.available)}</td><td>${adminEscape(batch.claimed)}</td><td>${adminEscape(batch.revoked)}</td><td>${adminEscape(batch.not_issued)}</td><td>${adminEscape(batch.issued)}</td><td><button class="secondary" type="button" data-license-code-batch="${adminEscape(batch.batch_id)}">View codes</button></td></tr>`).join('')}</tbody></table>`;
+}
+
+async function loadLicenseCodeInventory(batchId) {
+  adminState.licenseCodeBatchId = batchId;
+  const state = admin$('#adminLicenseCodesState');
+  const list = admin$('#adminLicenseCodesList');
+  const issueButton = admin$('#licenseCodeIssueButton');
+  state.className = 'state-panel';
+  state.textContent = 'Loading serial delivery details...';
+  list.classList.add('hidden');
+  issueButton.disabled = true;
+
+  const result = await adminApi(`licenses/batches/${encodeURIComponent(batchId)}/codes`);
+  if (adminState.licenseCodeBatchId !== batchId) return;
+  const eligibleCodes = result.codes.filter((code) =>
+    code.status === 'available' && code.delivery_status === 'not_issued');
+  state.classList.add('hidden');
+  list.classList.remove('hidden');
+  list.innerHTML = `<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. Activation keys are never displayed here.</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Channel</th><th>Issued at</th></tr></thead><tbody>${result.codes.map((code) => {
+    const eligible = code.status === 'available' && code.delivery_status === 'not_issued';
+    const recipient = [code.issued_to_name, code.issued_to_organization, code.issued_to_email]
+      .filter(Boolean).map(adminEscape).join('<br>');
+    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td></tr>`;
+  }).join('')}</tbody></table>`;
+
+  const updateIssueButton = () => {
+    issueButton.disabled = list.querySelectorAll('input[name="serial_number"]:checked').length === 0;
+  };
+  list.querySelector('#licenseCodeSelectAll')?.addEventListener('change', (event) => {
+    list.querySelectorAll('input[name="serial_number"]').forEach((checkbox) => {
+      checkbox.checked = event.currentTarget.checked;
+    });
+    updateIssueButton();
+  });
+  list.querySelectorAll('input[name="serial_number"]').forEach((checkbox) => {
+    checkbox.addEventListener('change', updateIssueButton);
+  });
 }
 
 async function loadLicenseEditions(productSelect, editionSelect) {
@@ -528,6 +573,73 @@ admin$('#licensePolicyProduct').addEventListener('change', async () => {
 });
 
 admin$('#licensePolicyEdition').addEventListener('change', loadLicensePolicy);
+
+admin$('#adminLicenseBatchesList').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-license-code-batch]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await loadLicenseCodeInventory(button.dataset.licenseCodeBatch);
+    admin$('#adminLicenseCodesList').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (error) {
+    admin$('#adminLicenseCodesState').className = 'state-panel error-state';
+    admin$('#adminLicenseCodesState').textContent = error.message || 'Code inventory is unavailable.';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+admin$('#licenseCodeIssueForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const batchId = adminState.licenseCodeBatchId;
+  const serialNumbers = admin$$('#adminLicenseCodesList input[name="serial_number"]:checked')
+    .map((checkbox) => checkbox.value);
+  if (!batchId || !serialNumbers.length) {
+    adminMessage(admin$('#licenseCodeDeliveryMessage'), 'Select a batch and at least one unissued serial number.', false);
+    return;
+  }
+
+  const form = new FormData(event.currentTarget);
+  const body = {
+    serial_numbers: serialNumbers,
+    recipient_name: form.get('recipient_name'),
+    recipient_organization: form.get('recipient_organization') || null,
+    recipient_email: form.get('recipient_email') || null,
+    delivery_channel: form.get('delivery_channel'),
+    delivery_reference: form.get('delivery_reference') || null,
+  };
+  const button = admin$('#licenseCodeIssueButton');
+  button.disabled = true;
+  let result;
+  try {
+    result = await adminApi(`licenses/batches/${encodeURIComponent(batchId)}/issue`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    adminMessage(admin$('#licenseCodeDeliveryMessage'), error.message, false);
+    button.disabled = false;
+    return;
+  }
+  adminMessage(
+    admin$('#licenseCodeDeliveryMessage'),
+    `Marked ${result.issued_count} serial number(s) as issued. The delivery action was audited.`,
+    true,
+  );
+  await loadAdminProducts();
+  try {
+    await loadLicenseCodeInventory(batchId);
+  } catch (error) {
+    admin$('#adminLicenseCodesState').className = 'state-panel error-state';
+    admin$('#adminLicenseCodesState').textContent = error.message || 'Code inventory refresh failed.';
+    adminMessage(
+      admin$('#licenseCodeDeliveryMessage'),
+      `The codes were marked issued, but their status could not be refreshed: ${error.message}`,
+      false,
+    );
+    button.disabled = false;
+  }
+});
 
 admin$('#licenseBatchForm').addEventListener('submit', async (event) => {
   event.preventDefault();

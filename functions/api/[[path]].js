@@ -774,9 +774,18 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
          installation_id = ?,
          activation_identifier = ?,
          contact_email = ?,
+         delivery_status = 'issued',
+         issued_to_name = ?,
+         issued_to_organization = ?,
+         issued_to_email = ?,
+         delivery_channel = 'activation',
+         issued_at = datetime('now'),
          claimed_at = datetime('now')
      WHERE id = ? AND status = 'claiming'`
-  ).bind(generatedLicenseKey, companyBinding, installationId, activationIdentifier, customerEmail, code.id));
+  ).bind(
+    generatedLicenseKey, companyBinding, installationId, activationIdentifier, customerEmail,
+    contactName, institutionName, customerEmail, code.id,
+  ));
   statements.push(env.DB.prepare(
     `INSERT INTO audit_logs
      (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
@@ -789,6 +798,10 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
     product_id: code.product_id,
     edition_id: code.edition_id,
     contact_email: customerEmail,
+    delivery_status: "issued",
+    issued_to_name: contactName,
+    issued_to_organization: institutionName,
+    delivery_channel: "activation",
   }), code.id, generatedLicenseKey));
 
   const results = await env.DB.batch(statements);
@@ -1506,7 +1519,9 @@ async function handleLicenseCodeBatches(request, env) {
               COUNT(*) AS total,
               SUM(CASE WHEN b.status = 'available' THEN 1 ELSE 0 END) AS available,
               SUM(CASE WHEN b.status = 'claimed' THEN 1 ELSE 0 END) AS claimed,
-              SUM(CASE WHEN b.status = 'revoked' THEN 1 ELSE 0 END) AS revoked
+              SUM(CASE WHEN b.status = 'revoked' THEN 1 ELSE 0 END) AS revoked,
+              SUM(CASE WHEN b.delivery_status = 'not_issued' THEN 1 ELSE 0 END) AS not_issued,
+              SUM(CASE WHEN b.delivery_status = 'issued' THEN 1 ELSE 0 END) AS issued
        FROM license_code_inventory b
        JOIN products p ON p.id = b.product_id
        JOIN product_editions e ON e.id = b.edition_id
@@ -1602,6 +1617,133 @@ async function handleLicenseCodeBatches(request, env) {
 
   await env.DB.batch(statements);
   return json({ ok: true, batch_id: batchId, count, codes, offline_validity_days: 90 }, 201);
+}
+
+async function getLicenseCodeBatchCodes(request, env, batchId) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(batchId)) {
+    return json({ ok: false, error: "A valid batch id is required" }, 400);
+  }
+
+  const batch = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM license_code_inventory WHERE batch_id = ?"
+  ).bind(batchId).first();
+  if (!Number(batch?.count)) return json({ ok: false, error: "License code batch not found" }, 404);
+
+  const { results } = await env.DB.prepare(
+    `SELECT serial_number, status, delivery_status, issued_to_name,
+            issued_to_organization, issued_to_email, delivery_channel,
+            delivery_reference, issued_at
+     FROM license_code_inventory
+     WHERE batch_id = ?
+     ORDER BY serial_number LIMIT 500`
+  ).bind(batchId).all();
+  return json({ ok: true, batch_id: batchId, codes: results || [] });
+}
+
+async function issueLicenseCodes(request, env, batchId) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(batchId)) {
+    return json({ ok: false, error: "A valid batch id is required" }, 400);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid JSON code-issuance request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A code-issuance request object is required" }, 400);
+  }
+
+  const serialNumbers = Array.isArray(body.serial_numbers)
+    ? body.serial_numbers.map((value) => boundedString(value, 80))
+    : [];
+  const recipientName = boundedString(body.recipient_name, 120);
+  const recipientOrganization = body.recipient_organization == null || body.recipient_organization === ""
+    ? null
+    : boundedString(body.recipient_organization, 200);
+  const emailProvided = body.recipient_email != null && body.recipient_email !== "";
+  const recipientEmail = emailProvided ? validEmail(body.recipient_email) : null;
+  const referenceProvided = body.delivery_reference != null && body.delivery_reference !== "";
+  const deliveryReference = referenceProvided ? boundedString(body.delivery_reference, 200) : null;
+  const deliveryChannels = ["email", "messaging", "phone", "in_person", "other"];
+  const deliveryChannel = boundedString(body.delivery_channel, 20);
+  if (serialNumbers.length < 1 || serialNumbers.length > 200 ||
+      serialNumbers.some((serialNumber) => !serialNumber) ||
+      new Set(serialNumbers).size !== serialNumbers.length ||
+      !recipientName ||
+      (body.recipient_organization != null && body.recipient_organization !== "" && !recipientOrganization) ||
+      (emailProvided && !recipientEmail) ||
+      (referenceProvided && !deliveryReference) ||
+      !deliveryChannels.includes(deliveryChannel)) {
+    return json({ ok: false, error: "Provide 1-200 unique serials, a recipient name, and valid delivery details" }, 400);
+  }
+
+  const batch = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM license_code_inventory WHERE batch_id = ?"
+  ).bind(batchId).first();
+  if (!Number(batch?.count)) return json({ ok: false, error: "License code batch not found" }, 404);
+
+  const serialNumbersJson = JSON.stringify(serialNumbers);
+  const auditDetails = JSON.stringify({
+    delivery_status: "issued",
+    serial_numbers: serialNumbers,
+    recipient_name: recipientName,
+    recipient_organization: recipientOrganization,
+    recipient_email: recipientEmail,
+    delivery_channel: deliveryChannel,
+    delivery_reference: deliveryReference,
+  });
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE license_code_inventory
+       SET delivery_status = 'issued',
+           issued_at = datetime('now'),
+           issued_by_person_id = ?,
+           issued_to_name = ?,
+           issued_to_organization = ?,
+           issued_to_email = ?,
+           delivery_channel = ?,
+           delivery_reference = ?
+       WHERE batch_id = ?
+         AND serial_number IN (SELECT value FROM json_each(?))
+         AND status = 'available'
+         AND delivery_status = 'not_issued'
+         AND (
+           SELECT COUNT(*) FROM license_code_inventory
+           WHERE batch_id = ?
+             AND serial_number IN (SELECT value FROM json_each(?))
+             AND status = 'available'
+             AND delivery_status = 'not_issued'
+         ) = ?`
+    ).bind(
+      principal.person_id, recipientName, recipientOrganization, recipientEmail,
+      deliveryChannel, deliveryReference, batchId, serialNumbersJson,
+      batchId, serialNumbersJson, serialNumbers.length,
+    ),
+    env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       SELECT ?, NULL, 'LICENSE_CODES_ISSUED', 'license_code_batch_delivery', ?, ?, ?, ?
+       WHERE changes() = ?`
+    ).bind(
+      principal.person_id, batchId,
+      JSON.stringify({ delivery_status: "not_issued", count: serialNumbers.length }),
+      auditDetails, request.headers.get("CF-Connecting-IP") || null, serialNumbers.length,
+    ),
+  ]);
+  const issuedCount = Number(results?.[0]?.meta?.changes || 0);
+  if (issuedCount !== serialNumbers.length) {
+    return json({
+      ok: false,
+      error: "One or more selected codes are not available in this batch or have already been issued",
+    }, 409);
+  }
+  return json({ ok: true, batch_id: batchId, issued_count: issuedCount, serial_numbers: serialNumbers });
 }
 
 async function revokeLicenseCodeBatch(request, env, batchId) {
@@ -1865,6 +2007,12 @@ async function patchLicense(request, env, licenseId) {
 async function handleLicenses(request, env, segments) {
   if (segments[0] === "batches") {
     if (segments.length === 1) return await handleLicenseCodeBatches(request, env);
+    if (segments.length === 3 && segments[2] === "codes" && request.method === "GET") {
+      return await getLicenseCodeBatchCodes(request, env, segments[1]);
+    }
+    if (segments.length === 3 && segments[2] === "issue" && request.method === "POST") {
+      return await issueLicenseCodes(request, env, segments[1]);
+    }
     if (segments.length === 3 && segments[2] === "revoke" && request.method === "POST") {
       return await revokeLicenseCodeBatch(request, env, segments[1]);
     }

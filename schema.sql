@@ -320,18 +320,31 @@ CREATE TABLE IF NOT EXISTS license_code_inventory (
   installation_id TEXT,
   activation_identifier TEXT,
   contact_email TEXT,
+  delivery_status TEXT NOT NULL DEFAULT 'not_issued'
+    CHECK (delivery_status IN ('not_issued', 'issued')),
+  issued_to_name TEXT,
+  issued_to_organization TEXT,
+  issued_to_email TEXT,
+  delivery_channel TEXT
+    CHECK (delivery_channel IN ('email', 'messaging', 'phone', 'in_person', 'other', 'activation')),
+  delivery_reference TEXT,
+  issued_at TEXT,
+  issued_by_person_id INTEGER,
   created_by_person_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   claimed_at TEXT,
   FOREIGN KEY (product_id) REFERENCES products(id),
   FOREIGN KEY (edition_id) REFERENCES product_editions(id),
   FOREIGN KEY (license_id) REFERENCES licenses(id),
+  FOREIGN KEY (issued_by_person_id) REFERENCES people(id),
   FOREIGN KEY (created_by_person_id) REFERENCES people(id)
 );
 CREATE INDEX IF NOT EXISTS idx_license_code_inventory_batch
   ON license_code_inventory(batch_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_license_code_inventory_status
   ON license_code_inventory(status, product_id, edition_id);
+CREATE INDEX IF NOT EXISTS idx_license_code_inventory_delivery
+  ON license_code_inventory(batch_id, delivery_status, status);
 
 CREATE TABLE IF NOT EXISTS license_editions (
   license_id INTEGER PRIMARY KEY,

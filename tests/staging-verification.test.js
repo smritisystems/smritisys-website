@@ -429,6 +429,16 @@ test("license code inventory migration upgrades existing license and organizatio
   `);
   db.prepare("INSERT INTO licenses (id, license_key) VALUES (7, 'legacy-key')").run();
   db.exec(fs.readFileSync(new URL("../migrations/0019_license_code_inventory.sql", import.meta.url), "utf8"));
+  db.prepare("INSERT INTO products (id) VALUES (1)").run();
+  db.prepare("INSERT INTO product_editions (id) VALUES (1)").run();
+  db.prepare(
+    `INSERT INTO license_code_inventory
+     (batch_id, serial_number, activation_key_hash, product_id, edition_id, starts_at,
+      license_model, status, contact_email, claimed_at)
+     VALUES ('legacy-batch', '123456789', 'legacy-hash', 1, 1, '2026-01-01',
+             'on_premise_subscription', 'claimed', 'claimed@example.test', '2026-02-01 10:00:00')`
+  ).run();
+  db.exec(fs.readFileSync(new URL("../migrations/0020_license_code_delivery.sql", import.meta.url), "utf8"));
 
   const migrated = db.prepare("SELECT serial_number, offline_validity_days FROM licenses WHERE id = 7").get();
   assert.equal(migrated.serial_number, "SMR-LIC-00000007");
@@ -439,6 +449,21 @@ test("license code inventory migration upgrades existing license and organizatio
   assert.ok(db.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'license_code_inventory'"
   ).get());
+  const deliveryStatusColumn = db.prepare(
+    "SELECT dflt_value FROM pragma_table_info('license_code_inventory') WHERE name = 'delivery_status'"
+  ).get();
+  assert.equal(deliveryStatusColumn.dflt_value, "'not_issued'");
+  assert.ok(db.prepare(
+    "SELECT name FROM pragma_table_info('license_code_inventory') WHERE name = 'issued_by_person_id'"
+  ).get());
+  const existingClaim = db.prepare(
+    `SELECT delivery_status, issued_to_email, delivery_channel, issued_at
+     FROM license_code_inventory WHERE serial_number = '123456789'`
+  ).get();
+  assert.equal(existingClaim.delivery_status, "issued");
+  assert.equal(existingClaim.issued_to_email, "claimed@example.test");
+  assert.equal(existingClaim.delivery_channel, "activation");
+  assert.equal(existingClaim.issued_at, "2026-02-01 10:00:00");
 });
 
 test("pre-generated license codes are hash-only, claim once, and issue installation-bound 90-day artifacts", async () => {
@@ -570,7 +595,9 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
   assert.equal(payload.company_binding, activation.company_binding);
   assert.equal(payload.installation_id, activation.installation_id);
   const claimed = d1.raw.prepare(
-    `SELECT c.status, c.license_id, l.serial_number, l.offline_validity_days, o.address, o.tax_id
+    `SELECT c.status, c.license_id, c.delivery_status, c.issued_to_name,
+            c.issued_to_organization, c.issued_to_email, c.delivery_channel, c.issued_at,
+            l.serial_number, l.offline_validity_days, o.address, o.tax_id
      FROM license_code_inventory c
      JOIN licenses l ON l.id = c.license_id
      JOIN customers cu ON cu.id = l.customer_id
@@ -579,6 +606,17 @@ test("pre-generated license codes are hash-only, claim once, and issue installat
      WHERE c.serial_number = ?`
   ).get(code.serial_number);
   assert.equal(claimed.status, "claimed");
+  assert.equal(claimed.delivery_status, "issued");
+  assert.equal(claimed.issued_to_name, "Priya Sharma");
+  assert.equal(claimed.issued_to_organization, "New Coaching Academy");
+  assert.equal(claimed.issued_to_email, "priya@newacademy.example");
+  assert.equal(claimed.delivery_channel, "activation");
+  assert.ok(claimed.issued_at);
+  const claimAudit = d1.raw.prepare(
+    "SELECT new_value FROM audit_logs WHERE action = 'LICENSE_CODE_CLAIMED' AND resource_id = ?"
+  ).get(code.serial_number);
+  assert.equal(JSON.parse(claimAudit.new_value).delivery_status, "issued");
+  assert.equal(JSON.parse(claimAudit.new_value).issued_to_name, "Priya Sharma");
   assert.equal(claimed.serial_number, code.serial_number);
   assert.equal(claimed.offline_validity_days, 90);
   assert.equal(claimed.address, "12 Academy Road");
@@ -701,6 +739,108 @@ test("license code batches allow 200 new-format codes and safely revoke unused b
     ).all(guardedBatch.data.batch_id).map((row) => [row.status, row.count]),
     [["available", 1], ["claimed", 1]],
   );
+});
+
+test("license code delivery is authorized, atomic, audited, and independent from activation status", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-license-code-delivery";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(product.id);
+  const created = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      count: 2,
+      product_id: product.id,
+      edition_id: edition.id,
+      license_model: "on_premise_subscription",
+      start_date: "2026-11-15",
+      expiry_date: "2027-11-15",
+    },
+  });
+  assert.equal(created.status, 201);
+
+  const unauthorizedList = await callApi(d1, `licenses/batches/${created.data.batch_id}/codes`);
+  assert.equal(unauthorizedList.status, 403);
+  const inventory = await callApi(d1, `licenses/batches/${created.data.batch_id}/codes`, { token: adminToken });
+  assert.equal(inventory.status, 200);
+  assert.equal(inventory.data.codes.length, 2);
+  assert.ok(inventory.data.codes.every((row) => row.delivery_status === "not_issued"));
+  assert.equal(JSON.stringify(inventory.data).includes("activation_key_hash"), false);
+  assert.equal(JSON.stringify(inventory.data).includes(created.data.codes[0].activation_key), false);
+
+  const firstSerial = created.data.codes[0].serial_number;
+  const secondSerial = created.data.codes[1].serial_number;
+  const delivery = {
+    serial_numbers: [firstSerial],
+    recipient_name: "Priya Sharma",
+    recipient_organization: "New Coaching Academy",
+    recipient_email: "PRIYA@NEWACADEMY.EXAMPLE",
+    delivery_channel: "email",
+    delivery_reference: "order-1042",
+  };
+  const invalidDelivery = await callApi(d1, `licenses/batches/${created.data.batch_id}/issue`, {
+    method: "POST",
+    token: adminToken,
+    body: { ...delivery, recipient_email: "not-an-email" },
+  });
+  assert.equal(invalidDelivery.status, 400);
+
+  const unauthorizedIssue = await callApi(d1, `licenses/batches/${created.data.batch_id}/issue`, {
+    method: "POST",
+    body: delivery,
+  });
+  assert.equal(unauthorizedIssue.status, 403);
+
+  const issued = await callApi(d1, `licenses/batches/${created.data.batch_id}/issue`, {
+    method: "POST",
+    token: adminToken,
+    body: delivery,
+  });
+  assert.equal(issued.status, 200);
+  assert.equal(issued.data.issued_count, 1);
+  const issuedRow = d1.raw.prepare(
+    `SELECT status, delivery_status, issued_by_person_id, issued_to_name,
+            issued_to_organization, issued_to_email, delivery_channel, delivery_reference, issued_at
+     FROM license_code_inventory WHERE serial_number = ?`
+  ).get(firstSerial);
+  assert.equal(issuedRow.status, "available");
+  assert.equal(issuedRow.delivery_status, "issued");
+  assert.equal(issuedRow.issued_by_person_id, 201);
+  assert.equal(issuedRow.issued_to_name, "Priya Sharma");
+  assert.equal(issuedRow.issued_to_organization, "New Coaching Academy");
+  assert.equal(issuedRow.issued_to_email, "priya@newacademy.example");
+  assert.equal(issuedRow.delivery_channel, "email");
+  assert.equal(issuedRow.delivery_reference, "order-1042");
+  assert.ok(issuedRow.issued_at);
+
+  const partialConflict = await callApi(d1, `licenses/batches/${created.data.batch_id}/issue`, {
+    method: "POST",
+    token: adminToken,
+    body: { ...delivery, serial_numbers: [firstSerial, secondSerial] },
+  });
+  assert.equal(partialConflict.status, 409);
+  assert.equal(d1.raw.prepare(
+    "SELECT delivery_status FROM license_code_inventory WHERE serial_number = ?"
+  ).get(secondSerial).delivery_status, "not_issued");
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'LICENSE_CODES_ISSUED' AND resource_id = ?"
+  ).get(created.data.batch_id).count, 1);
+
+  const batchList = await callApi(d1, "licenses/batches", { token: adminToken });
+  assert.equal(batchList.data.batches[0].available, 2);
+  assert.equal(batchList.data.batches[0].not_issued, 1);
+  assert.equal(batchList.data.batches[0].issued, 1);
+  const audit = d1.raw.prepare(
+    "SELECT actor_person_id, new_value FROM audit_logs WHERE action = 'LICENSE_CODES_ISSUED' AND resource_id = ?"
+  ).get(created.data.batch_id);
+  assert.equal(audit.actor_person_id, 201);
+  assert.deepEqual(JSON.parse(audit.new_value).serial_numbers, [firstSerial]);
 });
 
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {

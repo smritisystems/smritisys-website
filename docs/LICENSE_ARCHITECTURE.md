@@ -6,7 +6,7 @@ document_type: "SPECIFICATION"
 product: "PrathamOne EduOS"
 edition: "Coaching Institute Edition"
 version: "1.0.0"
-doc_version: "1.4"
+doc_version: "1.5"
 created_date: "2026-11-14"
 updated_date: "2026-11-15"
 author: "Jawahar R Mallah"
@@ -14,7 +14,7 @@ organization: "AITDL — AI Technology & Development Lab"
 status: "In Progress"
 tags: ["licensing", "Ed25519", "activation", "entitlements", "security"]
 entities: ["License", "Activation", "Entitlement", "LicenseEvent", "LicenseCode"]
-api_routes: ["/api/license/activate", "/api/licenses", "/api/licenses/batches", "/api/products"]
+api_routes: ["/api/license/activate", "/api/licenses", "/api/licenses/batches", "/api/licenses/batches/:batch_id/codes", "/api/licenses/batches/:batch_id/issue", "/api/products"]
 related_modules: ["12_RBAC_SECURITY", "13_SYSADMIN_SETTINGS", "16_DATABASE_API"]
 ---
 
@@ -37,7 +37,7 @@ Organizations are not accepted from the browser as ownership proof. License owne
 - `products`: product catalog; `slug` is the product code.
 - `product_editions`: product-specific edition catalog.
 - `licenses`: legacy-compatible license authority.
-- `license_code_inventory`: unassigned serial/key inventory; stores only SHA-256 activation-key hashes and claim bindings, never plaintext activation keys.
+- `license_code_inventory`: serial/key inventory; stores only SHA-256 activation-key hashes and claim bindings, never plaintext activation keys. Delivery status and recipient metadata are separate from activation lifecycle status.
 - `license_editions`: edition assignment for a license.
 - `license_entitlements`: extensible key/value records such as `users`, `branches`, `devices`, `modules`, `industry_pack`, and `support_level`.
 - `license_activations`: installation and activation identifiers, an installation refresh public key, and limited operational metadata.
@@ -96,9 +96,9 @@ DRAFT license keys are not returned to customer list responses, and the authorit
 
 ## Internal administrator workspace
 
-The authenticated super-admin workspace can issue licenses for active organizations and product editions, generate batches of 1-200 unassigned activation-code pairs, review batch counts without retrieving keys, configure edition Evaluation Mode/grace/rollout policy, inspect entitlements, activations, signed-artifact metadata, and lifecycle events, renew or suspend licenses, and revoke activations. Batch codes use nine-digit numeric serials and 16-character uppercase alphanumeric activation keys. A batch can be revoked only while none of its codes are claimed or being claimed; revocations are audited.
+The authenticated super-admin workspace can issue licenses for active organizations and product editions, generate batches of 1-200 unassigned activation-code pairs, review batch counts without retrieving keys, record per-serial delivery and recipient details, configure edition Evaluation Mode/grace/rollout policy, inspect entitlements, activations, signed-artifact metadata, and lifecycle events, renew or suspend licenses, and revoke activations. Batch codes use nine-digit numeric serials and 16-character uppercase alphanumeric activation keys. Delivery status (`not_issued` or `issued`) is independent of activation status. Manually marking codes issued requires available codes and records the actor, recipient, channel, reference, timestamp, and an audit event. A successful activation also marks a code issued, recording the registration contact and the `activation` channel. A batch can be revoked only while none of its codes are claimed or being claimed; revocations are audited.
 
-`POST /api/licenses` returns a stable `SMR-LIC-########` serial number and the direct-issue key once. `POST /api/licenses/batches` returns generated serial/key pairs once; the keys are hash-only at rest and absent from all list, audit and batch-summary responses. `POST /api/licenses/batches/:batch_id/revoke` revokes all unclaimed codes in one batch and records an audit event. The admin workspace offers a CSV download from the current response and clears the in-memory key list on sign-out. License creation and customer registration are audited without including activation keys. Existing-organization issuance remains available.
+`POST /api/licenses` returns a stable `SMR-LIC-########` serial number and the direct-issue key once. `POST /api/licenses/batches` returns generated serial/key pairs once; the keys are hash-only at rest and absent from all list, audit and batch-summary responses. `GET /api/licenses/batches/:batch_id/codes` returns serials, activation lifecycle status, and delivery metadata without key hashes. `POST /api/licenses/batches/:batch_id/issue` marks a selected set of available, unissued serials as issued atomically and records the recipient and audit event. `POST /api/licenses/batches/:batch_id/revoke` revokes all unclaimed codes in one batch and records an audit event. The admin workspace offers a CSV download from the current response and clears the in-memory key list on sign-out. License creation and customer registration are audited without including activation keys. Existing-organization issuance remains available.
 
 Private signing material and signed artifact payload/signature bytes are not rendered in the workspace.
 
@@ -113,6 +113,8 @@ Private signing material and signed artifact payload/signature bytes are not ren
 - `POST /api/licenses` (license creation permission for an existing organization; super admin for direct customer registration)
 - `GET /api/licenses/batches` (super admin; summary only)
 - `POST /api/licenses/batches` (super admin; returns key pairs once)
+- `GET /api/licenses/batches/:batch_id/codes` (super admin; serials and delivery metadata only)
+- `POST /api/licenses/batches/:batch_id/issue` (super admin; mark available codes issued and audit delivery details)
 - `GET /api/licenses/:id`
 - `PATCH /api/licenses/:id` (metadata only)
 - `GET /api/licenses/:id/entitlements`
