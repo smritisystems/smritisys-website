@@ -25,8 +25,77 @@
     .admin-table { width:100%; border-collapse:collapse; }
     .admin-table th,.admin-table td { padding:.8rem .5rem; text-align:left; border-bottom:1px solid var(--line); }
     .admin-table th { color:var(--muted); font-size:.76rem; text-transform:uppercase; letter-spacing:.08em; }
-    @media (max-width:900px) { .admin-shell { grid-template-columns:1fr; } .admin-aside { padding:.8rem; } .admin-aside .brand { padding:.5rem .75rem 1rem; } .admin-nav { display:flex; overflow:auto; } .admin-nav button { white-space:nowrap; } .admin-logout { margin-top:.7rem; } .admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics { grid-template-columns:1fr; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } }
+    .admin-shell { grid-template-columns:258px minmax(0,1fr); background:#f4f7f8; }
+    .admin-aside { position:sticky; top:0; height:100vh; padding:1.5rem 1.1rem; background:linear-gradient(180deg,#172b32 0%,#132228 100%); }
+    .admin-aside .brand { font-size:1.05rem; letter-spacing:.08em; }
+    .admin-nav { gap:.4rem; }
+    .admin-nav button { border-radius:8px; padding:.8rem .9rem; transition:background .16s ease,color .16s ease; }
+    .admin-nav button.active { color:#fff; background:#0f766e; box-shadow:inset 3px 0 #7de4d2; }
+    .admin-nav button:focus-visible,.admin-product-tab:focus-visible { outline:3px solid #65d8c8; outline-offset:2px; }
+    .admin-logout { border-radius:8px; }
+    .admin-content { max-width:1680px; padding:clamp(1.25rem,3vw,2.7rem); }
+    .admin-main > .topbar { position:sticky; top:0; z-index:5; min-height:72px; background:#fff; box-shadow:0 1px 5px #17231f08; }
+    .admin-topbar-label { color:var(--muted); font-size:.8rem; margin-left:auto; margin-right:1rem; }
+    .admin-main > .topbar .user-chip { gap:.8rem; }
+    .admin-view > .welcome { margin-bottom:1.3rem; }
+    .admin-view > .welcome h2 { font-size:clamp(2rem,3.2vw,2.7rem); letter-spacing:-.035em; }
+    .admin-view > .welcome .muted { max-width:620px; line-height:1.6; }
+    .admin-view .card { border-radius:12px; box-shadow:0 8px 24px #173a3908; }
+    .admin-view .section-head h2 { letter-spacing:-.025em; }
+    .admin-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9rem; }
+    .admin-metrics .card { min-height:112px; padding:1.1rem 1.25rem; border-top:3px solid #7acfc2; }
+    .admin-metrics .stat-label { text-transform:capitalize; }
+    .admin-metrics .stat-value { font-size:2rem; }
+    .admin-overview-hero { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; margin-bottom:1.2rem; padding:1.65rem 1.8rem; color:#effffc; background:linear-gradient(115deg,#124d4a,#1f6c68 60%,#2b7774); border-radius:14px; box-shadow:0 14px 30px #14514b1c; }
+    .admin-overview-hero .eyebrow { color:#a7e4dc; }
+    .admin-overview-hero h2 { margin:.4rem 0; font:600 clamp(1.75rem,3vw,2.35rem)/1.15 'Space Grotesk',sans-serif; letter-spacing:-.035em; }
+    .admin-overview-hero p { margin:0; color:#d3f0eb; line-height:1.55; }
+    .admin-overview-actions { display:flex; flex-wrap:wrap; gap:.65rem; }
+    .admin-overview-hero .admin-overview-actions .secondary { border-color:#ffffff55; color:#fff; background:#ffffff14; white-space:nowrap; }
+    .admin-overview-hero .admin-overview-actions .secondary:hover { background:#ffffff25; }
+    .admin-overview-heading { display:flex; align-items:end; justify-content:space-between; gap:1rem; margin:1.8rem 0 .8rem; }
+    .admin-overview-heading h3 { margin:.25rem 0 0; font-size:1.2rem; }
+    .admin-overview-heading p { margin:.25rem 0 0; font-size:.82rem; }
+    .admin-ops-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9rem; }
+    .admin-ops-card { min-width:0; position:relative; overflow:hidden; padding:1.1rem 1.2rem; }
+    .admin-ops-card::after { content:""; position:absolute; width:4.5rem; height:4.5rem; right:-1.6rem; bottom:-2.2rem; border-radius:50%; background:#0f766e0b; }
+    .admin-ops-card .stat-value { font-size:1.9rem; }
+    .admin-ops-card .admin-metric-note { color:var(--muted); font-size:.78rem; }
+    .admin-overview-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:1rem; margin-top:1rem; }
+    .admin-panel-title { margin:0 0 .25rem; font-size:1.1rem; }
+    .admin-panel-subtitle { margin:0 0 1rem; color:var(--muted); font-size:.84rem; line-height:1.5; }
+    .admin-health-list { display:grid; gap:.85rem; }
+    .admin-health-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding-bottom:.75rem; border-bottom:1px solid var(--line); }
+    .admin-health-row:last-child { padding-bottom:0; border-bottom:0; }
+    .admin-health-row strong { font-family:'Space Grotesk',sans-serif; font-size:1.1rem; }
+    .admin-health-row span { color:var(--muted); font-size:.85rem; }
+    .admin-activity-list { display:grid; }
+    .admin-activity-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.25rem .8rem; padding:.8rem 0; border-top:1px solid var(--line); }
+    .admin-activity-item:first-child { border-top:0; padding-top:0; }
+    .admin-activity-item strong { font-size:.84rem; overflow-wrap:anywhere; }
+    .admin-activity-item small { color:var(--muted); font-size:.76rem; }
+    .admin-activity-item time { color:var(--muted); font-size:.74rem; white-space:nowrap; }
+    .admin-activity-meta { grid-column:1/-1; color:var(--muted); font-size:.78rem; overflow-wrap:anywhere; }
+    .admin-empty-inline { padding:.8rem 0; color:var(--muted); font-size:.86rem; }
+    .admin-product-tabs { display:flex; flex-wrap:wrap; gap:.45rem; margin:1.2rem 0 1rem; padding:.45rem; background:#e9f0f1; border:1px solid #dfe8e9; border-radius:10px; }
+    .admin-product-tab { border:0; border-radius:7px; padding:.7rem .95rem; color:#4b6264; background:transparent; font:600 .85rem 'DM Sans',sans-serif; }
+    .admin-product-tab:hover { color:var(--ink); background:#ffffff9c; }
+    .admin-product-tab[aria-selected="true"] { color:#fff; background:#145e59; box-shadow:0 2px 6px #145e5929; }
+    .admin-product-panel[hidden] { display:none !important; }
+    .admin-product-panel > .section-head:first-child { margin-top:.3rem; }
+    .admin-license-workspace { margin-top:.4rem; }
+    .admin-product-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9rem; margin-bottom:1rem; }
+    .admin-product-summary .card { min-height:105px; }
+    .admin-product-summary .stat-value { font-size:1.8rem; }
+    .admin-product-panel .dashboard-head { margin-top:1.5rem; }
+    .admin-product-panel .admin-table { min-width:720px; }
+    .admin-product-panel #adminLicenseBatchesList,.admin-product-panel #adminLicenseCodesList { overflow-x:auto; }
+    .admin-refresh { border-radius:8px; }
+    @media (max-width:1080px) { .admin-ops-metrics,.admin-product-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-overview-grid { grid-template-columns:1fr; } }
+    @media (max-width:900px) { .admin-shell { grid-template-columns:1fr; } .admin-aside { position:relative; height:auto; padding:.8rem; } .admin-aside .brand { padding:.5rem .75rem 1rem; } .admin-nav { display:flex; overflow:auto; } .admin-nav button { white-space:nowrap; } .admin-logout { margin-top:.7rem; } .admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:680px) { .admin-overview-hero { align-items:flex-start; flex-direction:column; padding:1.3rem; } .admin-topbar-label { display:none; } .admin-product-tabs { flex-wrap:nowrap; overflow-x:auto; } .admin-product-tab { flex:0 0 auto; } }
+    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics,.admin-ops-metrics,.admin-product-summary { grid-template-columns:1fr 1fr; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } .admin-overview-heading { align-items:flex-start; flex-direction:column; } .admin-activity-item { grid-template-columns:1fr; } .admin-activity-item time { grid-row:3; } .admin-main > .topbar .user-chip span:first-child { display:block; } }
+    @media (max-width:380px) { .admin-metrics,.admin-ops-metrics,.admin-product-summary { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -36,8 +105,24 @@
   </section>
   <section id="adminPortalView" class="admin-shell hidden">
     <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button><button data-admin-view="security">Security</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
-    <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
-      <section class="admin-view active" data-admin-section="overview"><div class="welcome"><div><span class="eyebrow">Internal control plane</span><h2>System overview</h2><p class="muted">Governance and relationship data for authorized staff.</p></div></div><div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div></section>
+    <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><span class="admin-topbar-label">Internal control plane</span><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
+      <section class="admin-view active" data-admin-section="overview">
+        <div class="admin-overview-hero">
+          <div><span class="eyebrow">Operations dashboard</span><h2>Good to see you, <span id="adminWelcomeName">Administrator</span></h2><p>License health, activation inventory, and recent control-plane activity at a glance.</p></div>
+          <div class="admin-overview-actions" aria-label="Overview quick actions">
+            <button class="secondary" type="button" data-admin-view="products" data-product-tab="issuance">Issue a license</button>
+            <button class="secondary" type="button" data-admin-view="products" data-product-tab="inventory">Manage code inventory</button>
+          </div>
+        </div>
+        <div class="admin-overview-heading"><div><span class="eyebrow">Business relationships</span><h3>Platform snapshot</h3></div><div class="admin-overview-actions"><p id="adminOverviewUpdated" class="muted">Loading current data…</p><button id="adminOverviewRefresh" class="secondary" type="button">Refresh</button></div></div>
+        <div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div>
+        <div class="admin-overview-heading"><div><span class="eyebrow">License operations</span><h3>Health &amp; inventory</h3></div><p class="muted">Live counts from the license authority</p></div>
+        <div id="adminOperationsMetrics" class="admin-ops-metrics" aria-live="polite"></div>
+        <div class="admin-overview-grid">
+          <section class="card" aria-labelledby="adminLicenseHealthTitle"><h3 id="adminLicenseHealthTitle" class="admin-panel-title">License status</h3><p class="admin-panel-subtitle">Current licenses grouped by their authority status.</p><div id="adminLicenseHealth" class="admin-health-list"></div></section>
+          <section class="card" aria-labelledby="adminActivityTitle"><h3 id="adminActivityTitle" class="admin-panel-title">Recent activity</h3><p class="admin-panel-subtitle">Latest recorded changes across the control plane.</p><div id="adminRecentActivity" class="admin-activity-list"></div></section>
+        </div>
+      </section>
       <section class="admin-view" data-admin-section="users"><div class="section-head"><div><span class="eyebrow">Identity</span><h2>Staff users</h2></div><button class="secondary admin-refresh" data-refresh="users" type="button">Refresh</button></div><div id="adminUsersState" class="state-panel">Loading users...</div><div id="adminUsersList" class="card hidden"></div></section>
       <section class="admin-view" data-admin-section="organizations">
         <div class="section-head"><div><span class="eyebrow">Relationships</span><h2>Organizations</h2></div><button class="secondary admin-refresh" data-refresh="organizations" type="button">Refresh</button></div>
@@ -65,50 +150,63 @@
       </section>
       <section class="admin-view" data-admin-section="products">
         <div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div>
-        <div id="adminProductsState" class="state-panel">Loading products, organizations, and licenses...</div>
-        <div id="adminProductsList" class="grid modules"></div>
-        <div class="admin-license-workspace">
-          <form id="licenseBatchForm" class="card">
-            <div class="section-head compact"><div><span class="eyebrow">License inventory</span><h2>Prepare activation codes</h2></div></div>
-            <p class="muted">Generate up to 200 unassigned pairs with nine-digit numeric serials and 16-character alphanumeric activation keys. Keys are returned only in this response and never stored in plaintext. Claimed licenses receive a 90-day offline activation response.</p>
-            <div class="form-grid">
-              <div><label for="licenseBatchCount">Number of codes</label><input id="licenseBatchCount" name="count" type="number" min="1" max="200" value="10" required /></div>
-              <div><label for="licenseBatchSeats">Seats per code</label><input id="licenseBatchSeats" name="seats" type="number" min="1" max="10000" value="1" required /></div>
-              <div><label for="licenseBatchProduct">Product</label><select id="licenseBatchProduct" name="product_id" required></select></div>
-              <div><label for="licenseBatchEdition">Edition</label><select id="licenseBatchEdition" name="edition_id" required></select></div>
-              <div><label for="licenseBatchModel">Commercial model</label><select id="licenseBatchModel" name="license_model"><option value="cloud_subscription">Cloud subscription</option><option value="cloud_one_time">Cloud one-time</option><option value="on_premise_subscription" selected>On-premise subscription</option><option value="on_premise_perpetual">On-premise perpetual</option></select></div>
-              <div><label for="licenseBatchStartDate">Start date</label><input id="licenseBatchStartDate" name="start_date" type="date" required /></div>
-              <div class="full"><label for="licenseBatchExpiryDate">Expiry date (leave blank for perpetual)</label><input id="licenseBatchExpiryDate" name="expiry_date" type="date" /></div>
-            </div>
-            <div class="form-actions"><button id="licenseBatchButton" class="primary" type="submit">Generate activation codes</button><button id="licenseBatchDownload" class="secondary hidden" type="button">Download this batch's codes (CSV)</button></div>
-            <p id="licenseBatchMessage" class="message" role="status"></p>
-          </form>
-          <form id="licenseIssueForm" class="card">
-            <div class="section-head compact"><div><span class="eyebrow">License authority</span><h2>Issue a license</h2></div></div>
-            <p class="muted">Issue an activation key without requiring a customer portal invite. The server registers the customer and organization, limits this license to one concurrent installation, and shows the activation key only once.</p>
-            <div class="form-grid">
-              <div class="full"><label for="licenseCustomerMode">Customer</label><select id="licenseCustomerMode" name="customer_mode"><option value="new" selected>Register new customer — activation only</option><option value="existing">Use an existing organization</option></select></div>
-              <div id="licenseNewCustomerFields" class="full">
-                <div class="form-grid">
-                  <div><label for="licenseCustomerEmail">Customer email</label><input id="licenseCustomerEmail" name="customer_email" type="email" maxlength="254" autocomplete="off" required /></div>
-                  <div><label for="licenseCustomerName">Contact name (optional)</label><input id="licenseCustomerName" name="customer_name" maxlength="120" autocomplete="off" /></div>
-                  <div class="full"><label for="licenseCustomerCompany">Organization name</label><input id="licenseCustomerCompany" name="customer_company" maxlength="200" autocomplete="organization" required /></div>
-                </div>
-                <p class="muted">No customer sign-in or invitation is created. The customer receives only the serial number and activation key.</p>
+        <div class="admin-product-tabs" role="tablist" aria-label="Product and license workspaces">
+          <button class="admin-product-tab" id="adminProductTabOverview" type="button" role="tab" aria-selected="true" aria-controls="adminProductPanelOverview" data-product-tab="overview">Portfolio</button>
+          <button class="admin-product-tab" id="adminProductTabIssuance" type="button" role="tab" aria-selected="false" aria-controls="adminProductPanelIssuance" data-product-tab="issuance">Create &amp; issue</button>
+          <button class="admin-product-tab" id="adminProductTabInventory" type="button" role="tab" aria-selected="false" aria-controls="adminProductPanelInventory" data-product-tab="inventory">Code inventory</button>
+          <button class="admin-product-tab" id="adminProductTabLicenses" type="button" role="tab" aria-selected="false" aria-controls="adminProductPanelLicenses" data-product-tab="licenses">Licenses</button>
+          <button class="admin-product-tab" id="adminProductTabPolicy" type="button" role="tab" aria-selected="false" aria-controls="adminProductPanelPolicy" data-product-tab="policy">Edition policy</button>
+        </div>
+        <section class="admin-product-panel" id="adminProductPanelOverview" role="tabpanel" aria-labelledby="adminProductTabOverview" data-product-panel="overview">
+          <div id="adminProductsState" class="state-panel">Loading products, organizations, and licenses...</div>
+          <div id="adminProductsList" class="admin-product-summary"></div>
+        </section>
+        <section class="admin-product-panel" id="adminProductPanelIssuance" role="tabpanel" aria-labelledby="adminProductTabIssuance" data-product-panel="issuance" hidden>
+          <div class="admin-license-workspace">
+            <form id="licenseBatchForm" class="card">
+              <div class="section-head compact"><div><span class="eyebrow">License inventory</span><h2>Prepare activation codes</h2></div></div>
+              <p class="muted">Generate up to 200 unassigned pairs with nine-digit numeric serials and 16-character alphanumeric activation keys. Keys are returned only in this response and never stored in plaintext. Claimed licenses receive a 90-day offline activation response.</p>
+              <div class="form-grid">
+                <div><label for="licenseBatchCount">Number of codes</label><input id="licenseBatchCount" name="count" type="number" min="1" max="200" value="10" required /></div>
+                <div><label for="licenseBatchSeats">Seats per code</label><input id="licenseBatchSeats" name="seats" type="number" min="1" max="10000" value="1" required /></div>
+                <div><label for="licenseBatchProduct">Product</label><select id="licenseBatchProduct" name="product_id" required></select></div>
+                <div><label for="licenseBatchEdition">Edition</label><select id="licenseBatchEdition" name="edition_id" required></select></div>
+                <div><label for="licenseBatchModel">Commercial model</label><select id="licenseBatchModel" name="license_model"><option value="cloud_subscription">Cloud subscription</option><option value="cloud_one_time">Cloud one-time</option><option value="on_premise_subscription" selected>On-premise subscription</option><option value="on_premise_perpetual">On-premise perpetual</option></select></div>
+                <div><label for="licenseBatchStartDate">Start date</label><input id="licenseBatchStartDate" name="start_date" type="date" required /></div>
+                <div class="full"><label for="licenseBatchExpiryDate">Expiry date (leave blank for perpetual)</label><input id="licenseBatchExpiryDate" name="expiry_date" type="date" /></div>
               </div>
-              <div id="licenseExistingOrganizationFields" class="full hidden"><label for="licenseOrganization">Existing organization</label><select id="licenseOrganization" name="organization_id" required disabled></select></div>
-              <div><label for="licenseProduct">Product</label><select id="licenseProduct" name="product_id" required></select></div>
-              <div><label for="licenseEdition">Edition</label><select id="licenseEdition" name="edition_id" required></select></div>
-              <div><label for="licenseCompanyBinding">Company binding</label><input id="licenseCompanyBinding" name="company_binding" maxlength="200" required autocomplete="off" /></div>
-              <div><label for="licenseModel">Commercial model</label><select id="licenseModel" name="license_model"><option value="cloud_subscription">Cloud subscription</option><option value="cloud_one_time">Cloud one-time</option><option value="on_premise_subscription" selected>On-premise subscription</option><option value="on_premise_perpetual">On-premise perpetual</option></select></div>
-              <div><label for="licenseStartDate">Start date</label><input id="licenseStartDate" name="start_date" type="date" required /></div>
-              <div><label for="licenseExpiryDate">Expiry date (leave blank for perpetual)</label><input id="licenseExpiryDate" name="expiry_date" type="date" /></div>
-              <div><label for="licenseInitialStatus">Initial status</label><select id="licenseInitialStatus" name="status"><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option></select></div>
-              <div class="full"><label for="licenseEntitlements">Additional entitlements (JSON array, optional)</label><textarea id="licenseEntitlements" name="entitlements" rows="3" placeholder='[{"key":"module.students","value_type":"boolean","value":true}]'></textarea></div>
-            </div>
-            <div class="form-actions"><button id="licenseIssueButton" class="primary" type="submit">Issue license</button></div>
-            <p id="licenseIssueMessage" class="message" role="status"></p>
-          </form>
+              <div class="form-actions"><button id="licenseBatchButton" class="primary" type="submit">Generate activation codes</button><button id="licenseBatchDownload" class="secondary hidden" type="button">Download this batch's codes (CSV)</button></div>
+              <p id="licenseBatchMessage" class="message" role="status"></p>
+            </form>
+            <form id="licenseIssueForm" class="card">
+              <div class="section-head compact"><div><span class="eyebrow">License authority</span><h2>Issue a license</h2></div></div>
+              <p class="muted">Issue an activation key without requiring a customer portal invite. The server registers the customer and organization, limits this license to one concurrent installation, and shows the activation key only once.</p>
+              <div class="form-grid">
+                <div class="full"><label for="licenseCustomerMode">Customer</label><select id="licenseCustomerMode" name="customer_mode"><option value="new" selected>Register new customer — activation only</option><option value="existing">Use an existing organization</option></select></div>
+                <div id="licenseNewCustomerFields" class="full">
+                  <div class="form-grid">
+                    <div><label for="licenseCustomerEmail">Customer email</label><input id="licenseCustomerEmail" name="customer_email" type="email" maxlength="254" autocomplete="off" required /></div>
+                    <div><label for="licenseCustomerName">Contact name (optional)</label><input id="licenseCustomerName" name="customer_name" maxlength="120" autocomplete="off" /></div>
+                    <div class="full"><label for="licenseCustomerCompany">Organization name</label><input id="licenseCustomerCompany" name="customer_company" maxlength="200" autocomplete="organization" required /></div>
+                  </div>
+                  <p class="muted">No customer sign-in or invitation is created. The customer receives only the serial number and activation key.</p>
+                </div>
+                <div id="licenseExistingOrganizationFields" class="full hidden"><label for="licenseOrganization">Existing organization</label><select id="licenseOrganization" name="organization_id" required disabled></select></div>
+                <div><label for="licenseProduct">Product</label><select id="licenseProduct" name="product_id" required></select></div>
+                <div><label for="licenseEdition">Edition</label><select id="licenseEdition" name="edition_id" required></select></div>
+                <div><label for="licenseCompanyBinding">Company binding</label><input id="licenseCompanyBinding" name="company_binding" maxlength="200" required autocomplete="off" /></div>
+                <div><label for="licenseModel">Commercial model</label><select id="licenseModel" name="license_model"><option value="cloud_subscription">Cloud subscription</option><option value="cloud_one_time">Cloud one-time</option><option value="on_premise_subscription" selected>On-premise subscription</option><option value="on_premise_perpetual">On-premise perpetual</option></select></div>
+                <div><label for="licenseStartDate">Start date</label><input id="licenseStartDate" name="start_date" type="date" required /></div>
+                <div><label for="licenseExpiryDate">Expiry date (leave blank for perpetual)</label><input id="licenseExpiryDate" name="expiry_date" type="date" /></div>
+                <div><label for="licenseInitialStatus">Initial status</label><select id="licenseInitialStatus" name="status"><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option></select></div>
+                <div class="full"><label for="licenseEntitlements">Additional entitlements (JSON array, optional)</label><textarea id="licenseEntitlements" name="entitlements" rows="3" placeholder='[{"key":"module.students","value_type":"boolean","value":true}]'></textarea></div>
+              </div>
+              <div class="form-actions"><button id="licenseIssueButton" class="primary" type="submit">Issue license</button></div>
+              <p id="licenseIssueMessage" class="message" role="status"></p>
+            </form>
+          </div>
+        </section>
+        <section class="admin-product-panel" id="adminProductPanelPolicy" role="tabpanel" aria-labelledby="adminProductTabPolicy" data-product-panel="policy" hidden>
           <form id="licensePolicyForm" class="card">
             <div class="section-head compact"><div><span class="eyebrow">Product policy</span><h2>Evaluation &amp; rollout</h2></div></div>
             <div class="form-grid">
@@ -128,34 +226,38 @@
             <div class="form-actions"><button id="licensePolicySaveButton" class="primary" type="submit">Save edition policy</button></div>
             <p id="licensePolicyMessage" class="message" role="status"></p>
           </form>
-        </div>
-        <div class="section-head dashboard-head"><div><span class="eyebrow">Inventory</span><h2>Activation code batches</h2></div></div>
-        <div id="adminLicenseBatchesState" class="state-panel">Loading activation code batches...</div>
-        <div id="adminLicenseBatchesList" class="card hidden"></div>
-        <div class="section-head dashboard-head"><div><span class="eyebrow">Delivery tracking</span><h2>Issued serial numbers</h2></div></div>
-        <form id="licenseCodeIssueForm" class="card">
-          <p class="muted">Choose “View codes” on a batch, select unissued serial numbers, and record who received them. Activation keys are never displayed or stored in this delivery record. A successful customer activation is recorded as issued automatically.</p>
-          <div class="form-grid">
-            <div><label for="licenseCodeRecipientName">Recipient name</label><input id="licenseCodeRecipientName" name="recipient_name" maxlength="120" required /></div>
-            <div><label for="licenseCodeRecipientOrganization">Recipient organization</label><input id="licenseCodeRecipientOrganization" name="recipient_organization" maxlength="200" /></div>
-            <div><label for="licenseCodeRecipientEmail">Recipient email</label><input id="licenseCodeRecipientEmail" name="recipient_email" type="email" maxlength="254" /></div>
-            <div><label for="licenseCodeDeliveryChannel">Delivery channel</label><select id="licenseCodeDeliveryChannel" name="delivery_channel" required><option value="email">Email</option><option value="messaging">Messaging</option><option value="phone">Phone</option><option value="in_person">In person</option><option value="other">Other</option></select></div>
-            <div class="full"><label for="licenseCodeDeliveryReference">Delivery reference (optional)</label><input id="licenseCodeDeliveryReference" name="delivery_reference" maxlength="200" placeholder="Order, invoice, or dispatch reference" /></div>
-          </div>
-          <div class="form-actions"><button id="licenseCodeIssueButton" class="primary" type="submit" disabled>Mark selected codes as issued</button></div>
-          <p id="licenseCodeDeliveryMessage" class="message" role="status"></p>
-        </form>
-        <div id="adminLicenseCodesState" class="state-panel">Choose a batch to review its serial delivery status.</div>
-        <div id="adminLicenseCodesList" class="card hidden"></div>
-        <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Issued licenses</h2></div></div>
-        <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
-        <div id="adminLicensesList" class="license-list"></div>
+        </section>
+        <section class="admin-product-panel" id="adminProductPanelInventory" role="tabpanel" aria-labelledby="adminProductTabInventory" data-product-panel="inventory" hidden>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Inventory</span><h2>Activation code batches</h2></div></div>
+          <div id="adminLicenseBatchesState" class="state-panel">Loading activation code batches...</div>
+          <div id="adminLicenseBatchesList" class="card hidden"></div>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Delivery tracking</span><h2>Issued serial numbers</h2></div></div>
+          <form id="licenseCodeIssueForm" class="card">
+            <p class="muted">Choose “View codes” on a batch, select unissued serial numbers, and record who received them. Activation keys are never displayed or stored in this delivery record. A successful customer activation is recorded as issued automatically.</p>
+            <div class="form-grid">
+              <div><label for="licenseCodeRecipientName">Recipient name</label><input id="licenseCodeRecipientName" name="recipient_name" maxlength="120" required /></div>
+              <div><label for="licenseCodeRecipientOrganization">Recipient organization</label><input id="licenseCodeRecipientOrganization" name="recipient_organization" maxlength="200" /></div>
+              <div><label for="licenseCodeRecipientEmail">Recipient email</label><input id="licenseCodeRecipientEmail" name="recipient_email" type="email" maxlength="254" /></div>
+              <div><label for="licenseCodeDeliveryChannel">Delivery channel</label><select id="licenseCodeDeliveryChannel" name="delivery_channel" required><option value="email">Email</option><option value="messaging">Messaging</option><option value="phone">Phone</option><option value="in_person">In person</option><option value="other">Other</option></select></div>
+              <div class="full"><label for="licenseCodeDeliveryReference">Delivery reference (optional)</label><input id="licenseCodeDeliveryReference" name="delivery_reference" maxlength="200" placeholder="Order, invoice, or dispatch reference" /></div>
+            </div>
+            <div class="form-actions"><button id="licenseCodeIssueButton" class="primary" type="submit" disabled>Mark selected codes as issued</button></div>
+            <p id="licenseCodeDeliveryMessage" class="message" role="status"></p>
+          </form>
+          <div id="adminLicenseCodesState" class="state-panel">Choose a batch to review its serial delivery status.</div>
+          <div id="adminLicenseCodesList" class="card hidden"></div>
+        </section>
+        <section class="admin-product-panel" id="adminProductPanelLicenses" role="tabpanel" aria-labelledby="adminProductTabLicenses" data-product-panel="licenses" hidden>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Issued licenses</h2></div></div>
+          <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
+          <div id="adminLicensesList" class="license-list"></div>
+        </section>
       </section>
       <section class="admin-view" data-admin-section="announcements"><div class="section-head"><div><span class="eyebrow">Customer communications</span><h2>Announcements &amp; service status</h2></div><button class="secondary admin-refresh" data-refresh="announcements" type="button">Refresh</button></div><form id="announcementForm" class="card"><input id="announcementId" name="id" type="hidden" /><div class="form-grid"><div class="full"><label for="announcementTitle">Title</label><input id="announcementTitle" name="title" maxlength="200" required /></div><div class="full"><label for="announcementMessageBody">Message</label><textarea id="announcementMessageBody" name="message" maxlength="5000" rows="4" required></textarea></div><div><label for="announcementSeverity">Severity</label><select id="announcementSeverity" name="severity"><option value="info">Information</option><option value="maintenance">Maintenance</option><option value="degraded">Degraded service</option><option value="outage">Service outage</option></select></div><div><label for="announcementProduct">Product scope</label><select id="announcementProduct" name="product_id"><option value="">All customer organizations</option></select></div><div><label for="announcementStartsAt">Starts</label><input id="announcementStartsAt" name="starts_at" type="datetime-local" /></div><div><label for="announcementEndsAt">Ends (optional)</label><input id="announcementEndsAt" name="ends_at" type="datetime-local" /></div><div><label for="announcementStatus">Initial status</label><select id="announcementStatus" name="status"><option value="draft">Draft</option><option value="published">Publish now</option></select></div></div><div class="form-actions"><button id="announcementSaveButton" class="primary" type="submit">Create announcement</button><button id="announcementCancelEdit" class="secondary hidden" type="button">Cancel edit</button></div><p id="announcementMessage" class="message" role="status"></p></form><div id="adminAnnouncementsState" class="state-panel" aria-live="polite">Loading announcements...</div><div id="adminAnnouncementsList" class="grid modules" aria-live="polite"></div></section>
       <section class="admin-view" data-admin-section="audit"><div class="section-head"><div><span class="eyebrow">Governance</span><h2>Audit activity</h2></div><button class="secondary admin-refresh" data-refresh="audit" type="button">Refresh</button></div><div id="adminAuditState" class="state-panel">Loading audit activity...</div><div id="adminAuditList" class="card hidden"></div></section>
       <section class="admin-view" data-admin-section="security"><div class="section-head"><div><span class="eyebrow">Account security</span><h2>Change your password</h2></div></div><form id="adminPasswordForm" class="card" method="post"><label for="adminCurrentPassword">Current password</label><input id="adminCurrentPassword" name="current_password" type="password" autocomplete="current-password" required /><label for="adminNewPassword">New password</label><input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="12" required /><div class="form-actions"><button id="adminPasswordButton" class="primary" type="submit">Change password</button></div><p id="adminPasswordMessage" class="message" role="status"></p><p class="muted">Changing your password signs out all active sessions.</p></form></section>
     </div></main>
   </section>
-  <script src="js/admin.js?v=license-delivery-tracking-v1" defer></script>
+  <script src="js/admin.js?v=admin-ops-dashboard-v1" defer></script>
 </body>
 </html>

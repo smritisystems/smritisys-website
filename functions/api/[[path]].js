@@ -2104,14 +2104,56 @@ async function handleAdminControl(request, env, resource) {
   if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
 
   if (resource === "overview") {
-    const [users, customers, organizations, products, licenses] = await Promise.all([
+    const [users, customers, organizations, products, licenses, codeInventory, recentActivity, licenseStatuses] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM users").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM customers").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM organizations").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM products WHERE status = 'active'").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM licenses").first(),
+      env.DB.prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END), 0) AS available,
+           COALESCE(SUM(CASE WHEN status = 'available' AND delivery_status = 'not_issued' THEN 1 ELSE 0 END), 0) AS pending_delivery
+         FROM license_code_inventory`
+      ).first(),
+      env.DB.prepare(
+        `SELECT a.action, a.resource_type, a.resource_id,
+                COALESCE(NULLIF(p.name, ''), 'System') AS actor_name,
+                o.name AS organization_name, a.created_at
+         FROM audit_logs a
+         LEFT JOIN people p ON p.id = a.actor_person_id
+         LEFT JOIN organizations o ON o.id = a.organization_id
+         ORDER BY a.id DESC LIMIT 6`
+      ).all(),
+      env.DB.prepare(
+        `SELECT lower(status) AS status, COUNT(*) AS count,
+                SUM(CASE
+                  WHEN lower(status) = 'active'
+                    AND expires_at IS NOT NULL
+                    AND date(expires_at) BETWEEN date('now') AND date('now', '+30 days')
+                  THEN 1 ELSE 0
+                END) AS expiring_soon
+         FROM licenses GROUP BY lower(status)`
+      ).all(),
     ]);
-    return json({ ok: true, metrics: { users: users.count, customers: customers.count, organizations: organizations.count, products: products.count, licenses: licenses.count } });
+    const licenseStatusCounts = Object.fromEntries(
+      (licenseStatuses.results || []).map((row) => [row.status, Number(row.count)]),
+    );
+    const expiringSoon = (licenseStatuses.results || []).reduce(
+      (total, row) => total + Number(row.expiring_soon || 0),
+      0,
+    );
+    return json({
+      ok: true,
+      metrics: { users: users.count, customers: customers.count, organizations: organizations.count, products: products.count, licenses: licenses.count },
+      license_statuses: licenseStatusCounts,
+      expiring_soon: expiringSoon,
+      code_inventory: {
+        available: Number(codeInventory?.available || 0),
+        pending_delivery: Number(codeInventory?.pending_delivery || 0),
+      },
+      recent_activity: recentActivity.results || [],
+    });
   }
 
   if (resource === "organizations") {

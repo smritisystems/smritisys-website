@@ -79,8 +79,83 @@ function adminStatePanel(stateId, listId, text, error = false) {
 }
 
 async function loadAdminOverview() {
-  const data = await adminApi('admin/overview');
-  admin$('#adminMetrics').innerHTML = Object.entries(data.metrics).map(([key, value]) => `<article class="card"><span class="stat-label">${adminEscape(key)}</span><strong class="stat-value">${adminEscape(value)}</strong></article>`).join('');
+  const error = admin$('#adminError');
+  error.classList.add('hidden');
+  try {
+    const data = await adminApi('admin/overview');
+    const labels = {
+      users: 'Staff users',
+      customers: 'Customer accounts',
+      organizations: 'Organizations',
+      products: 'Active products',
+      licenses: 'Total licenses',
+    };
+    admin$('#adminMetrics').innerHTML = Object.entries(labels).map(([key, label]) => `
+      <article class="card">
+        <span class="stat-label">${adminEscape(label)}</span>
+        <strong class="stat-value">${adminEscape(Number(data.metrics[key] || 0).toLocaleString())}</strong>
+      </article>
+    `).join('');
+
+    const statusCounts = data.license_statuses || {};
+    const activeLicenses = Number(statusCounts.active || 0);
+    const expiringSoon = Number(data.expiring_soon || 0);
+    const codeInventory = data.code_inventory || {};
+    const operations = [
+      { label: 'Active licenses', value: activeLicenses, note: 'Currently active in the authority' },
+      { label: 'Expiring soon', value: expiringSoon, note: 'Within the next 30 days' },
+      { label: 'Codes available', value: Number(codeInventory.available || 0), note: 'Not yet claimed' },
+      { label: 'Awaiting delivery', value: Number(codeInventory.pending_delivery || 0), note: 'Available codes not yet issued' },
+    ];
+    admin$('#adminOperationsMetrics').innerHTML = operations.map((metric) => `
+      <article class="card admin-ops-card">
+        <span class="stat-label">${adminEscape(metric.label)}</span>
+        <strong class="stat-value">${adminEscape(metric.value.toLocaleString())}</strong>
+        <span class="admin-metric-note">${adminEscape(metric.note)}</span>
+      </article>
+    `).join('');
+
+    const statusOrder = ['active', 'draft', 'pending_renewal', 'expired', 'suspended', 'revoked', 'cancelled'];
+    const statuses = [...new Set([...statusOrder.filter((status) => status in statusCounts), ...Object.keys(statusCounts)])];
+    admin$('#adminLicenseHealth').innerHTML = statuses.length
+      ? statuses.map((status) => `
+        <div class="admin-health-row">
+          <span>${adminEscape(status.replaceAll('_', ' '))}</span>
+          <strong>${adminEscape(Number(statusCounts[status] || 0).toLocaleString())}</strong>
+        </div>
+      `).join('')
+      : '<p class="admin-empty-inline">No license status records are available.</p>';
+
+    const activity = Array.isArray(data.recent_activity) ? data.recent_activity : [];
+    admin$('#adminRecentActivity').innerHTML = activity.length
+      ? activity.map((event) => {
+        const resource = [event.resource_type, event.resource_id].filter(Boolean).join(' · ');
+        const action = String(event.action || 'Activity')
+          .replaceAll('_', ' ')
+          .toLowerCase()
+          .replace(/(^\w|\s\w)/g, (letter) => letter.toUpperCase());
+        return `<article class="admin-activity-item">
+          <strong>${adminEscape(action)}</strong>
+          <time>${adminEscape(adminFormatDateTime(event.created_at))}</time>
+          <small>${adminEscape(event.actor_name || 'System')}</small>
+          <span class="admin-activity-meta">${adminEscape([resource, event.organization_name].filter(Boolean).join(' · ') || 'Control plane')}</span>
+        </article>`;
+      }).join('')
+      : '<p class="admin-empty-inline">No recent activity has been recorded.</p>';
+    admin$('#adminOverviewUpdated').textContent = `Refreshed ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  } catch (loadError) {
+    error.textContent = `Dashboard data could not be loaded: ${loadError.message}`;
+    error.className = 'state-panel error-state';
+  }
+}
+
+function adminFormatDateTime(value) {
+  if (!value) return 'Time unavailable';
+  const normalized = String(value).includes('T') ? String(value) : `${String(value).replace(' ', 'T')}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime())
+    ? String(value)
+    : date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 async function loadAdminUsers() {
@@ -154,7 +229,15 @@ async function loadAdminProducts() {
     adminState.organizations = organizations.organizations;
     renderLicenseBatches(batches.batches || []);
     admin$('#adminProductsState').classList.add('hidden');
-    admin$('#adminProductsList').innerHTML = `<article class="card module"><span class="eyebrow">Products</span><strong class="stat-value">${products.products.length}</strong><p>Catalog records</p></article><article class="card module"><span class="eyebrow">Licenses</span><strong class="stat-value">${licenses.licenses.length}</strong><p>License authority records</p></article>${products.products.map((product) => `<article class="card module"><span class="eyebrow">${adminEscape(product.code)}</span><h3>${adminEscape(product.name)}</h3><p>${adminEscape(product.status)}</p></article>`).join('')}`;
+    const activeLicenses = licenses.licenses.filter((license) => String(license.status).toLowerCase() === 'active').length;
+    const customerOrganizations = organizations.organizations.filter((organization) =>
+      organization.status === 'active' && organization.name.trim().toLowerCase() !== 'smritisys internal');
+    admin$('#adminProductsList').innerHTML = `
+      <article class="card"><span class="stat-label">Products</span><strong class="stat-value">${adminEscape(products.products.length)}</strong><span class="admin-metric-note">${adminEscape(products.products.filter((product) => product.status === 'active').length)} active in catalog</span></article>
+      <article class="card"><span class="stat-label">Licenses</span><strong class="stat-value">${adminEscape(licenses.licenses.length)}</strong><span class="admin-metric-note">${adminEscape(activeLicenses)} currently active</span></article>
+      <article class="card"><span class="stat-label">Customer organizations</span><strong class="stat-value">${adminEscape(customerOrganizations.length)}</strong><span class="admin-metric-note">Active customer relationships</span></article>
+      ${products.products.map((product) => `<article class="card"><span class="eyebrow">${adminEscape(product.code)}</span><h3>${adminEscape(product.name)}</h3><span class="status">${adminEscape(product.status)}</span></article>`).join('')}
+    `;
     const activeProducts = products.products.filter((product) => product.status === 'active');
     const productOptions = activeProducts.map((product) => `<option value="${adminEscape(product.id)}">${adminEscape(product.name)} (${adminEscape(product.code)})</option>`).join('');
     admin$('#licenseProduct').innerHTML = productOptions;
@@ -367,7 +450,9 @@ async function loadAdminWorkspace() {
   try {
     const identity = await adminApi('me');
     if (identity.account_type !== 'user' || identity.user?.role !== 'super_admin') throw Object.assign(new Error('Super admin access required'), { status: 403 });
-    admin$('#adminUserName').textContent = identity.user.name || identity.user.email;
+    const displayName = identity.user.name || identity.user.email;
+    admin$('#adminUserName').textContent = displayName;
+    admin$('#adminWelcomeName').textContent = displayName.split(/\s+/)[0];
     await loadAdminOverview();
   } catch (error) {
     adminState.token = null;
@@ -375,7 +460,7 @@ async function loadAdminWorkspace() {
   }
 }
 
-function navigateAdmin(view) {
+function navigateAdmin(view, productTab = null) {
   const button = admin$(`button[data-admin-view="${view}"]`);
   if (!button) return;
   if (view !== 'organizations') clearCustomerInviteLink();
@@ -389,13 +474,42 @@ function navigateAdmin(view) {
     loadAdminOrganizations();
     loadAdminCustomerInvites();
   }
-  if (view === 'products') loadAdminProducts();
+  if (view === 'products') {
+    loadAdminProducts();
+    if (productTab) selectAdminProductTab(productTab);
+  }
   if (view === 'announcements') loadAdminAnnouncements();
   if (view === 'audit') loadAdminAudit();
 }
 
-admin$$('.admin-nav button').forEach((button) => button.addEventListener('click', () => navigateAdmin(button.dataset.adminView)));
+function selectAdminProductTab(tabName) {
+  const selectedTab = admin$(`.admin-product-tab[data-product-tab="${tabName}"]`);
+  if (!selectedTab) return;
+  admin$$('.admin-product-tab').forEach((tab) => {
+    const isSelected = tab === selectedTab;
+    tab.setAttribute('aria-selected', String(isSelected));
+    tab.tabIndex = isSelected ? 0 : -1;
+  });
+  admin$$('.admin-product-panel').forEach((panel) => {
+    panel.hidden = panel.dataset.productPanel !== tabName;
+  });
+}
+
+admin$$('[data-admin-view]').forEach((button) => button.addEventListener('click', () => navigateAdmin(button.dataset.adminView, button.dataset.productTab)));
+admin$$('.admin-product-tab').forEach((tab, index, tabs) => {
+  tab.addEventListener('click', () => selectAdminProductTab(tab.dataset.productTab));
+  tab.addEventListener('keydown', (event) => {
+    const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    const nextTab = tabs[(index + direction + tabs.length) % tabs.length];
+    nextTab.focus();
+    selectAdminProductTab(nextTab.dataset.productTab);
+  });
+});
+selectAdminProductTab('overview');
 admin$$('.admin-refresh').forEach((button) => button.addEventListener('click', () => navigateAdmin(button.dataset.refresh)));
+admin$('#adminOverviewRefresh').addEventListener('click', loadAdminOverview);
 
 admin$('#adminLoginForm').addEventListener('submit', async (event) => {
   event.preventDefault();

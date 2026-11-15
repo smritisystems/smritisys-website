@@ -1148,9 +1148,25 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   await t.test("21. Super admin control plane is internal-only", async () => {
     const adminToken = "test-token-admin-123456";
     d1.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))").bind(adminToken).run();
+    d1.prepare(
+      `INSERT INTO licenses (customer_id, product_id, license_key, serial_number, starts_at, expires_at, status)
+       SELECT (SELECT id FROM customers LIMIT 1), (SELECT id FROM products LIMIT 1),
+              'overview-expiring-soon-license-key', 'OVERVIEW-EXPIRING-SOON',
+              date('now'), date('now', '+15 days'), 'ACTIVE'`
+    ).run();
     const overview = await callApi(d1, "admin/overview", { token: adminToken });
     assert.equal(overview.status, 200);
     assert.ok(overview.data.metrics.organizations >= 3);
+    assert.ok(overview.data.license_statuses.active >= 1);
+    assert.ok(overview.data.expiring_soon >= 1);
+    assert.equal(
+      Object.values(overview.data.license_statuses).reduce((total, count) => total + count, 0),
+      overview.data.metrics.licenses,
+    );
+    assert.equal(typeof overview.data.expiring_soon, "number");
+    assert.equal(typeof overview.data.code_inventory.available, "number");
+    assert.equal(typeof overview.data.code_inventory.pending_delivery, "number");
+    assert.ok(Array.isArray(overview.data.recent_activity));
 
     const organizations = await callApi(d1, "admin/organizations", { token: adminToken });
     assert.equal(organizations.status, 200);
