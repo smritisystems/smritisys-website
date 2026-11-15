@@ -142,6 +142,10 @@
     .admin-d1-history,.admin-d1-backups { margin-top:1rem; overflow-x:auto; }
     .admin-d1-estimates { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; margin-top:.7rem; }
     .admin-d1-estimates div { padding:.65rem; border-radius:8px; background:#f4f7f7; }
+    .admin-partner-table-wrap { overflow-x:auto; }
+    .admin-partner-table { min-width:1050px; }
+    .admin-partner-controls { display:flex; align-items:center; gap:.4rem; }
+    .admin-partner-controls select { min-width:150px; }
     .admin-d1-estimates small { display:block; color:var(--muted); font-size:.72rem; }
     @media (max-width:1080px) { .admin-ops-metrics,.admin-product-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-overview-grid { grid-template-columns:1fr; } }
     @media (max-width:980px) { .admin-registration-filters { grid-template-columns:repeat(3,minmax(0,1fr)); } .registration-detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
@@ -246,6 +250,9 @@
         <div class="section-head"><div><span class="eyebrow">Partner administration</span><h2>Partners &amp; customer links</h2></div></div>
         <div id="adminPartnersState" class="state-panel">Loading partners...</div>
         <div id="adminPartnersList" class="card hidden"></div>
+        <div class="section-head"><div><span class="eyebrow">Access management</span><h2>Partner contacts</h2></div></div>
+        <div id="adminPartnerMembersState" class="state-panel">Loading partner contacts...</div>
+        <div id="adminPartnerMembersList" class="card hidden"></div>
         <form id="partnerCustomerLinkForm" class="card">
           <div class="section-head compact"><div><span class="eyebrow">Relationship management</span><h2>Link a customer organization</h2></div></div>
           <div class="form-grid">
@@ -421,6 +428,6 @@
       </form>
     </dialog>
   </section>
-  <script src="js/admin.js?v=admin-partner-sales-inventory-v1" defer></script>
+  <script src="js/admin.js?v=admin-partner-management-v2" defer></script>
 </body>
 </html>

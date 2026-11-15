@@ -77,7 +77,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=admin-partner-sales-inventory-v1/);
+  assert.match(html, /js\/admin\.js\?v=admin-partner-management-v2/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);
@@ -123,4 +123,17 @@ test("D1 monitoring is super-admin read-only and the sampler needs no R2 backup 
   assert.doesNotMatch(d1WorkerConfig, /r2_buckets|workflows/);
   assert.doesNotMatch(d1Worker, /BACKUP_BUCKET|D1_REST_API_TOKEN|api\.cloudflare\.com\/client\/v4\/accounts/);
   assert.doesNotMatch(d1WorkerConfig, /D1_REST_API_TOKEN/);
+});
+
+test("admin partner workspace supports lifecycle, classification, and member governance", () => {
+  assert.match(html, /id="partnerContactForm"/);
+  assert.match(html, /id="adminPartnerMembersList"/);
+  assert.match(script, /data-partner-status/);
+  assert.match(script, /data-partner-type-save/);
+  assert.match(script, /data-partner-member-status/);
+  assert.match(script, /data-partner-member-role-save/);
+  assert.match(script, /admin\/partners\/\$\{partnerId\}\/members\/\$\{membershipId\}/);
+  assert.match(api, /async function updateAdminPartner\(/);
+  assert.match(api, /async function updateAdminPartnerMember\(/);
+  assert.match(api, /Keep at least one active partner administrator/);
 });

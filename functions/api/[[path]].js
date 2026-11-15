@@ -4743,14 +4743,18 @@ async function handleAdminPartners(request, env, origin) {
   if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
 
   if (request.method === "GET") {
-    const [partners, links] = await Promise.all([
+    const [partners, members, links] = await Promise.all([
       env.DB.prepare(
         `SELECT o.id, o.name, o.legal_name, o.status, r.relationship_type AS partner_type,
                 COUNT(DISTINCT pm.id) AS member_count,
                 COUNT(DISTINCT CASE WHEN pcl.status = 'active' THEN pcl.id END) AS linked_customer_count,
                 (SELECT COUNT(*) FROM partner_invites pi
                  WHERE pi.partner_organization_id = o.id AND pi.status = 'pending'
-                   AND pi.expires_at > datetime('now')) AS pending_invite_count
+                   AND pi.expires_at > datetime('now')) AS pending_invite_count,
+                (SELECT COUNT(*) FROM license_code_inventory lci
+                 WHERE lci.assigned_partner_organization_id = o.id) AS allocated_code_count,
+                (SELECT COUNT(*) FROM license_code_inventory lci
+                 WHERE lci.assigned_partner_organization_id = o.id AND lci.status = 'claimed') AS claimed_code_count
          FROM organizations o
          JOIN relationships r ON r.organization_id = o.id
            AND r.relationship_type IN (
@@ -4761,6 +4765,13 @@ async function handleAdminPartners(request, env, origin) {
          LEFT JOIN partner_customer_links pcl ON pcl.partner_organization_id = o.id
          GROUP BY o.id, r.relationship_type
          ORDER BY o.name, r.relationship_type`
+      ).all(),
+      env.DB.prepare(
+        `SELECT pm.id, pm.partner_organization_id, pm.account_type, pm.account_id,
+                pm.partner_role, pm.status, p.name, p.email
+         FROM partner_memberships pm
+         JOIN people p ON p.source_type = pm.account_type AND p.source_id = pm.account_id
+         ORDER BY pm.partner_organization_id, pm.status, p.name, p.email`
       ).all(),
       env.DB.prepare(
         `SELECT pcl.id, pcl.partner_organization_id, partner.name AS partner_name,
@@ -4776,12 +4787,240 @@ async function handleAdminPartners(request, env, origin) {
       ok: true,
       partner_types: ADMIN_PARTNER_TYPES,
       partners: partners.results || [],
+      members: members.results || [],
       links: links.results || [],
     }, 200, origin, { "Cache-Control": "no-store" });
   }
 
   if (request.method !== "POST") return json({ ok: false, error: "Unsupported partner operation" }, 405);
   return createAdminPartnerContact(request, env, origin, principal, null);
+}
+
+async function updateAdminPartner(request, env, partnerOrganizationId) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid partner update is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid partner update is required" }, 400);
+  }
+
+  const hasStatus = Object.prototype.hasOwnProperty.call(body, "status");
+  const hasPartnerType = Object.prototype.hasOwnProperty.call(body, "partner_type");
+  if ((!hasStatus && !hasPartnerType) ||
+      (hasStatus && !["active", "inactive"].includes(body.status)) ||
+      (hasPartnerType && !isAdminPartnerType(body.partner_type))) {
+    return json({ ok: false, error: "Provide a valid partner status or partner type" }, 400);
+  }
+
+  const current = await env.DB.prepare(
+    `SELECT o.id, o.name, o.status, r.id AS relationship_id,
+            r.relationship_type AS partner_type
+     FROM organizations o
+     JOIN relationships r ON r.organization_id = o.id
+       AND r.relationship_type IN (
+         'channel_partner', 'reseller', 'implementation_partner',
+         'technology_partner', 'referral_partner', 'distributor'
+       )
+     WHERE o.id = ?
+     ORDER BY r.id LIMIT 1`
+  ).bind(partnerOrganizationId).first();
+  if (!current) return json({ ok: false, error: "Partner organization not found" }, 404);
+
+  const nextStatus = hasStatus ? body.status : current.status;
+  const nextPartnerType = hasPartnerType ? body.partner_type : current.partner_type;
+  const statusChanged = nextStatus !== current.status;
+  const partnerTypeChanged = nextPartnerType !== current.partner_type;
+  if (!statusChanged && !partnerTypeChanged) {
+    return json({ ok: true, unchanged: true });
+  }
+
+  if (partnerTypeChanged) {
+    const conflictingType = await env.DB.prepare(
+      `SELECT id FROM relationships
+       WHERE organization_id = ? AND relationship_type = ? AND id <> ? LIMIT 1`
+    ).bind(partnerOrganizationId, nextPartnerType, current.relationship_id).first();
+    if (conflictingType) {
+      return json({ ok: false, error: "This organization already has the requested partner classification" }, 409);
+    }
+  }
+
+  const oldValue = { status: current.status, partner_type: current.partner_type };
+  const newValue = { status: nextStatus, partner_type: nextPartnerType };
+  const statements = [];
+  if (statusChanged) {
+    statements.push(env.DB.prepare(
+      `UPDATE organizations SET status = ? WHERE id = ? AND status = ?
+       AND EXISTS (
+         SELECT 1 FROM relationships
+         WHERE id = ? AND organization_id = ? AND relationship_type = ?
+       )`
+    ).bind(
+      nextStatus, partnerOrganizationId, current.status,
+      current.relationship_id, partnerOrganizationId, current.partner_type,
+    ));
+  }
+  if (partnerTypeChanged) {
+    statements.push(env.DB.prepare(
+      `UPDATE relationships SET relationship_type = ?
+       WHERE id = ? AND organization_id = ? AND relationship_type = ?${statusChanged ? " AND changes() = 1" : ""}`
+    ).bind(nextPartnerType, current.relationship_id, partnerOrganizationId, current.partner_type));
+  }
+  statements.push(env.DB.prepare(
+    `INSERT INTO audit_logs
+     (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+     SELECT ?, ?, 'PARTNER_UPDATED', 'partner', ?, ?, ?, ?
+     WHERE changes() = 1`
+  ).bind(
+    principal.person_id,
+    partnerOrganizationId,
+    String(partnerOrganizationId),
+    JSON.stringify(oldValue),
+    JSON.stringify(newValue),
+    request.headers.get("CF-Connecting-IP") || null,
+  ));
+  if (partnerTypeChanged) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE partner_memberships SET partner_type = ?
+         WHERE partner_organization_id = ?
+           AND EXISTS (
+             SELECT 1 FROM relationships
+             WHERE organization_id = ? AND relationship_type = ?
+           )`
+      ).bind(nextPartnerType, partnerOrganizationId, partnerOrganizationId, nextPartnerType),
+      env.DB.prepare(
+        `UPDATE partner_invites SET partner_type = ?
+         WHERE partner_organization_id = ? AND status = 'pending'
+           AND EXISTS (
+             SELECT 1 FROM relationships
+             WHERE organization_id = ? AND relationship_type = ?
+           )`
+      ).bind(nextPartnerType, partnerOrganizationId, partnerOrganizationId, nextPartnerType),
+    );
+  }
+
+  const results = await env.DB.batch(statements);
+  if ((statusChanged && Number(results[0]?.meta?.changes || 0) !== 1) ||
+      (partnerTypeChanged && Number(results[statusChanged ? 1 : 0]?.meta?.changes || 0) !== 1)) {
+    return json({ ok: false, error: "Partner details changed before this update could be saved" }, 409);
+  }
+  const auditIndex = statusChanged || partnerTypeChanged ? (statusChanged && partnerTypeChanged ? 2 : 1) : 0;
+  if (Number(results[auditIndex]?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "Partner details changed before this update could be saved" }, 409);
+  }
+  return json({ ok: true, partner: { id: partnerOrganizationId, ...newValue } });
+}
+
+async function updateAdminPartnerMember(request, env, partnerOrganizationId, membershipId) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid partner member update is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid partner member update is required" }, 400);
+  }
+
+  const hasRole = Object.prototype.hasOwnProperty.call(body, "partner_role");
+  const hasStatus = Object.prototype.hasOwnProperty.call(body, "status");
+  if ((!hasRole && !hasStatus) ||
+      (hasRole && !["partner_admin", "partner_member"].includes(body.partner_role)) ||
+      (hasStatus && !["active", "inactive"].includes(body.status))) {
+    return json({ ok: false, error: "Provide a valid partner role or member status" }, 400);
+  }
+
+  const membership = await env.DB.prepare(
+    `SELECT pm.id, pm.partner_organization_id, pm.account_type, pm.account_id,
+            pm.partner_role, pm.status, p.name, p.email
+     FROM partner_memberships pm
+     JOIN people p ON p.source_type = pm.account_type AND p.source_id = pm.account_id
+     JOIN organizations o ON o.id = pm.partner_organization_id
+     JOIN relationships r ON r.organization_id = o.id
+       AND r.relationship_type IN (
+         'channel_partner', 'reseller', 'implementation_partner',
+         'technology_partner', 'referral_partner', 'distributor'
+       )
+     WHERE pm.id = ? AND pm.partner_organization_id = ?
+     LIMIT 1`
+  ).bind(membershipId, partnerOrganizationId).first();
+  if (!membership) return json({ ok: false, error: "Partner member not found" }, 404);
+
+  const nextRole = hasRole ? body.partner_role : membership.partner_role;
+  const nextStatus = hasStatus ? body.status : membership.status;
+  if (nextRole === membership.partner_role && nextStatus === membership.status) {
+    return json({ ok: true, unchanged: true });
+  }
+  const removingActiveAdmin = membership.status === "active" &&
+    membership.partner_role === "partner_admin" &&
+    (nextStatus !== "active" || nextRole !== "partner_admin");
+  if (removingActiveAdmin) {
+    const activeAdmins = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM partner_memberships
+       WHERE partner_organization_id = ? AND status = 'active' AND partner_role = 'partner_admin'`
+    ).bind(partnerOrganizationId).first();
+    if (Number(activeAdmins?.count || 0) <= 1) {
+      return json({ ok: false, error: "Keep at least one active partner administrator" }, 409);
+    }
+  }
+
+  const oldValue = { partner_role: membership.partner_role, status: membership.status };
+  const newValue = { partner_role: nextRole, status: nextStatus };
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE partner_memberships
+       SET partner_role = ?, status = ?
+       WHERE id = ? AND partner_organization_id = ?
+         AND partner_role = ? AND status = ?
+         AND (
+           (? = 'partner_admin' AND ? = 'active') OR
+           partner_role <> 'partner_admin' OR status <> 'active' OR
+           (SELECT COUNT(*) FROM partner_memberships
+            WHERE partner_organization_id = ? AND partner_role = 'partner_admin' AND status = 'active') > 1
+         )`
+    ).bind(
+      nextRole, nextStatus, membershipId, partnerOrganizationId,
+      membership.partner_role, membership.status,
+      nextRole, nextStatus, partnerOrganizationId,
+    ),
+    env.DB.prepare(
+      `INSERT INTO organization_members
+       (organization_id, account_type, account_id, member_role, status)
+       SELECT ?, ?, ?, ?, ? WHERE changes() = 1
+       ON CONFLICT(organization_id, account_type, account_id)
+       DO UPDATE SET member_role = excluded.member_role, status = excluded.status`
+    ).bind(
+      partnerOrganizationId, membership.account_type, membership.account_id, nextRole, nextStatus,
+    ),
+    env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       SELECT ?, ?, 'PARTNER_MEMBER_UPDATED', 'partner_membership', ?, ?, ?, ?
+       WHERE changes() = 1`
+    ).bind(
+      principal.person_id,
+      partnerOrganizationId,
+      String(membershipId),
+      JSON.stringify(oldValue),
+      JSON.stringify(newValue),
+      request.headers.get("CF-Connecting-IP") || null,
+    ),
+  ]);
+  if (Number(results?.[0]?.meta?.changes || 0) !== 1 ||
+      Number(results?.[1]?.meta?.changes || 0) !== 1 ||
+      Number(results?.[2]?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "Partner member details changed before this update could be saved" }, 409);
+  }
+  return json({ ok: true, member: { id: membershipId, ...newValue } });
 }
 
 async function createAdminPartnerContact(request, env, origin, principal, requestedPartnerId) {
@@ -4825,6 +5064,28 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
   }
 
   const organizationId = requestedPartnerId || bodyOrganizationId;
+  const internalUser = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").bind(email).first();
+  if (internalUser) return json({ ok: false, error: "This email belongs to an internal user account" }, 409);
+  const existingCustomer = await env.DB.prepare(
+    "SELECT id, status FROM customers WHERE lower(email) = ? LIMIT 1"
+  ).bind(email).first();
+  if (existingCustomer && existingCustomer.status !== "active") {
+    return json({ ok: false, error: "Activate this existing customer account before assigning partner access" }, 409);
+  }
+  if (!existingCustomer && await emailAlreadyRegistered(env, email)) {
+    return json({ ok: false, error: "An account already exists for this email" }, 409);
+  }
+  if (existingCustomer) {
+    const otherPartner = await env.DB.prepare(
+      `SELECT partner_organization_id FROM partner_memberships
+       WHERE account_type = 'customer' AND account_id = ? AND status = 'active'
+         AND (? IS NULL OR partner_organization_id <> ?) LIMIT 1`
+    ).bind(existingCustomer.id, organizationId, organizationId).first();
+    if (otherPartner) {
+      return json({ ok: false, error: "This account already has access to another partner organization" }, 409);
+    }
+  }
+
   let organization = organizationId
     ? await env.DB.prepare(
       `SELECT id, name, legal_name, status FROM organizations
@@ -4870,28 +5131,6 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
     return json({ ok: false, error: "This organization is already classified as a different partner type" }, 409);
   }
 
-  const internalUser = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").bind(email).first();
-  if (internalUser) return json({ ok: false, error: "This email belongs to an internal user account" }, 409);
-  const existingCustomer = await env.DB.prepare(
-    "SELECT id, status FROM customers WHERE lower(email) = ? LIMIT 1"
-  ).bind(email).first();
-  if (existingCustomer && existingCustomer.status !== "active") {
-    return json({ ok: false, error: "Activate this existing customer account before assigning partner access" }, 409);
-  }
-  if (!existingCustomer && await emailAlreadyRegistered(env, email)) {
-    return json({ ok: false, error: "An account already exists for this email" }, 409);
-  }
-  if (existingCustomer) {
-    const otherPartner = await env.DB.prepare(
-      `SELECT partner_organization_id FROM partner_memberships
-       WHERE account_type = 'customer' AND account_id = ? AND status = 'active'
-         AND partner_organization_id <> ? LIMIT 1`
-    ).bind(existingCustomer.id, organization.id).first();
-    if (otherPartner) {
-      return json({ ok: false, error: "This account already has access to another partner organization" }, 409);
-    }
-  }
-
   const token = existingCustomer ? null : makeToken();
   const tokenHash = token ? await hashCustomerInviteToken(token) : null;
   const auditAction = existingCustomer ? "PARTNER_MEMBER_ADDED" : "PARTNER_INVITE_CREATED";
@@ -4905,8 +5144,10 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
   const clientIp = request.headers.get("CF-Connecting-IP") || null;
   const statements = [
     env.DB.prepare(
-      `INSERT OR IGNORE INTO relationships (organization_id, relationship_type, status)
-       VALUES (?, ?, 'active')`
+      `INSERT INTO relationships (organization_id, relationship_type, status)
+       VALUES (?, ?, 'active')
+       ON CONFLICT(organization_id, relationship_type)
+       DO UPDATE SET status = 'active'`
     ).bind(organization.id, partnerType),
   ];
   if (existingCustomer) {
@@ -5470,8 +5711,21 @@ export async function onRequest(context) {
     if (path === "admin/partners" && ["GET", "POST"].includes(request.method)) {
       return await handleAdminPartners(request, env, origin);
     }
+    const partnerUpdate = path.match(/^admin\/partners\/(\d+)$/);
+    if (partnerUpdate && request.method === "PATCH") {
+      const partnerId = numericId(partnerUpdate[1]);
+      if (!partnerId) return json({ ok: false, error: "A valid partner organization id is required" }, 400);
+      return await updateAdminPartner(request, env, partnerId);
+    }
     if (path === "admin/partner-invites" && request.method === "GET") {
       return await handleAdminPartnerInvites(request, env, origin);
+    }
+    const partnerMemberUpdate = path.match(/^admin\/partners\/(\d+)\/members\/(\d+)$/);
+    if (partnerMemberUpdate && request.method === "PATCH") {
+      const partnerId = numericId(partnerMemberUpdate[1]);
+      const membershipId = numericId(partnerMemberUpdate[2]);
+      if (!partnerId || !membershipId) return json({ ok: false, error: "Valid partner and member ids are required" }, 400);
+      return await updateAdminPartnerMember(request, env, partnerId, membershipId);
     }
     const partnerMemberMatch = path.match(/^admin\/partners\/(\d+)\/members$/);
     if (partnerMemberMatch && request.method === "POST") {

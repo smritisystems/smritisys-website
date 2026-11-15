@@ -436,6 +436,7 @@ async function loadAdminPartners() {
   try {
     const data = await adminApi('admin/partners');
     adminState.partners = data.partners || [];
+    const partnerTypes = data.partner_types || [];
     const partnerSelect = admin$('#partnerLinkPartner');
     partnerSelect.innerHTML = adminState.partners
       .filter((partner) => partner.status === 'active')
@@ -459,7 +460,7 @@ async function loadAdminPartners() {
     } else {
       state.classList.add('hidden');
       list.classList.remove('hidden');
-      list.innerHTML = `<h3>Partner organizations</h3><table class="admin-table"><thead><tr><th>Organization</th><th>Type</th><th>Members</th><th>Customer links</th><th>Pending invites</th></tr></thead><tbody>${adminState.partners.map((partner) => `<tr><td>${adminEscape(partner.name)}</td><td>${adminEscape(partner.partner_type)}</td><td>${adminEscape(partner.member_count)}</td><td>${adminEscape(partner.linked_customer_count)}</td><td>${adminEscape(partner.pending_invite_count)}</td></tr>`).join('')}</tbody></table><h3>Customer links</h3>${data.links.length ? `<table class="admin-table"><thead><tr><th>Partner</th><th>Customer</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.links.map((link) => `<tr><td>${adminEscape(link.partner_name)}</td><td>${adminEscape(link.customer_name)}</td><td><span class="status">${adminEscape(link.status)}</span></td><td>${link.status === 'active' ? `<button class="text-button" type="button" data-partner-link-revoke="${adminEscape(link.partner_organization_id)}:${adminEscape(link.customer_organization_id)}">Unlink</button>` : '—'}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No customer links recorded.</p>'}`;
+      list.innerHTML = `<h3>Partner organizations</h3><div class="admin-partner-table-wrap"><table class="admin-table admin-partner-table"><thead><tr><th>Organization</th><th>Status</th><th>Partner type</th><th>Contacts</th><th>Customers</th><th>Codes allocated / claimed</th><th>Pending invites</th><th>Actions</th></tr></thead><tbody>${adminState.partners.map((partner) => `<tr><td><strong>${adminEscape(partner.name)}</strong><small>${adminEscape(partner.legal_name || '')}</small></td><td><span class="status">${adminEscape(partner.status)}</span></td><td><div class="admin-partner-controls"><select data-partner-type-select="${adminEscape(partner.id)}" aria-label="Partner type for ${adminEscape(partner.name)}">${partnerTypes.map((type) => `<option value="${adminEscape(type)}" ${type === partner.partner_type ? 'selected' : ''}>${adminEscape(type.replace(/_/g, ' '))}</option>`).join('')}</select><button class="text-button" type="button" data-partner-type-save="${adminEscape(partner.id)}">Save</button></div></td><td>${adminEscape(partner.member_count)}</td><td>${adminEscape(partner.linked_customer_count)}</td><td>${adminEscape(partner.allocated_code_count)} / ${adminEscape(partner.claimed_code_count)}</td><td>${adminEscape(partner.pending_invite_count)}</td><td><button class="text-button" type="button" data-partner-status="${adminEscape(partner.id)}:${partner.status === 'active' ? 'inactive' : 'active'}">${partner.status === 'active' ? 'Deactivate' : 'Reactivate'}</button></td></tr>`).join('')}</tbody></table></div><h3>Customer links</h3>${data.links.length ? `<div class="admin-partner-table-wrap"><table class="admin-table"><thead><tr><th>Partner</th><th>Customer</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.links.map((link) => `<tr><td>${adminEscape(link.partner_name)}</td><td>${adminEscape(link.customer_name)}</td><td><span class="status">${adminEscape(link.status)}</span></td><td>${link.status === 'active' ? `<button class="text-button" type="button" data-partner-link-revoke="${adminEscape(link.partner_organization_id)}:${adminEscape(link.customer_organization_id)}">Unlink</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No customer links recorded.</p>'}`;
       list.querySelectorAll('[data-partner-link-revoke]').forEach((button) => button.addEventListener('click', async () => {
         if (!window.confirm('Revoke this partner-to-customer link?')) return;
         const [partnerId, customerId] = button.dataset.partnerLinkRevoke.split(':');
@@ -473,10 +474,93 @@ async function loadAdminPartners() {
           button.disabled = false;
         }
       }));
+      list.querySelectorAll('[data-partner-type-save]').forEach((button) => button.addEventListener('click', async () => {
+        const partnerId = button.dataset.partnerTypeSave;
+        const partnerType = list.querySelector(`[data-partner-type-select="${partnerId}"]`).value;
+        button.disabled = true;
+        try {
+          await adminApi(`admin/partners/${partnerId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ partner_type: partnerType }),
+          });
+          await loadAdminPartners();
+        } catch (error) {
+          adminMessage(admin$('#adminError'), error.message, false);
+          admin$('#adminError').className = 'state-panel error-state';
+        } finally {
+          button.disabled = false;
+        }
+      }));
+      list.querySelectorAll('[data-partner-status]').forEach((button) => button.addEventListener('click', async () => {
+        const [partnerId, status] = button.dataset.partnerStatus.split(':');
+        const action = status === 'inactive' ? 'deactivate' : 'reactivate';
+        if (!window.confirm(`${action === 'deactivate' ? 'Deactivating' : 'Reactivating'} this partner changes portal access. Existing customer links, code allocations, and audit history are retained. Continue?`)) return;
+        button.disabled = true;
+        try {
+          await adminApi(`admin/partners/${partnerId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status }),
+          });
+          await Promise.all([loadAdminPartners(), loadAdminOrganizations()]);
+        } catch (error) {
+          adminMessage(admin$('#adminError'), error.message, false);
+          admin$('#adminError').className = 'state-panel error-state';
+        } finally {
+          button.disabled = false;
+        }
+      }));
+    }
+
+    const members = data.members || [];
+    if (!members.length) {
+      adminStatePanel('adminPartnerMembersState', 'adminPartnerMembersList', 'No partner contacts found.');
+    } else {
+      const partnerNames = new Map(adminState.partners.map((partner) => [String(partner.id), partner.name]));
+      const memberState = admin$('#adminPartnerMembersState');
+      const memberList = admin$('#adminPartnerMembersList');
+      memberState.classList.add('hidden');
+      memberList.classList.remove('hidden');
+      memberList.innerHTML = `<div class="admin-partner-table-wrap"><table class="admin-table"><thead><tr><th>Partner</th><th>Contact</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>${members.map((member) => `<tr><td>${adminEscape(partnerNames.get(String(member.partner_organization_id)) || `Partner ${member.partner_organization_id}`)}</td><td>${adminEscape(member.name || 'Unnamed contact')}</td><td>${adminEscape(member.email)}</td><td><div class="admin-partner-controls"><select data-partner-member-role="${adminEscape(member.id)}" aria-label="Partner role for ${adminEscape(member.email)}"><option value="partner_admin" ${member.partner_role === 'partner_admin' ? 'selected' : ''}>Partner administrator</option><option value="partner_member" ${member.partner_role === 'partner_member' ? 'selected' : ''}>Partner member</option></select><button class="text-button" type="button" data-partner-member-role-save="${adminEscape(member.id)}:${adminEscape(member.partner_organization_id)}">Save</button></div></td><td><span class="status">${adminEscape(member.status)}</span></td><td><button class="text-button" type="button" data-partner-member-status="${adminEscape(member.id)}:${adminEscape(member.partner_organization_id)}:${member.status === 'active' ? 'inactive' : 'active'}">${member.status === 'active' ? 'Deactivate' : 'Reactivate'}</button></td></tr>`).join('')}</tbody></table></div>`;
+      memberList.querySelectorAll('[data-partner-member-role-save]').forEach((button) => button.addEventListener('click', async () => {
+        const [membershipId, partnerId] = button.dataset.partnerMemberRoleSave.split(':');
+        const partnerRole = memberList.querySelector(`[data-partner-member-role="${membershipId}"]`).value;
+        button.disabled = true;
+        try {
+          await adminApi(`admin/partners/${partnerId}/members/${membershipId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ partner_role: partnerRole }),
+          });
+          await loadAdminPartners();
+        } catch (error) {
+          adminMessage(admin$('#adminError'), error.message, false);
+          admin$('#adminError').className = 'state-panel error-state';
+        } finally {
+          button.disabled = false;
+        }
+      }));
+      memberList.querySelectorAll('[data-partner-member-status]').forEach((button) => button.addEventListener('click', async () => {
+        const [membershipId, partnerId, status] = button.dataset.partnerMemberStatus.split(':');
+        const action = status === 'inactive' ? 'deactivate' : 'reactivate';
+        if (!window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Reactivate'} this partner contact?`)) return;
+        button.disabled = true;
+        try {
+          await adminApi(`admin/partners/${partnerId}/members/${membershipId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status }),
+          });
+          await loadAdminPartners();
+        } catch (error) {
+          adminMessage(admin$('#adminError'), error.message, false);
+          admin$('#adminError').className = 'state-panel error-state';
+        } finally {
+          button.disabled = false;
+        }
+      }));
     }
     await loadAdminPartnerInvites();
   } catch (error) {
     adminStatePanel('adminPartnersState', 'adminPartnersList', 'Partner organizations are unavailable.', true);
+    adminStatePanel('adminPartnerMembersState', 'adminPartnerMembersList', 'Partner contacts are unavailable.', true);
   }
 }
 

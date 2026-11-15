@@ -575,6 +575,23 @@ test("partner onboarding, customer links, and partner setup invitations are scop
   assert.equal(created.status, 201);
   const partnerId = created.data.partner_organization_id;
   const inviteToken = created.data.setup_path.match(/#type=partner&token=([a-f0-9]{48})$/)[1];
+  const organizationCount = d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count;
+  const invalidContact = await callApi(d1, "admin/partners", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      organization_name: "Rejected Orphan Partner",
+      partner_type: "reseller",
+      partner_role: "partner_admin",
+      email: d1.raw.prepare("SELECT email FROM users WHERE id = 201").get().email,
+    },
+  });
+  assert.equal(invalidContact.status, 409);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count, organizationCount);
+  assert.equal(
+    (await callApi(d1, `admin/partners/${partnerId}`, { method: "PATCH", body: { status: "inactive" } })).status,
+    403,
+  );
   const customerOrganizationAsPartner = await callApi(d1, "admin/partners", {
     method: "POST",
     token: adminToken,
@@ -626,6 +643,78 @@ test("partner onboarding, customer links, and partner setup invitations are scop
   const partnerMe = await callApi(d1, "partner/me", { token: login.data.token });
   assert.equal(partnerMe.status, 200);
   assert.equal(partnerMe.data.partner.partner_type, "implementation_partner");
+  const initialMembers = await callApi(d1, "admin/partners", { token: adminToken });
+  const partnerAdmin = initialMembers.data.members.find(
+    (member) => member.partner_organization_id === partnerId && member.email === "partner-admin@example.test",
+  );
+  assert.ok(partnerAdmin);
+  const lastAdminDemotion = await callApi(d1, `admin/partners/${partnerId}/members/${partnerAdmin.id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { partner_role: "partner_member" },
+  });
+  assert.equal(lastAdminDemotion.status, 409);
+
+  const typeChange = await callApi(d1, `admin/partners/${partnerId}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { partner_type: "channel_partner" },
+  });
+  assert.equal(typeChange.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT relationship_type FROM relationships WHERE organization_id = ? AND relationship_type = 'channel_partner'").get(partnerId).relationship_type,
+    "channel_partner",
+  );
+  assert.equal(
+    d1.raw.prepare("SELECT partner_type FROM partner_memberships WHERE id = ?").get(partnerAdmin.id).partner_type,
+    "channel_partner",
+  );
+
+  const memberInvite = await callApi(d1, `admin/partners/${partnerId}/members`, {
+    method: "POST",
+    token: adminToken,
+    body: {
+      partner_type: "channel_partner",
+      partner_role: "partner_member",
+      email: "partner-member@example.test",
+      name: "Partner Member",
+    },
+  });
+  assert.equal(memberInvite.status, 201);
+  const memberInviteToken = memberInvite.data.setup_path.match(/#type=partner&token=([a-f0-9]{48})$/)[1];
+  const memberAccepted = await callApi(d1, "partner-invites/accept", {
+    method: "POST",
+    body: { token: memberInviteToken, password: "Partner-member-passphrase-2026!" },
+  });
+  assert.equal(memberAccepted.status, 200);
+  const partnerMember = d1.raw.prepare(
+    "SELECT id FROM partner_memberships WHERE partner_organization_id = ? AND account_id = (SELECT id FROM customers WHERE email = 'partner-member@example.test')"
+  ).get(partnerId);
+  assert.ok(partnerMember);
+  const promoteMember = await callApi(d1, `admin/partners/${partnerId}/members/${partnerMember.id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { partner_role: "partner_admin" },
+  });
+  assert.equal(promoteMember.status, 200);
+  const deactivateMember = await callApi(d1, `admin/partners/${partnerId}/members/${partnerMember.id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "inactive" },
+  });
+  assert.equal(deactivateMember.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM organization_members WHERE organization_id = ? AND account_id = (SELECT id FROM customers WHERE email = 'partner-member@example.test')").get(partnerId).status,
+    "inactive",
+  );
+  const lastAdminDeactivation = await callApi(d1, `admin/partners/${partnerId}/members/${partnerAdmin.id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "inactive" },
+  });
+  assert.equal(lastAdminDeactivation.status, 409);
+  assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'PARTNER_MEMBER_UPDATED'").get());
+  assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'PARTNER_UPDATED'").get());
 
   const linked = await callApi(d1, `admin/partners/${partnerId}/customers`, {
     method: "POST",
@@ -640,6 +729,25 @@ test("partner onboarding, customer links, and partner setup invitations are scop
   const partnerCustomers = await callApi(d1, "partner/customers", { token: login.data.token });
   assert.equal(partnerCustomers.status, 200);
   assert.equal(partnerCustomers.data.customers[0].id, 101);
+
+  const partnerDeactivated = await callApi(d1, `admin/partners/${partnerId}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "inactive" },
+  });
+  assert.equal(partnerDeactivated.status, 200);
+  assert.equal((await callApi(d1, "partner/me", { token: login.data.token })).status, 403);
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM partner_customer_links WHERE partner_organization_id = ? AND customer_organization_id = 101").get(partnerId).status,
+    "active",
+  );
+  const partnerReactivated = await callApi(d1, `admin/partners/${partnerId}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "active" },
+  });
+  assert.equal(partnerReactivated.status, 200);
+  assert.equal((await callApi(d1, "partner/me", { token: login.data.token })).status, 200);
 
   const revoked = await callApi(d1, `admin/partners/${partnerId}/customers/101/revoke`, {
     method: "POST",
