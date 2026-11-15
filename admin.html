@@ -343,15 +343,16 @@
           <div id="adminLicenseBatchesList" class="card hidden"></div>
           <div class="section-head dashboard-head"><div><span class="eyebrow">Delivery tracking</span><h2>Issued serial numbers</h2></div></div>
           <form id="licenseCodeIssueForm" class="card">
-            <p class="muted">Choose “View codes” on a batch, select unissued serial numbers, and record who received them. Activation keys are never displayed or stored in this delivery record. A successful customer activation is recorded as issued automatically.</p>
+            <p class="muted">Choose “View codes” on a batch, select unissued serial numbers, and record who received them. Select a sales partner to allocate those codes to its inventory. Activation keys are never displayed or stored in this delivery record.</p>
             <div class="form-grid">
+              <div class="full"><label for="licenseCodePartner">Allocate to sales partner (optional)</label><select id="licenseCodePartner" name="partner_organization_id"><option value="">Direct customer or other recipient</option></select><small class="muted">Allocated codes can be viewed only by this partner; key reveal requires password confirmation.</small></div>
               <div><label for="licenseCodeRecipientName">Recipient name</label><input id="licenseCodeRecipientName" name="recipient_name" maxlength="120" required /></div>
               <div><label for="licenseCodeRecipientOrganization">Recipient organization</label><input id="licenseCodeRecipientOrganization" name="recipient_organization" maxlength="200" /></div>
               <div><label for="licenseCodeRecipientEmail">Recipient email</label><input id="licenseCodeRecipientEmail" name="recipient_email" type="email" maxlength="254" /></div>
               <div><label for="licenseCodeDeliveryChannel">Delivery channel</label><select id="licenseCodeDeliveryChannel" name="delivery_channel" required><option value="email">Email</option><option value="messaging">Messaging</option><option value="phone">Phone</option><option value="in_person">In person</option><option value="other">Other</option></select></div>
               <div class="full"><label for="licenseCodeDeliveryReference">Delivery reference (optional)</label><input id="licenseCodeDeliveryReference" name="delivery_reference" maxlength="200" placeholder="Order, invoice, or dispatch reference" /></div>
             </div>
-            <div class="form-actions"><button id="licenseCodeIssueButton" class="primary" type="submit" disabled>Mark selected codes as issued</button></div>
+            <div class="form-actions"><button id="licenseCodeIssueButton" class="primary" type="submit" disabled>Issue selected codes</button></div>
             <p id="licenseCodeDeliveryMessage" class="message" role="status"></p>
           </form>
           <div id="adminLicenseCodesState" class="state-panel">Choose a batch to review its serial delivery status.</div>
@@ -420,6 +421,6 @@
       </form>
     </dialog>
   </section>
-  <script src="js/admin.js?v=admin-license-key-reveal-v5-d1-monitoring-single-db-v1" defer></script>
+  <script src="js/admin.js?v=admin-partner-sales-inventory-v1" defer></script>
 </body>
 </html>

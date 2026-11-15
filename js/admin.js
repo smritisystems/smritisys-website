@@ -414,7 +414,7 @@ async function loadAdminCustomerInvites() {
     if (!data.invites.length) return adminStatePanel('adminCustomerInvitesState', 'adminCustomerInvitesList', 'No customer invitations found.');
     admin$('#adminCustomerInvitesState').classList.add('hidden');
     list.classList.remove('hidden');
-    list.innerHTML = `<table class="admin-table"><thead><tr><th>Email</th><th>Organization</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${data.invites.map((invite) => `<tr><td>${adminEscape(invite.email)}</td><td>${adminEscape(invite.company)}</td><td><span class="status">${adminEscape(invite.status)}</span></td><td>${adminEscape(invite.expires_at)}</td><td>${invite.status === 'pending' ? `<button class="text-button" type="button" data-customer-invite-revoke="${adminEscape(invite.id)}">Revoke</button>` : '—'}</td></tr>`).join('')}</tbody></table>`;
+    list.innerHTML = `<table class="admin-table"><thead><tr><th>Email</th><th>Organization</th><th>Partner source</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${data.invites.map((invite) => `<tr><td>${adminEscape(invite.email)}</td><td>${adminEscape(invite.company)}</td><td>${adminEscape(invite.invited_by_partner || 'Direct')}</td><td><span class="status">${adminEscape(invite.status)}</span></td><td>${adminEscape(invite.expires_at)}</td><td>${invite.status === 'pending' ? `<button class="text-button" type="button" data-customer-invite-revoke="${adminEscape(invite.id)}">Revoke</button>` : '—'}</td></tr>`).join('')}</tbody></table>`;
     list.querySelectorAll('[data-customer-invite-revoke]').forEach((button) => button.addEventListener('click', async () => {
       if (!window.confirm('Revoke this setup invitation? The link will stop working.')) return;
       button.disabled = true;
@@ -507,15 +507,17 @@ async function loadAdminPartnerInvites() {
 
 async function loadAdminProducts() {
   try {
-    const [products, licenses, organizations, batches] = await Promise.all([
+    const [products, licenses, organizations, batches, partnerData] = await Promise.all([
       adminApi('products'),
       adminApi('licenses'),
       adminApi('admin/organizations'),
       adminApi('licenses/batches'),
+      adminApi('admin/partners'),
     ]);
     adminState.products = products.products;
     adminState.licenses = licenses.licenses;
     adminState.organizations = organizations.organizations;
+    adminState.partners = partnerData.partners || [];
     renderLicenseBatches(batches.batches || []);
     admin$('#adminProductsState').classList.add('hidden');
     const activeLicenses = licenses.licenses.filter((license) => String(license.status).toLowerCase() === 'active').length;
@@ -535,6 +537,10 @@ async function loadAdminProducts() {
     const activeOrganizations = organizations.organizations.filter((organization) =>
       organization.status === 'active' && organization.name.trim().toLowerCase() !== 'smritisys internal');
     admin$('#licenseOrganization').innerHTML = activeOrganizations.map((organization) => `<option value="${adminEscape(organization.id)}">${adminEscape(organization.name)}${organization.legal_name ? ` — ${adminEscape(organization.legal_name)}` : ''}</option>`).join('');
+    admin$('#licenseCodePartner').innerHTML = `<option value="">Direct customer or other recipient</option>${adminState.partners
+      .filter((partner) => partner.status === 'active' && ['channel_partner', 'reseller', 'distributor'].includes(partner.partner_type))
+      .map((partner) => `<option value="${adminEscape(partner.id)}">${adminEscape(partner.name)} · ${adminEscape(partner.partner_type)}</option>`)
+      .join('')}`;
     admin$('#licenseStartDate').value ||= new Date().toISOString().slice(0, 10);
     await Promise.all([
       loadLicenseEditions(admin$('#licenseProduct'), admin$('#licenseEdition')),
@@ -583,7 +589,7 @@ async function loadLicenseCodeInventory(batchId) {
   const revealNote = result.key_reveal_configured
     ? 'Available keys can be revealed one at a time after confirming your admin password. Older hash-only keys can be restored if you still have the original key.'
     : 'Protected key reveal is not configured in this environment.';
-  list.innerHTML = `<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. ${adminEscape(revealNote)}</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Channel</th><th>Issued at</th><th>Key</th></tr></thead><tbody>${result.codes.map((code) => {
+  list.innerHTML = `<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. ${adminEscape(revealNote)}</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Assigned partner</th><th>Channel</th><th>Issued at</th><th>Key</th></tr></thead><tbody>${result.codes.map((code) => {
     const eligible = code.status === 'available' && code.delivery_status === 'not_issued';
     const recipient = [code.issued_to_name, code.issued_to_organization, code.issued_to_email]
       .filter(Boolean).map(adminEscape).join('<br>');
@@ -592,7 +598,7 @@ async function loadLicenseCodeInventory(batchId) {
       : code.status === 'available' && result.key_reveal_configured
         ? `<button class="secondary" type="button" data-license-code-restore-serial="${adminEscape(code.serial_number)}">Restore existing key</button>`
       : '<span class="muted">Unavailable</span>';
-    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td><td>${keyAction}</td></tr>`;
+    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.assigned_partner_name || '—')}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td><td>${keyAction}</td></tr>`;
   }).join('')}</tbody></table>`;
 
   const updateIssueButton = () => {
@@ -1344,6 +1350,7 @@ admin$('#licenseCodeIssueForm').addEventListener('submit', async (event) => {
   const form = new FormData(event.currentTarget);
   const body = {
     serial_numbers: serialNumbers,
+    partner_organization_id: form.get('partner_organization_id') || null,
     recipient_name: form.get('recipient_name'),
     recipient_organization: form.get('recipient_organization') || null,
     recipient_email: form.get('recipient_email') || null,
@@ -1365,7 +1372,9 @@ admin$('#licenseCodeIssueForm').addEventListener('submit', async (event) => {
   }
   adminMessage(
     admin$('#licenseCodeDeliveryMessage'),
-    `Marked ${result.issued_count} serial number(s) as issued. The delivery action was audited.`,
+    body.partner_organization_id
+      ? `Allocated ${result.issued_count} serial number(s) to the selected partner. The allocation was audited.`
+      : `Marked ${result.issued_count} serial number(s) as issued. The delivery action was audited.`,
     true,
   );
   await loadAdminProducts();

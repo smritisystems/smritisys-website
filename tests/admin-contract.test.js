@@ -77,7 +77,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=admin-license-key-reveal-v5-d1-monitoring-single-db-v1/);
+  assert.match(html, /js\/admin\.js\?v=admin-partner-sales-inventory-v1/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);

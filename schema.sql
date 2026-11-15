@@ -33,18 +33,22 @@ CREATE TABLE IF NOT EXISTS customer_invites (
   created_by INTEGER,
   customer_id INTEGER UNIQUE,
   organization_id INTEGER,
+  invited_by_partner_organization_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,
   accepted_at TEXT,
   FOREIGN KEY (created_by) REFERENCES people(id),
   FOREIGN KEY (customer_id) REFERENCES customers(id),
-  FOREIGN KEY (organization_id) REFERENCES organizations(id)
+  FOREIGN KEY (organization_id) REFERENCES organizations(id),
+  FOREIGN KEY (invited_by_partner_organization_id) REFERENCES organizations(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_customer_invites_email_status
   ON customer_invites(email, status);
 CREATE INDEX IF NOT EXISTS idx_customer_invites_expiry
   ON customer_invites(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_customer_invites_partner_status
+  ON customer_invites(invited_by_partner_organization_id, status, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_invites_one_pending_email
   ON customer_invites(lower(email)) WHERE status = 'pending';
 
@@ -219,6 +223,9 @@ INSERT OR IGNORE INTO permissions (name, description) VALUES
   ('requirement.view', 'View custom requirements'),
   ('requirement.create', 'Create custom requirements'),
   ('requirement.manage', 'Manage custom requirements'),
+  ('partner.customer.create', 'Register customer organizations for a partner'),
+  ('partner.inventory.view', 'View activation codes allocated to a partner'),
+  ('partner.inventory.reveal', 'Reveal activation keys allocated to a partner'),
   ('commercial.view', 'View commercial relationship records'),
   ('release.view', 'View releases'),
   ('release.manage', 'Manage releases'),
@@ -244,6 +251,15 @@ SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
 WHERE r.name IN ('partner_admin', 'partner_member') AND p.name IN (
   'partner.view', 'organization.view', 'license.view', 'release.view'
 );
+
+INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+WHERE r.name IN ('partner_admin', 'partner_member')
+  AND p.name IN ('partner.customer.create', 'partner.inventory.view');
+
+INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+WHERE r.name = 'partner_admin' AND p.name = 'partner.inventory.reveal';
 
 INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
@@ -370,6 +386,9 @@ CREATE TABLE IF NOT EXISTS license_code_inventory (
   delivery_reference TEXT,
   issued_at TEXT,
   issued_by_person_id INTEGER,
+  assigned_partner_organization_id INTEGER,
+  partner_assigned_at TEXT,
+  partner_assigned_by_person_id INTEGER,
   created_by_person_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   claimed_at TEXT,
@@ -377,8 +396,13 @@ CREATE TABLE IF NOT EXISTS license_code_inventory (
   FOREIGN KEY (edition_id) REFERENCES product_editions(id),
   FOREIGN KEY (license_id) REFERENCES licenses(id),
   FOREIGN KEY (issued_by_person_id) REFERENCES people(id),
+  FOREIGN KEY (assigned_partner_organization_id) REFERENCES organizations(id),
+  FOREIGN KEY (partner_assigned_by_person_id) REFERENCES people(id),
   FOREIGN KEY (created_by_person_id) REFERENCES people(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_license_code_assigned_partner
+  ON license_code_inventory(assigned_partner_organization_id, status, batch_id);
 CREATE INDEX IF NOT EXISTS idx_license_code_inventory_batch
   ON license_code_inventory(batch_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_license_code_inventory_status

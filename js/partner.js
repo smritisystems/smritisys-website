@@ -1,6 +1,24 @@
-const partnerState = { token: null };
+/**
+ * @file        partner.js
+ * @project     PrathamOne EduOS Coaching Institute Management System
+ * @module      SMRITISYS partner portal
+ *
+ * @author      Jawahar R. Mallah
+ * @organization AITDL (AI Technology & Development Lab)
+ * @client      Prashant Academy Coaching Institute
+ * @copyright   Copyright (c) 2026 AITDL
+ * @license     Proprietary
+ *
+ * @version     1.0.0
+ * @created     2026-11-06
+ * @updated     2026-11-15
+ *
+ * @description Manages partner customer onboarding and assigned activation inventory.
+ */
+const partnerState = { token: null, permissions: {} };
 const partner$ = (selector) => document.querySelector(selector);
 const partner$$ = (selector) => [...document.querySelectorAll(selector)];
+let partnerRevealTimer = null;
 
 function partnerEscape(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
@@ -49,6 +67,7 @@ async function loadPartnerProfile() {
   const data = await partnerApi('partner/me');
   const partner = data.partner;
   const user = data.user;
+  partnerState.permissions = data.permissions || {};
   partner$('#partnerUserName').textContent = user.name || 'Partner';
   partner$('#partnerWelcomeName').textContent = (user.name || 'there').split(' ')[0];
   partner$('#partnerAvatar').textContent = (user.name || 'P').charAt(0).toUpperCase();
@@ -56,18 +75,44 @@ async function loadPartnerProfile() {
   partner$('#partnerType').textContent = `${partner.partner_type} · ${partner.partner_role}`;
   partner$('#partnerOrganizationDetails').className = 'card';
   partner$('#partnerOrganizationDetails').innerHTML = `<span class="eyebrow">Partner organization</span><h3>${partnerEscape(partner.name)}</h3><p>${partnerEscape(partner.legal_name || 'Legal name not provided')}</p><p class="muted">${partnerEscape(partner.partner_type)} · ${partnerEscape(partner.partner_role)}</p>`;
+  partner$('#partnerCustomerInviteForm').classList.toggle('hidden', !partnerState.permissions.register_customers);
+  partner$('button[data-partner-view="inventory"]').hidden = !partnerState.permissions.view_inventory;
 }
 
 async function loadPartnerCustomers() {
   try {
     const data = await partnerApi('partner/customers');
     partner$('#partnerCustomerCount').textContent = data.customers.length;
-    if (!data.customers.length) return renderPartnerState('partnerCustomerState', 'partnerCustomerList', 'No linked customer organizations yet.');
+    const pending = data.pending_invites || [];
+    if (!data.customers.length && !pending.length) return renderPartnerState('partnerCustomerState', 'partnerCustomerList', 'No managed customer organizations yet.');
     partner$('#partnerCustomerState').classList.add('hidden');
     partner$('#partnerCustomerList').classList.remove('hidden');
-    partner$('#partnerCustomerList').innerHTML = `<table class="partner-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${partnerEscape(customer.name)}</td><td>${partnerEscape(customer.legal_name || 'Not provided')}</td><td><span class="status">${partnerEscape(customer.status)}</span></td></tr>`).join('')}</tbody></table>`;
+    partner$('#partnerCustomerList').innerHTML = `${data.customers.length ? `<h3>Linked customers</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${partnerEscape(customer.name)}</td><td>${partnerEscape(customer.legal_name || 'Not provided')}</td><td><span class="status">${partnerEscape(customer.status)}</span></td></tr>`).join('')}</tbody></table>` : ''}${pending.length ? `<h3>Pending customer setup</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Contact</th><th>Status</th><th>Expires</th></tr></thead><tbody>${pending.map((invite) => `<tr><td>${partnerEscape(invite.company)}</td><td>${partnerEscape(invite.name || invite.email)}</td><td><span class="status">${partnerEscape(invite.status)}</span></td><td>${partnerEscape(invite.expires_at)}</td></tr>`).join('')}</tbody></table>` : ''}`;
   } catch (error) {
     renderPartnerState('partnerCustomerState', 'partnerCustomerList', error.status === 403 ? 'You are not authorized to view linked customers.' : 'Linked customers are unavailable.', true);
+  }
+}
+
+async function loadPartnerInventory() {
+  try {
+    const data = await partnerApi('partner/inventory');
+    partner$('#partnerInventoryCount').textContent = data.inventory.length;
+    if (!data.inventory.length) return renderPartnerState('partnerInventoryState', 'partnerInventoryList', 'No activation codes have been allocated to this partner.');
+    partner$('#partnerInventoryState').classList.add('hidden');
+    partner$('#partnerInventoryList').classList.remove('hidden');
+    partner$('#partnerInventoryList').innerHTML = `<table class="partner-table"><thead><tr><th>Serial</th><th>Product / edition</th><th>Status</th><th>Allocated</th><th>Key</th></tr></thead><tbody>${data.inventory.map((code) => {
+      const reveal = code.status === 'available' && code.activation_key_recoverable && partnerState.permissions.reveal_activation_keys
+        ? `<button class="secondary" type="button" data-partner-code-reveal="${partnerEscape(code.batch_id)}:${partnerEscape(code.serial_number)}">Reveal key</button>`
+        : code.status === 'available' && !code.activation_key_recoverable
+          ? '<span class="muted">Key unavailable</span>'
+          : '<span class="muted">Unavailable</span>';
+      return `<tr><td>${partnerEscape(code.serial_number)}</td><td>${partnerEscape(code.product.name)}<small>${partnerEscape(code.edition.name)}</small></td><td><span class="status">${partnerEscape(code.status)}</span></td><td>${partnerEscape(code.assigned_at || '—')}</td><td class="partner-actions">${reveal}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    partner$('#partnerInventoryList').querySelectorAll('[data-partner-code-reveal]').forEach((button) => {
+      button.addEventListener('click', () => openPartnerCodeReveal(button.dataset.partnerCodeReveal));
+    });
+  } catch (error) {
+    renderPartnerState('partnerInventoryState', 'partnerInventoryList', error.status === 403 ? 'You are not authorized to view assigned inventory.' : 'Assigned inventory is unavailable.', true);
   }
 }
 
@@ -100,7 +145,12 @@ async function loadPartnerWorkspace() {
   partner$('#partnerError').classList.add('hidden');
   try {
     await loadPartnerProfile();
-    await Promise.all([loadPartnerCustomers(), loadPartnerLicenses(), loadPartnerReleases()]);
+    await Promise.all([
+      loadPartnerCustomers(),
+      loadPartnerLicenses(),
+      loadPartnerReleases(),
+      ...(partnerState.permissions.view_inventory ? [loadPartnerInventory()] : []),
+    ]);
   } catch (error) {
     partner$('#partnerError').textContent = error.status === 403 ? 'This account is not authorized for the partner workspace.' : 'Partner workspace data could not be loaded.';
     partner$('#partnerError').className = 'state-panel error-state';
@@ -119,16 +169,125 @@ function navigatePartner(view) {
   partner$$('.partner-view').forEach((section) => section.classList.toggle('active', section.dataset.partnerSection === view));
   partner$('#partnerPageTitle').textContent = button.textContent;
   if (view === 'customers') loadPartnerCustomers();
+  if (view === 'inventory') loadPartnerInventory();
   if (view === 'licenses') loadPartnerLicenses();
   if (view === 'releases') loadPartnerReleases();
+  if (view !== 'customers') clearPartnerCustomerInviteLink();
 }
 
 partner$$('.partner-nav button').forEach((button) => button.addEventListener('click', () => navigatePartner(button.dataset.partnerView)));
 partner$$('.partner-refresh').forEach((button) => button.addEventListener('click', () => {
   if (button.dataset.refresh === 'customers') loadPartnerCustomers();
+  if (button.dataset.refresh === 'inventory') loadPartnerInventory();
   if (button.dataset.refresh === 'licenses') loadPartnerLicenses();
   if (button.dataset.refresh === 'releases') loadPartnerReleases();
 }));
+
+function clearPartnerCustomerInviteLink() {
+  partner$('#partnerCustomerInviteLink').value = '';
+  partner$('#partnerCustomerInviteResult').classList.add('hidden');
+}
+
+partner$('#partnerCustomerInviteForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const button = partner$('#partnerCustomerInviteButton');
+  clearPartnerCustomerInviteLink();
+  button.disabled = true;
+  partnerMessage(partner$('#partnerCustomerInviteMessage'), 'Creating a company customer record and setup invitation...', true);
+  try {
+    const result = await partnerApi('partner/customers', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: form.get('email'),
+        name: form.get('name'),
+        company: form.get('company'),
+      }),
+    });
+    partner$('#partnerCustomerInviteLink').value = new URL(result.setup_path, window.location.origin).href;
+    partner$('#partnerCustomerInviteResult').classList.remove('hidden');
+    partnerMessage(partner$('#partnerCustomerInviteMessage'), 'Invite created. Copy the one-time setup link and share it only with the intended customer.', true);
+    event.currentTarget.reset();
+    await loadPartnerCustomers();
+  } catch (error) {
+    partnerMessage(partner$('#partnerCustomerInviteMessage'), error.message || 'The customer invitation could not be created.', false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+partner$('#partnerCustomerInviteCopy').addEventListener('click', async () => {
+  const input = partner$('#partnerCustomerInviteLink');
+  try {
+    await navigator.clipboard.writeText(input.value);
+    partnerMessage(partner$('#partnerCustomerInviteMessage'), 'Setup link copied. Share it only with the intended customer.', true);
+  } catch {
+    input.focus();
+    input.select();
+    partnerMessage(partner$('#partnerCustomerInviteMessage'), 'Select and copy the setup link manually.', false);
+  }
+});
+
+function openPartnerCodeReveal(value) {
+  clearTimeout(partnerRevealTimer);
+  const separator = value.indexOf(':');
+  const batchId = value.slice(0, separator);
+  const serialNumber = value.slice(separator + 1);
+  const form = partner$('#partnerCodeRevealForm');
+  form.dataset.batchId = batchId;
+  form.dataset.serialNumber = serialNumber;
+  partner$('#partnerCodeRevealSerial').textContent = serialNumber;
+  partner$('#partnerCodeRevealPassword').value = '';
+  partner$('#partnerCodeRevealKey').textContent = '';
+  partner$('#partnerCodeRevealResult').classList.add('hidden');
+  partner$('#partnerCodeRevealMessage').textContent = '';
+  partner$('#partnerCodeRevealSubmit').disabled = false;
+  partner$('#partnerCodeRevealDialog').showModal();
+  partner$('#partnerCodeRevealPassword').focus();
+}
+
+function clearPartnerCodeReveal() {
+  clearTimeout(partnerRevealTimer);
+  partnerRevealTimer = null;
+  partner$('#partnerCodeRevealPassword').value = '';
+  partner$('#partnerCodeRevealKey').textContent = '';
+  partner$('#partnerCodeRevealResult').classList.add('hidden');
+  partner$('#partnerCodeRevealMessage').textContent = '';
+}
+
+partner$('#partnerCodeRevealForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submitButton = partner$('#partnerCodeRevealSubmit');
+  submitButton.disabled = true;
+  partnerMessage(partner$('#partnerCodeRevealMessage'), 'Verifying your password...', true);
+  try {
+    const result = await partnerApi(
+      `partner/codes/${encodeURIComponent(form.dataset.batchId)}/${encodeURIComponent(form.dataset.serialNumber)}/reveal`,
+      { method: 'POST', body: JSON.stringify({ password: partner$('#partnerCodeRevealPassword').value }) },
+    );
+    partner$('#partnerCodeRevealKey').textContent = result.activation_key;
+    partner$('#partnerCodeRevealResult').classList.remove('hidden');
+    partner$('#partnerCodeRevealPassword').value = '';
+    partnerMessage(partner$('#partnerCodeRevealMessage'), 'Key revealed and audited. It will be hidden automatically after 30 seconds.', true);
+    partnerRevealTimer = setTimeout(clearPartnerCodeReveal, 30000);
+  } catch (error) {
+    partnerMessage(partner$('#partnerCodeRevealMessage'), error.message || 'The activation key could not be revealed.', false);
+    submitButton.disabled = false;
+  }
+});
+
+partner$('#partnerCodeRevealCopy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(partner$('#partnerCodeRevealKey').textContent);
+    partnerMessage(partner$('#partnerCodeRevealMessage'), 'Activation key copied. Keep it confidential.', true);
+  } catch {
+    partnerMessage(partner$('#partnerCodeRevealMessage'), 'Clipboard access is unavailable. Select and copy the key manually.', false);
+  }
+});
+
+partner$('#partnerCodeRevealCancel').addEventListener('click', () => partner$('#partnerCodeRevealDialog').close());
+partner$('#partnerCodeRevealDialog').addEventListener('close', clearPartnerCodeReveal);
 
 partner$('#partnerLoginForm').addEventListener('submit', async (event) => {
   event.preventDefault();

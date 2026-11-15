@@ -1117,6 +1117,37 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   const customerIdExpression = customer.id ? "?" : "(SELECT id FROM customers WHERE email = ?)";
   const customerIdBinding = customer.id ? customer.id : customerEmail;
   const orgIdBinding = customer.id ? customer.id : customerEmail;
+  if (code.assigned_partner_organization_id) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO partner_customer_links
+       (partner_organization_id, customer_organization_id, status)
+       SELECT ?, om.organization_id, 'active'
+       FROM organization_members om
+       JOIN organizations customer_org ON customer_org.id = om.organization_id AND customer_org.status = 'active'
+       JOIN relationships customer_relationship ON customer_relationship.organization_id = om.organization_id
+         AND customer_relationship.relationship_type = 'customer' AND customer_relationship.status = 'active'
+       WHERE om.account_type = 'customer' AND om.account_id = ${customerIdExpression}
+         AND om.status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM organizations partner
+           JOIN relationships partner_relationship ON partner_relationship.organization_id = partner.id
+           WHERE partner.id = ? AND partner.status = 'active'
+             AND partner_relationship.status = 'active'
+             AND partner_relationship.relationship_type IN ('channel_partner', 'reseller', 'distributor')
+         )
+         AND EXISTS (
+           SELECT 1 FROM license_code_inventory
+           WHERE id = ? AND status = 'claiming' AND assigned_partner_organization_id = ?
+         )
+        ON CONFLICT(partner_organization_id, customer_organization_id) DO NOTHING`
+    ).bind(
+       code.assigned_partner_organization_id,
+       customerIdBinding,
+       code.assigned_partner_organization_id,
+       code.id,
+       code.assigned_partner_organization_id,
+    ));
+  }
   statements.push(env.DB.prepare(
     `UPDATE organizations
      SET legal_name = COALESCE(NULLIF(legal_name, ''), ?),
@@ -1156,7 +1187,11 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
     `INSERT INTO license_events (license_id, organization_id, event_type, new_status, metadata_json)
      SELECT l.id, ${organizationIdExpression}, 'LICENSE_CREATED', l.status, ?
      FROM licenses l WHERE l.license_key = ?`
-  ).bind(orgIdBinding, JSON.stringify({ source: "activation_code_claim", batch_id: code.batch_id }), generatedLicenseKey));
+  ).bind(orgIdBinding, JSON.stringify({
+    source: "activation_code_claim",
+    batch_id: code.batch_id,
+    partner_organization_id: code.assigned_partner_organization_id || null,
+  }), generatedLicenseKey));
   statements.push(env.DB.prepare(
     `UPDATE license_code_inventory
      SET status = 'claimed',
@@ -1189,6 +1224,7 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
     product_id: code.product_id,
     edition_id: code.edition_id,
     contact_email: customerEmail,
+    partner_organization_id: code.assigned_partner_organization_id || null,
     delivery_status: "issued",
     issued_to_name: contactName,
     issued_to_organization: institutionName,
@@ -2269,12 +2305,15 @@ async function getLicenseCodeBatchCodes(request, env, batchId) {
   if (!Number(batch?.count)) return json({ ok: false, error: "License code batch not found" }, 404);
 
   const { results } = await env.DB.prepare(
-    `SELECT serial_number, status, delivery_status, issued_to_name,
-            issued_to_organization, issued_to_email, delivery_channel,
-            delivery_reference, issued_at, activation_key_ciphertext
-     FROM license_code_inventory
-     WHERE batch_id = ?
-     ORDER BY serial_number LIMIT 500`
+    `SELECT c.serial_number, c.status, c.delivery_status, c.issued_to_name,
+            c.issued_to_organization, c.issued_to_email, c.delivery_channel,
+            c.delivery_reference, c.issued_at, c.activation_key_ciphertext,
+            c.assigned_partner_organization_id, c.partner_assigned_at,
+            assigned_partner.name AS assigned_partner_name
+     FROM license_code_inventory c
+     LEFT JOIN organizations assigned_partner ON assigned_partner.id = c.assigned_partner_organization_id
+     WHERE c.batch_id = ?
+     ORDER BY c.serial_number LIMIT 500`
   ).bind(batchId).all();
   const encryption = await loadLicenseCodeEncryptionKey(env);
   return json({
@@ -2291,15 +2330,21 @@ async function getLicenseCodeBatchCodes(request, env, batchId) {
       delivery_channel: code.delivery_channel,
       delivery_reference: code.delivery_reference,
       issued_at: code.issued_at,
+      assigned_partner_organization_id: code.assigned_partner_organization_id,
+      assigned_partner_name: code.assigned_partner_name,
+      partner_assigned_at: code.partner_assigned_at,
       activation_key_recoverable: Boolean(code.activation_key_ciphertext && encryption.key),
     })),
   });
 }
 
-async function revealLicenseCode(request, env, batchId, serialNumber) {
+async function revealLicenseCode(request, env, batchId, serialNumber, partnerSession = null) {
   const noStoreHeaders = { "Cache-Control": "no-store", Pragma: "no-cache" };
-  const principal = await requireSuperAdmin(request, env);
+  const principal = partnerSession || await requireSuperAdmin(request, env);
   if (!principal) return json({ ok: false, error: "Super admin access required" }, 403, null, noStoreHeaders);
+  if (partnerSession && !(await hasPartnerPermission(env, partnerSession, "partner.inventory.reveal"))) {
+    return json({ ok: false, error: "Partner activation-key access required" }, 403, null, noStoreHeaders);
+  }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(batchId) ||
       !/^\d{9}$/.test(serialNumber)) {
     return json({ ok: false, error: "A valid batch and serial number are required" }, 400, null, noStoreHeaders);
@@ -2331,18 +2376,23 @@ async function revealLicenseCode(request, env, batchId, serialNumber) {
     return json({ ok: false, error: "A valid password confirmation is required" }, 400, null, noStoreHeaders);
   }
 
+  const accountTable = principal.account_type === "user" ? "users" : "customers";
   const user = await env.DB.prepare(
-    "SELECT password_hash FROM users WHERE id = ? AND status = 'active'"
+    `SELECT password_hash FROM ${accountTable} WHERE id = ? AND status = 'active'`
   ).bind(principal.account_id).first();
   if (!user || !(await verifyPassword(body.password, user.password_hash))) {
     return json({ ok: false, error: "Password confirmation failed" }, 403, null, noStoreHeaders);
   }
 
   const code = await env.DB.prepare(
-    `SELECT activation_key_ciphertext, activation_key_hash, status
+    `SELECT activation_key_ciphertext, activation_key_hash, status,
+            assigned_partner_organization_id
      FROM license_code_inventory WHERE batch_id = ? AND serial_number = ?`
   ).bind(batchId, serialNumber).first();
   if (!code) return json({ ok: false, error: "License code not found" }, 404, null, noStoreHeaders);
+  if (partnerSession && Number(code.assigned_partner_organization_id) !== Number(partnerSession.partner_organization_id)) {
+    return json({ ok: false, error: "License code not found" }, 404, null, noStoreHeaders);
+  }
   if (code.status !== "available") {
     return json({ ok: false, error: "Only unclaimed, available codes can be revealed" }, 409, null, noStoreHeaders);
   }
@@ -2373,9 +2423,15 @@ async function revealLicenseCode(request, env, batchId, serialNumber) {
     return json({ ok: false, error: "The activation key could not be verified" }, 503, null, noStoreHeaders);
   }
 
+  const auditPrincipal = partnerSession
+    ? { ...partnerSession, organization_id: partnerSession.partner_organization_id }
+    : principal;
+  const revealAuditDetails = { batch_id: batchId };
+  if (partnerSession) revealAuditDetails.partner_organization_id = partnerSession.partner_organization_id;
   await writeAudit(
-    env, request, principal, "LICENSE_CODE_REVEALED",
-    "license_code_inventory", serialNumber, null, { batch_id: batchId },
+    env, request, auditPrincipal,
+    partnerSession ? "PARTNER_LICENSE_CODE_REVEALED" : "LICENSE_CODE_REVEALED",
+    "license_code_inventory", serialNumber, null, revealAuditDetails,
   );
   return json({ ok: true, activation_key: activationKey }, 200, null, noStoreHeaders);
 }
@@ -2515,6 +2571,8 @@ async function issueLicenseCodes(request, env, batchId) {
   const recipientEmail = emailProvided ? validEmail(body.recipient_email) : null;
   const referenceProvided = body.delivery_reference != null && body.delivery_reference !== "";
   const deliveryReference = referenceProvided ? boundedString(body.delivery_reference, 200) : null;
+  const partnerIdProvided = body.partner_organization_id != null && body.partner_organization_id !== "";
+  const assignedPartnerId = partnerIdProvided ? numericId(body.partner_organization_id) : null;
   const deliveryChannels = ["email", "messaging", "phone", "in_person", "other"];
   const deliveryChannel = boundedString(body.delivery_channel, 20);
   if (serialNumbers.length < 1 || serialNumbers.length > 200 ||
@@ -2524,9 +2582,24 @@ async function issueLicenseCodes(request, env, batchId) {
       (body.recipient_organization != null && body.recipient_organization !== "" && !recipientOrganization) ||
       (emailProvided && !recipientEmail) ||
       (referenceProvided && !deliveryReference) ||
+      (partnerIdProvided && !assignedPartnerId) ||
       !deliveryChannels.includes(deliveryChannel)) {
     return json({ ok: false, error: "Provide 1-200 unique serials, a recipient name, and valid delivery details" }, 400);
   }
+
+  let assignedPartner = null;
+  if (assignedPartnerId) {
+    assignedPartner = await env.DB.prepare(
+      `SELECT o.id, o.name
+       FROM organizations o
+       JOIN relationships r ON r.organization_id = o.id AND r.status = 'active'
+       WHERE o.id = ? AND o.status = 'active'
+         AND r.relationship_type IN ('channel_partner', 'reseller', 'distributor')
+       LIMIT 1`
+    ).bind(assignedPartnerId).first();
+    if (!assignedPartner) return json({ ok: false, error: "Select an active sales partner" }, 404);
+  }
+  const deliveryOrganization = assignedPartner?.name || recipientOrganization;
 
   const batch = await env.DB.prepare(
     "SELECT COUNT(*) AS count FROM license_code_inventory WHERE batch_id = ?"
@@ -2538,10 +2611,11 @@ async function issueLicenseCodes(request, env, batchId) {
     delivery_status: "issued",
     serial_numbers: serialNumbers,
     recipient_name: recipientName,
-    recipient_organization: recipientOrganization,
+    recipient_organization: deliveryOrganization,
     recipient_email: recipientEmail,
     delivery_channel: deliveryChannel,
     delivery_reference: deliveryReference,
+    partner_organization_id: assignedPartnerId,
   });
   const results = await env.DB.batch([
     env.DB.prepare(
@@ -2553,31 +2627,39 @@ async function issueLicenseCodes(request, env, batchId) {
            issued_to_organization = ?,
            issued_to_email = ?,
            delivery_channel = ?,
-           delivery_reference = ?
+           delivery_reference = ?,
+           assigned_partner_organization_id = ?,
+           partner_assigned_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now') END,
+           partner_assigned_by_person_id = ?
        WHERE batch_id = ?
          AND serial_number IN (SELECT value FROM json_each(?))
          AND status = 'available'
          AND delivery_status = 'not_issued'
+         AND assigned_partner_organization_id IS NULL
          AND (
            SELECT COUNT(*) FROM license_code_inventory
            WHERE batch_id = ?
              AND serial_number IN (SELECT value FROM json_each(?))
              AND status = 'available'
              AND delivery_status = 'not_issued'
+             AND assigned_partner_organization_id IS NULL
          ) = ?`
     ).bind(
-      principal.person_id, recipientName, recipientOrganization, recipientEmail,
-      deliveryChannel, deliveryReference, batchId, serialNumbersJson,
+      principal.person_id, recipientName, deliveryOrganization, recipientEmail,
+      deliveryChannel, deliveryReference, assignedPartnerId, assignedPartnerId,
+      assignedPartnerId ? principal.person_id : null, batchId, serialNumbersJson,
       batchId, serialNumbersJson, serialNumbers.length,
     ),
     env.DB.prepare(
       `INSERT INTO audit_logs
        (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
-       SELECT ?, NULL, 'LICENSE_CODES_ISSUED', 'license_code_batch_delivery', ?, ?, ?, ?
+       SELECT ?, NULL, ?, 'license_code_batch_delivery', ?, ?, ?, ?
        WHERE changes() = ?`
     ).bind(
-      principal.person_id, batchId,
-      JSON.stringify({ delivery_status: "not_issued", count: serialNumbers.length }),
+      principal.person_id,
+      assignedPartnerId ? "LICENSE_CODES_ALLOCATED_TO_PARTNER" : "LICENSE_CODES_ISSUED",
+      batchId,
+      JSON.stringify({ delivery_status: "not_issued", assigned_partner_organization_id: null, count: serialNumbers.length }),
       auditDetails, request.headers.get("CF-Connecting-IP") || null, serialNumbers.length,
     ),
   ]);
@@ -2588,7 +2670,13 @@ async function issueLicenseCodes(request, env, batchId) {
       error: "One or more selected codes are not available in this batch or have already been issued",
     }, 409);
   }
-  return json({ ok: true, batch_id: batchId, issued_count: issuedCount, serial_numbers: serialNumbers });
+  return json({
+    ok: true,
+    batch_id: batchId,
+    issued_count: issuedCount,
+    serial_numbers: serialNumbers,
+    partner_organization_id: assignedPartnerId,
+  });
 }
 
 async function revokeLicenseCodeBatch(request, env, batchId) {
@@ -3900,18 +3988,80 @@ async function handlePartner(request, env, resource) {
     const organization = await env.DB.prepare(
       `SELECT id, name, legal_name, gst_number, status, created_at FROM organizations WHERE id = ?`
     ).bind(session.partner_organization_id).first();
-    return json({ ok: true, account_type: session.account_type, user: { id: session.account_id, name: session.name, email: session.email }, partner: { ...organization, partner_role: session.partner_role, partner_type: session.partner_type } });
+    const [canRegisterCustomers, canViewInventory, canRevealKeys] = await Promise.all([
+      hasPartnerPermission(env, session, "partner.customer.create"),
+      hasPartnerPermission(env, session, "partner.inventory.view"),
+      hasPartnerPermission(env, session, "partner.inventory.reveal"),
+    ]);
+    return json({
+      ok: true,
+      account_type: session.account_type,
+      user: { id: session.account_id, name: session.name, email: session.email },
+      partner: { ...organization, partner_role: session.partner_role, partner_type: session.partner_type },
+      permissions: {
+        register_customers: canRegisterCustomers && PARTNER_SALES_TYPES.includes(session.partner_type),
+        view_inventory: canViewInventory,
+        reveal_activation_keys: canRevealKeys,
+      },
+    });
   }
 
   if (resource === "customers") {
-    const { results } = await env.DB.prepare(
+    if (request.method === "POST") return await createPartnerCustomerInvite(request, env, session);
+    if (request.method !== "GET") return json({ ok: false, error: "Unsupported partner customer operation" }, 405);
+    const [customers, pendingInvites] = await Promise.all([
+      env.DB.prepare(
       `SELECT o.id, o.name, o.legal_name, o.status, pcl.created_at
        FROM partner_customer_links pcl
        JOIN organizations o ON o.id = pcl.customer_organization_id
        WHERE pcl.partner_organization_id = ? AND pcl.status = 'active' AND o.status = 'active'
        ORDER BY o.name`
+      ).bind(session.partner_organization_id).all(),
+      env.DB.prepare(
+        `SELECT id, email, name, company,
+                CASE WHEN status = 'pending' AND expires_at <= datetime('now') THEN 'expired' ELSE status END AS status,
+                created_at, expires_at
+         FROM customer_invites
+         WHERE invited_by_partner_organization_id = ? AND status = 'pending'
+         ORDER BY created_at DESC, id DESC LIMIT 100`
+      ).bind(session.partner_organization_id).all(),
+    ]);
+    return json({
+      ok: true,
+      customers: customers.results || [],
+      pending_invites: pendingInvites.results || [],
+    });
+  }
+
+  if (resource === "inventory") {
+    if (!(await hasPartnerPermission(env, session, "partner.inventory.view"))) {
+      return json({ ok: false, error: "Partner inventory access required" }, 403);
+    }
+    const { results } = await env.DB.prepare(
+      `SELECT c.batch_id, c.serial_number, c.status, c.delivery_status,
+              c.partner_assigned_at, c.activation_key_ciphertext,
+              p.slug AS product_code, p.name AS product_name,
+              e.code AS edition_code, e.name AS edition_name
+       FROM license_code_inventory c
+       JOIN products p ON p.id = c.product_id
+       JOIN product_editions e ON e.id = c.edition_id
+       WHERE c.assigned_partner_organization_id = ?
+       ORDER BY c.partner_assigned_at DESC, c.serial_number`
     ).bind(session.partner_organization_id).all();
-    return json({ ok: true, customers: results });
+    const encryption = await loadLicenseCodeEncryptionKey(env);
+    return json({
+      ok: true,
+      inventory: (results || []).map((code) => ({
+        batch_id: code.batch_id,
+        serial_number: code.serial_number,
+        status: code.status,
+        delivery_status: code.delivery_status,
+        assigned_at: code.partner_assigned_at,
+        product: { code: code.product_code, name: code.product_name },
+        edition: { code: code.edition_code, name: code.edition_name },
+        activation_key_recoverable: Boolean(code.activation_key_ciphertext && encryption.key),
+      })),
+    }, 200, null, { "Cache-Control": "no-store" });
   }
 
   if (resource === "licenses") {
@@ -3952,6 +4102,97 @@ async function handlePartner(request, env, resource) {
   }
 
   return json({ ok: false, error: "Unsupported partner operation" }, 405);
+}
+
+async function createPartnerCustomerInvite(request, env, session) {
+  if (!(await hasPartnerPermission(env, session, "partner.customer.create")) ||
+      !PARTNER_SALES_TYPES.includes(session.partner_type)) {
+    return json({ ok: false, error: "Customer registration is not authorized for this partner" }, 403);
+  }
+  const limited = await requireRateLimit(
+    env, request, "partner-customer-invite-create", 20, 3600, String(session.person_id),
+  );
+  if (limited) return limited;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid customer registration request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid customer registration request is required" }, 400);
+  }
+  const email = validEmail(body.email);
+  const company = boundedString(body.company, 200);
+  const name = body.name == null || body.name === "" ? null : boundedString(body.name, 120);
+  if (!email || !company || (body.name != null && body.name !== "" && !name)) {
+    return json({ ok: false, error: "A valid customer email, organization name, and optional contact name are required" }, 400);
+  }
+  if (await emailAlreadyRegistered(env, email)) {
+    return json({ ok: false, error: "This account already exists. Ask SMRITISYS to link the existing customer." }, 409);
+  }
+
+  const duplicateOrganization = await env.DB.prepare(
+    `SELECT id FROM organizations
+     WHERE lower(trim(COALESCE(NULLIF(legal_name, ''), name))) = lower(trim(?))
+        OR lower(trim(name)) = lower(trim(?))
+     ORDER BY id LIMIT 1`
+  ).bind(company, company).first();
+  if (duplicateOrganization) {
+    return json({ ok: false, error: "This organization already exists. Ask SMRITISYS to link the existing customer." }, 409);
+  }
+  const pendingInvite = await env.DB.prepare(
+    `SELECT id FROM customer_invites
+     WHERE lower(email) = ? AND status = 'pending' AND expires_at > datetime('now') LIMIT 1`
+  ).bind(email).first();
+  if (pendingInvite) return json({ ok: false, error: "An active invitation already exists for this email" }, 409);
+
+  const token = makeToken();
+  const tokenHash = await hashCustomerInviteToken(token);
+  const auditValue = JSON.stringify({
+    email,
+    name,
+    company,
+    partner_organization_id: session.partner_organization_id,
+    expires_in_hours: 24,
+  });
+  const clientIp = request.headers.get("CF-Connecting-IP") || null;
+  let results;
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE customer_invites SET status = 'revoked'
+         WHERE lower(email) = ? AND status = 'pending' AND expires_at <= datetime('now')`
+      ).bind(email),
+      env.DB.prepare(
+        `INSERT INTO customer_invites
+         (token_hash, email, name, company, created_by, expires_at, invited_by_partner_organization_id)
+         VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'), ?)`
+      ).bind(tokenHash, email, name, company, session.person_id, session.partner_organization_id),
+      env.DB.prepare(
+        `INSERT INTO audit_logs
+         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+         SELECT ?, ?, 'PARTNER_CUSTOMER_INVITE_CREATED', 'customer_invite',
+                CAST(id AS TEXT), NULL, ?, ?
+         FROM customer_invites WHERE token_hash = ?`
+      ).bind(session.person_id, session.partner_organization_id, auditValue, clientIp, tokenHash),
+    ]);
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) {
+      return json({ ok: false, error: "An active invitation already exists for this email" }, 409);
+    }
+    throw error;
+  }
+  if (results[1].meta.changes !== 1 || results[2].meta.changes !== 1) {
+    throw new Error("Partner customer invitation could not be recorded");
+  }
+  return json({
+    ok: true,
+    setup_path: `/accept-invite.html#token=${token}`,
+    expires_in_hours: 24,
+    invite_id: results[1].meta.last_row_id,
+  }, 201, null, { "Cache-Control": "no-store" });
 }
 
 async function handleDemo(request, env) {
@@ -4111,11 +4352,12 @@ async function handleAdminCustomerInvites(request, env, origin) {
   if (request.method === "GET") {
     const { results } = await env.DB.prepare(
      `SELECT i.id, i.email, i.name, COALESCE(o.legal_name, o.name, i.company) AS company,
-             i.organization_id, i.customer_id,
+             i.organization_id, i.customer_id, partner.name AS invited_by_partner,
              CASE WHEN i.status = 'pending' AND i.expires_at <= datetime('now') THEN 'expired' ELSE i.status END AS status,
              i.created_at, i.expires_at, i.accepted_at
       FROM customer_invites i
       LEFT JOIN organizations o ON o.id = i.organization_id
+      LEFT JOIN organizations partner ON partner.id = i.invited_by_partner_organization_id
       ORDER BY i.created_at DESC, i.id DESC LIMIT 100`
     ).all();
     return json({ ok: true, invites: results }, 200, origin, { "Cache-Control": "no-store" });
@@ -4354,8 +4596,20 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
 
   const tokenHash = await hashCustomerInviteToken(token);
   const invitation = await env.DB.prepare(
-    `SELECT id, email, name, company, organization_id, customer_id FROM customer_invites
-    WHERE token_hash = ? AND status = 'pending' AND expires_at > datetime('now')`
+    `SELECT id, email, name, company, organization_id, customer_id,
+            invited_by_partner_organization_id
+     FROM customer_invites
+     WHERE token_hash = ? AND status = 'pending' AND expires_at > datetime('now')
+       AND (
+         invited_by_partner_organization_id IS NULL
+         OR EXISTS (
+           SELECT 1 FROM organizations partner
+           JOIN relationships partner_relationship ON partner_relationship.organization_id = partner.id
+           WHERE partner.id = customer_invites.invited_by_partner_organization_id
+             AND partner.status = 'active' AND partner_relationship.status = 'active'
+             AND partner_relationship.relationship_type IN ('channel_partner', 'reseller', 'distributor')
+         )
+       )`
   ).bind(tokenHash).first();
   if (!invitation) return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
   const existingCustomer = invitation.customer_id
@@ -4376,6 +4630,7 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
     company: invitation.company,
     organization_id: invitation.organization_id || null,
     converted_customer_id: invitation.customer_id || null,
+    partner_organization_id: invitation.invited_by_partner_organization_id || null,
   });
   try {
     const acceptInvite = env.DB.prepare(
@@ -4394,6 +4649,18 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
      "(SELECT organization_id FROM customer_invites WHERE id = ?)",
      [invitation.id],
     );
+    const partnerCustomerLinkStatement = env.DB.prepare(
+     `INSERT INTO partner_customer_links
+      (partner_organization_id, customer_organization_id, status)
+      SELECT i.invited_by_partner_organization_id, om.organization_id, 'active'
+      FROM customer_invites i
+      JOIN organization_members om ON om.account_type = 'customer'
+        AND om.account_id = i.customer_id AND om.status = 'active'
+      WHERE i.id = ? AND i.status = 'accepted'
+        AND i.invited_by_partner_organization_id IS NOT NULL
+      ON CONFLICT(partner_organization_id, customer_organization_id)
+      DO UPDATE SET status = partner_customer_links.status`
+    ).bind(invitation.id);
     const auditStatement = env.DB.prepare(
      `INSERT INTO audit_logs
       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
@@ -4419,6 +4686,7 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
           WHERE source_type = 'customer' AND source_id = ?`
        ).bind(invitation.name, invitation.customer_id),
        ...identityStatements,
+       partnerCustomerLinkStatement,
        auditStatement,
      ])
      : await env.DB.batch([
@@ -4433,12 +4701,17 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
           WHERE id = ? AND status = 'accepted' AND customer_id IS NULL AND changes() = 1`
        ).bind(invitation.email, invitation.id),
        ...identityStatements,
+       partnerCustomerLinkStatement,
        auditStatement,
      ]);
 
     if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1 ||
        (!invitation.customer_id && results[2].meta.changes !== 1)) {
      return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+    }
+    if (invitation.invited_by_partner_organization_id &&
+        Number(results[7]?.meta?.changes || 0) !== 1) {
+      throw new Error("The new customer could not be linked to the inviting partner");
     }
   } catch (error) {
     if (String(error).includes("UNIQUE")) {
@@ -4458,6 +4731,8 @@ const ADMIN_PARTNER_TYPES = [
   "referral_partner",
   "distributor",
 ];
+
+const PARTNER_SALES_TYPES = ["channel_partner", "reseller", "distributor"];
 
 function isAdminPartnerType(value) {
   return ADMIN_PARTNER_TYPES.includes(value);
@@ -5259,6 +5534,22 @@ export async function onRequest(context) {
       const announcementId = numericId(path.split("/")[2]);
       if (!announcementId) return json({ ok: false, error: "A valid announcement id is required" }, 400);
       return await handleAdminAnnouncements(request, env, announcementId);
+    }
+    const partnerCodeReveal = path.match(/^partner\/codes\/([0-9a-f-]{36})\/(\d{9})\/reveal$/i);
+    if (partnerCodeReveal && request.method === "POST") {
+      const partnerSession = await getPartnerSession(request, env);
+      if (!partnerSession) {
+        return json({ ok: false, error: "Partner access required" }, 403, null, {
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        });
+      }
+      return await revealLicenseCode(
+        request, env, partnerCodeReveal[1], partnerCodeReveal[2], partnerSession,
+      );
+    }
+    if (path === "partner/customers" && request.method === "POST") {
+      return await handlePartner(request, env, "customers");
     }
     if (path.startsWith("partner/") && path.split("/").length === 2 && request.method === "GET") {
       return await handlePartner(request, env, path.split("/")[1]);
