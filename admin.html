@@ -25,6 +25,18 @@
     .admin-table { width:100%; border-collapse:collapse; }
     .admin-table th,.admin-table td { padding:.8rem .5rem; text-align:left; border-bottom:1px solid var(--line); }
     .admin-table th { color:var(--muted); font-size:.76rem; text-transform:uppercase; letter-spacing:.08em; }
+    .admin-organization-filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(2,minmax(150px,1fr)); gap:.8rem; align-items:end; margin-bottom:1rem; }
+    .admin-organization-details { margin-top:1rem; }
+    .admin-organization-detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+    .admin-organization-detail-grid .card { min-width:0; }
+    .admin-organization-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.75rem 1rem; margin:0; }
+    .admin-organization-fields div { min-width:0; }
+    .admin-organization-fields dt { color:var(--muted); font-size:.75rem; }
+    .admin-organization-fields dd { margin:.2rem 0 0; overflow-wrap:anywhere; font-weight:600; }
+    .admin-organization-details table { width:100%; min-width:560px; border-collapse:collapse; }
+    .admin-organization-details th,.admin-organization-details td { padding:.65rem .5rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    .admin-organization-details th { color:var(--muted); font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; }
+    .admin-organization-details .table-scroll { overflow-x:auto; }
     .admin-shell { grid-template-columns:258px minmax(0,1fr); background:#f4f7f8; }
     .admin-aside { position:sticky; top:0; height:100vh; padding:1.5rem 1.1rem; background:linear-gradient(180deg,#172b32 0%,#132228 100%); }
     .admin-aside .brand { font-size:1.05rem; letter-spacing:.08em; }
@@ -97,6 +109,7 @@
     .admin-registration-filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(4,minmax(130px,1fr)) auto auto; align-items:end; gap:.7rem; margin-bottom:1rem; }
     .admin-registration-filters label { display:block; margin-bottom:.35rem; color:var(--muted); font-size:.75rem; font-weight:700; }
     .admin-registration-filters input,.admin-registration-filters select { width:100%; min-width:0; }
+    .admin-registration-scope { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:.75rem 0; }
     .admin-license-table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:#fff; }
     .admin-license-table { width:100%; min-width:1050px; border-collapse:collapse; }
     .admin-license-table th,.admin-license-table td { padding:.85rem .75rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
@@ -147,11 +160,35 @@
     .admin-partner-controls { display:flex; align-items:center; gap:.4rem; }
     .admin-partner-controls select { min-width:150px; }
     .admin-d1-estimates small { display:block; color:var(--muted); font-size:.72rem; }
+    .admin-support-filters { display:grid; grid-template-columns:minmax(220px,1.4fr) minmax(160px,.7fr) auto; align-items:end; gap:.7rem; margin:1rem 0; }
+    .admin-support-filters label { display:block; margin-bottom:.35rem; color:var(--muted); font-size:.75rem; font-weight:700; }
+    .admin-support-filters input,.admin-support-filters select { width:100%; min-width:0; }
+    .admin-support-workspace { display:grid; grid-template-columns:minmax(260px,.8fr) minmax(0,1.5fr); align-items:start; gap:1rem; }
+    .admin-support-list-panel { min-width:0; }
+    .admin-support-list { display:grid; max-height:72vh; gap:.55rem; overflow:auto; }
+    .admin-support-ticket { display:grid; width:100%; gap:.3rem; padding:.85rem 1rem; border:1px solid var(--line); border-radius:9px; color:var(--ink); background:#fff; font:inherit; text-align:left; cursor:pointer; }
+    .admin-support-ticket:hover,.admin-support-ticket.active { border-color:#0f766e; box-shadow:0 0 0 2px #0f766e18; }
+    .admin-support-ticket-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; color:var(--muted); font-size:.75rem; }
+    .admin-support-ticket strong { font-size:.88rem; overflow-wrap:anywhere; }
+    .admin-support-ticket small { color:var(--muted); font-size:.75rem; overflow-wrap:anywhere; }
+    .admin-support-pagination { display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:.7rem 0; }
+    .admin-support-pagination p { margin:0; color:var(--muted); font-size:.8rem; }
+    .admin-support-detail { min-width:0; }
+    .admin-support-contact { margin:.4rem 0 1rem; color:var(--muted); font-size:.82rem; overflow-wrap:anywhere; }
+    .admin-support-description { padding:.85rem 1rem; border-left:3px solid #7acfc2; border-radius:4px; background:#f5f8f8; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .admin-support-detail h4 { margin:1.2rem 0 .6rem; }
+    .admin-support-messages,.admin-support-activity { display:grid; gap:.6rem; }
+    .admin-support-message { padding:.75rem .9rem; border:1px solid var(--line); border-radius:9px; background:#fff; }
+    .admin-support-message-head { display:flex; align-items:center; justify-content:space-between; gap:.7rem; color:var(--muted); font-size:.75rem; }
+    .admin-support-message p { margin:.55rem 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .admin-support-reply { display:grid; gap:.55rem; margin-top:1rem; }
+    .admin-support-reply textarea { width:100%; }
+    .admin-support-activity .admin-activity-item { padding:.65rem 0; }
     @media (max-width:1080px) { .admin-ops-metrics,.admin-product-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-overview-grid { grid-template-columns:1fr; } }
     @media (max-width:980px) { .admin-registration-filters { grid-template-columns:repeat(3,minmax(0,1fr)); } .registration-detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-    @media (max-width:900px) { .admin-shell { grid-template-columns:1fr; } .admin-aside { position:relative; height:auto; padding:.8rem; } .admin-aside .brand { padding:.5rem .75rem 1rem; } .admin-nav { display:flex; overflow:auto; } .admin-nav button { white-space:nowrap; } .admin-logout { margin-top:.7rem; } .admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:900px) { .admin-shell { grid-template-columns:1fr; } .admin-aside { position:relative; height:auto; padding:.8rem; } .admin-aside .brand { padding:.5rem .75rem 1rem; } .admin-nav { display:flex; overflow:auto; } .admin-nav button { white-space:nowrap; } .admin-logout { margin-top:.7rem; } .admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-support-workspace { grid-template-columns:1fr; } .admin-support-list { max-height:45vh; } }
     @media (max-width:680px) { .admin-overview-hero { align-items:flex-start; flex-direction:column; padding:1.3rem; } .admin-topbar-label { display:none; } .admin-product-tabs { flex-wrap:nowrap; overflow-x:auto; } .admin-product-tab { flex:0 0 auto; } }
-    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics,.admin-ops-metrics,.admin-product-summary,.admin-registration-metrics { grid-template-columns:1fr 1fr; } .admin-registration-filters { grid-template-columns:1fr 1fr; } .admin-license-table { min-width:950px; } .registration-detail-grid { grid-template-columns:1fr; } .admin-registration-pagination { align-items:flex-start; flex-direction:column; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } .admin-overview-heading { align-items:flex-start; flex-direction:column; } .admin-activity-item { grid-template-columns:1fr; } .admin-activity-item time { grid-row:3; } .admin-main > .topbar .user-chip span:first-child { display:block; } .admin-d1-databases { grid-template-columns:1fr; } }
+    @media (max-width:560px) { .admin-content { padding:1rem; } .admin-metrics,.admin-ops-metrics,.admin-product-summary,.admin-registration-metrics { grid-template-columns:1fr 1fr; } .admin-registration-filters,.admin-support-filters { grid-template-columns:1fr 1fr; } .admin-organization-filters { grid-template-columns:1fr; } .admin-license-table { min-width:950px; } .registration-detail-grid,.admin-organization-detail-grid { grid-template-columns:1fr; } .admin-registration-pagination { align-items:flex-start; flex-direction:column; } .admin-table { display:block; overflow-x:auto; white-space:nowrap; } .admin-overview-heading { align-items:flex-start; flex-direction:column; } .admin-activity-item { grid-template-columns:1fr; } .admin-activity-item time { grid-row:3; } .admin-main > .topbar .user-chip span:first-child { display:block; } .admin-d1-databases { grid-template-columns:1fr; } }
     @media (max-width:380px) { .admin-metrics,.admin-ops-metrics,.admin-product-summary,.admin-registration-metrics,.admin-registration-filters,.admin-d1-estimates { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -161,7 +198,7 @@
     <div class="login-panel"><form id="adminLoginForm" class="login-box"><span class="eyebrow">Internal access</span><h2>Administrator sign in</h2><p class="muted">Super admin credentials are required.</p><label for="adminEmail">Email address</label><input id="adminEmail" name="email" type="email" autocomplete="username" required /><label for="adminPassword">Password</label><input id="adminPassword" name="password" type="password" autocomplete="current-password" required /><button class="primary" type="submit">Sign in</button><p id="adminLoginMessage" class="message" role="alert"></p></form></div>
   </section>
   <section id="adminPortalView" class="admin-shell hidden">
-    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button><button data-admin-view="security">Security</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
+    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="support">Support tickets</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button><button data-admin-view="security">Security</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
     <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><span class="admin-topbar-label">Internal control plane</span><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
       <section class="admin-view active" data-admin-section="overview">
         <div class="admin-overview-hero">
@@ -199,13 +236,20 @@
       <section class="admin-view" data-admin-section="users"><div class="section-head"><div><span class="eyebrow">Identity</span><h2>Staff users</h2></div><button class="secondary admin-refresh" data-refresh="users" type="button">Refresh</button></div><div id="adminUsersState" class="state-panel">Loading users...</div><div id="adminUsersList" class="card hidden"></div></section>
       <section class="admin-view" data-admin-section="organizations">
         <div class="section-head"><div><span class="eyebrow">Relationships</span><h2>Organizations</h2></div><button class="secondary admin-refresh" data-refresh="organizations" type="button">Refresh</button></div>
+        <form id="adminOrganizationFilters" class="card admin-organization-filters">
+          <div><label for="adminOrganizationSearch">Search organizations</label><input id="adminOrganizationSearch" type="search" placeholder="Name, address, tax ID, or website" /></div>
+          <div><label for="adminOrganizationStatus">Status</label><select id="adminOrganizationStatus"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+          <div><label for="adminOrganizationType">Relationship</label><select id="adminOrganizationType"><option value="">All relationships</option><option value="customer">Customer</option><option value="partner">Partner</option><option value="internal">Internal</option><option value="unclassified">Unclassified</option></select></div>
+        </form>
         <div id="adminOrganizationsState" class="state-panel">Loading organizations...</div>
         <div id="adminOrganizationsList" class="card hidden"></div>
+        <section id="adminOrganizationDetail" class="card admin-organization-details hidden" aria-live="polite"></section>
         <form id="customerInviteForm" class="card">
           <div class="section-head compact"><div><span class="eyebrow">Customer onboarding</span><h2>Invite a customer</h2></div></div>
           <p class="muted">Reuse an existing organization for another contact, or create a new organization. New setup links expire in 24 hours.</p>
           <div class="form-grid">
             <div><label for="customerInviteEmail">Customer email</label><input id="customerInviteEmail" name="email" type="email" autocomplete="off" maxlength="254" required /></div>
+            <div><label for="customerInvitePhone">Customer phone</label><input id="customerInvitePhone" name="phone" type="tel" autocomplete="tel" maxlength="40" required /></div>
             <div><label for="customerInviteName">Full name (optional)</label><input id="customerInviteName" name="name" autocomplete="off" maxlength="120" /></div>
             <div class="full"><label for="customerInviteOrganization">Organization</label><select id="customerInviteOrganization" name="organization_id"></select></div>
             <div id="customerInviteCompanyWrap" class="full"><label for="customerInviteCompany">New organization name</label><input id="customerInviteCompany" name="company" autocomplete="organization" maxlength="200" required /></div>
@@ -218,6 +262,49 @@
             <button id="customerInviteCopy" class="secondary" type="button">Copy setup link</button>
           </div>
         </form>
+        <div class="section-head"><div><span class="eyebrow">Customer account administration</span><h2>Customer profiles</h2></div><button class="secondary admin-refresh" data-refresh="customer-profiles" type="button">Refresh</button></div>
+        <form id="adminCustomerSearchForm" class="card">
+          <label for="adminCustomerSearch">Search by customer ID, name, email, phone, company, or organization</label>
+          <div class="form-actions"><input id="adminCustomerSearch" name="q" type="search" maxlength="100" placeholder="Search customers" /><button class="secondary" type="submit">Search</button></div>
+        </form>
+        <div id="adminCustomersState" class="state-panel">Loading customer accounts...</div>
+        <div id="adminCustomersList" class="card hidden"></div>
+        <section id="adminCustomerProfilePanel" class="card hidden" aria-labelledby="adminCustomerProfileHeading">
+          <div class="section-head compact"><div><span class="eyebrow">Company-owned account</span><h2 id="adminCustomerProfileHeading">Customer profile</h2></div><button id="adminCustomerProfileClose" class="secondary" type="button">Close</button></div>
+          <div id="adminCustomerProfileIdentity" class="muted"></div>
+          <form id="adminCustomerProfileForm">
+            <div class="form-grid">
+              <div><label for="adminCustomerProfileName">Contact name</label><input id="adminCustomerProfileName" name="name" maxlength="120" required disabled /></div>
+              <div><label for="adminCustomerProfilePhone">Phone</label><input id="adminCustomerProfilePhone" name="phone" type="tel" maxlength="40" required disabled /></div>
+              <div><label for="adminCustomerProfileGst">GST number</label><input id="adminCustomerProfileGst" name="gst_number" maxlength="80" disabled /></div>
+              <div><label for="adminCustomerProfileWebsite">Website</label><input id="adminCustomerProfileWebsite" name="website" type="url" maxlength="255" disabled /></div>
+              <div><label for="adminCustomerProfileTimezone">Timezone</label><input id="adminCustomerProfileTimezone" name="timezone" maxlength="100" disabled /></div>
+              <div class="full"><label for="adminCustomerProfileBio">Notes</label><textarea id="adminCustomerProfileBio" name="bio" maxlength="2000" rows="3" disabled></textarea></div>
+            </div>
+            <div class="section-head compact"><div><span class="eyebrow">Saved addresses</span><h3>Customer addresses</h3></div><button id="adminCustomerAddressAdd" class="secondary hidden" type="button">Add address</button></div>
+            <div id="adminCustomerAddresses"></div>
+            <div class="form-actions">
+              <button id="adminCustomerProfileEdit" class="secondary" type="button">Edit profile</button>
+              <button id="adminCustomerProfileSave" class="primary hidden" type="submit">Save changes</button>
+              <button id="adminCustomerProfileCancel" class="secondary hidden" type="button">Cancel</button>
+            </div>
+            <p id="adminCustomerProfileMessage" class="message" role="status"></p>
+          </form>
+          <div class="section-head compact"><div><span class="eyebrow">Access recovery</span><h3>Password reset</h3></div></div>
+          <p class="muted">Passwords are stored as one-way hashes and cannot be viewed. Generate a single-use reset link that expires in 30 minutes.</p>
+          <button id="adminCustomerResetButton" class="secondary" type="button">Generate reset link</button>
+          <div id="adminCustomerResetResult" class="hidden">
+            <label for="adminCustomerResetLink">One-time reset link — copy and share it securely</label>
+            <input id="adminCustomerResetLink" type="url" readonly />
+            <button id="adminCustomerResetCopy" class="secondary" type="button">Copy reset link</button>
+          </div>
+          <p id="adminCustomerResetMessage" class="message" role="status"></p>
+          <div class="section-head compact"><div><span class="eyebrow">License authority</span><h3>Licenses &amp; serial activity</h3></div><button id="adminCustomerLicensesManage" class="secondary" type="button">Manage all licenses</button></div>
+          <div id="adminCustomerLicensesState" class="state-panel">Loading customer licenses...</div>
+          <div id="adminCustomerLicenses" class="card hidden"></div>
+          <div class="section-head compact"><div><span class="eyebrow">Linked records</span><h3>Organizations &amp; partners</h3></div></div>
+          <div id="adminCustomerProfileRelationships" class="muted"></div>
+        </section>
         <div class="section-head"><div><span class="eyebrow">Access management</span><h2>Customer invitations</h2></div></div>
         <div id="adminCustomerInvitesState" class="state-panel">Loading invitations...</div>
         <div id="adminCustomerInvitesList" class="card hidden"></div>
@@ -237,7 +324,18 @@
             </select></div>
             <div><label for="partnerContactRole">Partner role</label><select id="partnerContactRole" name="partner_role"><option value="partner_admin">Partner administrator</option><option value="partner_member">Partner member</option></select></div>
             <div><label for="partnerContactEmail">Contact email</label><input id="partnerContactEmail" name="email" type="email" autocomplete="off" maxlength="254" required /></div>
+            <div><label for="partnerContactPhone">Contact phone</label><input id="partnerContactPhone" name="phone" type="tel" autocomplete="tel" maxlength="40" required /></div>
             <div><label for="partnerContactName">Full name (optional)</label><input id="partnerContactName" name="name" autocomplete="name" maxlength="120" /></div>
+            <div class="full"><strong>Partner organization details</strong><p class="muted">Address and contact details belong to the canonical organization record. Leave fields blank to keep existing values unchanged.</p></div>
+            <div><label for="partnerOrganizationLegalName">Legal name</label><input id="partnerOrganizationLegalName" name="legal_name" maxlength="200" /></div>
+            <div><label for="partnerOrganizationPhone">Organization phone</label><input id="partnerOrganizationPhone" name="organization_phone" type="tel" maxlength="40" /></div>
+            <div class="full"><label for="partnerOrganizationAddress">Address</label><input id="partnerOrganizationAddress" name="address" autocomplete="street-address" maxlength="500" /></div>
+            <div><label for="partnerOrganizationCity">City</label><input id="partnerOrganizationCity" name="city" autocomplete="address-level2" maxlength="120" /></div>
+            <div><label for="partnerOrganizationState">State / province</label><input id="partnerOrganizationState" name="state" autocomplete="address-level1" maxlength="120" /></div>
+            <div><label for="partnerOrganizationPincode">Postal code</label><input id="partnerOrganizationPincode" name="pincode" autocomplete="postal-code" maxlength="20" /></div>
+            <div><label for="partnerOrganizationCountry">Country</label><input id="partnerOrganizationCountry" name="country" autocomplete="country-name" maxlength="120" /></div>
+            <div><label for="partnerOrganizationTaxId">Tax ID</label><input id="partnerOrganizationTaxId" name="tax_id" maxlength="80" /></div>
+            <div><label for="partnerOrganizationWebsite">Website</label><input id="partnerOrganizationWebsite" name="website" type="url" autocomplete="url" maxlength="255" /></div>
           </div>
           <button id="partnerContactButton" class="primary" type="submit">Add partner contact</button>
           <p id="partnerContactMessage" class="message" role="status"></p>
@@ -303,6 +401,7 @@
                 <div id="licenseNewCustomerFields" class="full">
                   <div class="form-grid">
                     <div><label for="licenseCustomerEmail">Customer email</label><input id="licenseCustomerEmail" name="customer_email" type="email" maxlength="254" autocomplete="off" required /></div>
+                    <div><label for="licenseCustomerPhone">Customer phone</label><input id="licenseCustomerPhone" name="customer_phone" type="tel" maxlength="40" autocomplete="tel" required /></div>
                     <div><label for="licenseCustomerName">Contact name (optional)</label><input id="licenseCustomerName" name="customer_name" maxlength="120" autocomplete="off" /></div>
                     <div class="full"><label for="licenseCustomerCompany">Organization name</label><input id="licenseCustomerCompany" name="customer_company" maxlength="200" autocomplete="organization" required /></div>
                   </div>
@@ -369,6 +468,7 @@
           <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Registration &amp; activation monitor</h2></div><p class="muted">Customer details are restricted to super admins and audited when inspected.</p></div>
           <div id="adminRegistrationMetrics" class="admin-registration-metrics" aria-live="polite"></div>
           <form id="adminRegistrationFilters" class="card admin-registration-filters">
+            <input id="adminRegistrationCustomerId" name="customer_id" type="hidden" />
             <div><label for="adminRegistrationSearch">Search customers, emails or serials</label><input id="adminRegistrationSearch" name="q" type="search" maxlength="100" placeholder="Organization, contact, email, product or serial" /></div>
             <div><label for="adminRegistrationStatus">License status</label><select id="adminRegistrationStatus" name="status"><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option><option value="PENDING_RENEWAL">Pending renewal</option><option value="EXPIRED">Expired</option><option value="SUSPENDED">Suspended</option><option value="CANCELLED">Cancelled</option></select></div>
             <div><label for="adminRegistrationActivation">Activation</label><select id="adminRegistrationActivation" name="activation"><option value="">All activations</option><option value="active">Has active installation</option><option value="never_activated">Never activated</option><option value="released">All installations released</option></select></div>
@@ -377,10 +477,27 @@
             <div><label for="adminRegistrationTo">Issued to</label><input id="adminRegistrationTo" name="to" type="date" /></div>
             <div class="form-actions"><button class="primary" type="submit">Apply</button><button id="adminRegistrationReset" class="secondary" type="button">Reset</button></div>
           </form>
+          <div id="adminRegistrationCustomerScope" class="admin-registration-scope hidden" role="status"><span id="adminRegistrationCustomerScopeLabel"></span><button id="adminRegistrationCustomerScopeClear" class="secondary" type="button">Clear customer filter</button></div>
           <div id="adminLicensesState" class="state-panel">Loading licenses...</div>
           <div id="adminLicensesList" class="license-list"></div>
           <div id="adminRegistrationPagination" class="admin-registration-pagination" aria-live="polite"></div>
         </section>
+      </section>
+      <section class="admin-view" data-admin-section="support">
+        <div class="section-head"><div><span class="eyebrow">Customer help desk</span><h2>Support tickets</h2></div><button class="secondary admin-refresh" data-refresh="support" type="button">Refresh</button></div>
+        <form id="adminSupportFilters" class="admin-support-filters">
+          <div><label for="adminSupportSearch">Search tickets and customers</label><input id="adminSupportSearch" name="q" type="search" maxlength="100" placeholder="Ticket, subject, name, email or organization" /></div>
+          <div><label for="adminSupportStatus">Status</label><select id="adminSupportStatus" name="status"><option value="">All statuses</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select></div>
+          <button class="primary" type="submit">Apply filters</button>
+        </form>
+        <div class="admin-support-workspace">
+          <div class="admin-support-list-panel">
+            <div id="adminSupportState" class="state-panel" aria-live="polite">Loading support tickets...</div>
+            <div id="adminSupportList" class="admin-support-list hidden" role="list"></div>
+            <div id="adminSupportPagination" class="admin-support-pagination hidden"><p id="adminSupportPaginationStatus"></p><div class="form-actions"><button class="secondary" type="button" data-admin-support-page="previous">Previous</button><button class="secondary" type="button" data-admin-support-page="next">Next</button></div></div>
+          </div>
+          <div id="adminSupportDetail" class="card state-panel" aria-live="polite">Select a ticket to review its conversation and activity.</div>
+        </div>
       </section>
       <section class="admin-view" data-admin-section="announcements"><div class="section-head"><div><span class="eyebrow">Customer communications</span><h2>Announcements &amp; service status</h2></div><button class="secondary admin-refresh" data-refresh="announcements" type="button">Refresh</button></div><form id="announcementForm" class="card"><input id="announcementId" name="id" type="hidden" /><div class="form-grid"><div class="full"><label for="announcementTitle">Title</label><input id="announcementTitle" name="title" maxlength="200" required /></div><div class="full"><label for="announcementMessageBody">Message</label><textarea id="announcementMessageBody" name="message" maxlength="5000" rows="4" required></textarea></div><div><label for="announcementSeverity">Severity</label><select id="announcementSeverity" name="severity"><option value="info">Information</option><option value="maintenance">Maintenance</option><option value="degraded">Degraded service</option><option value="outage">Service outage</option></select></div><div><label for="announcementProduct">Product scope</label><select id="announcementProduct" name="product_id"><option value="">All customer organizations</option></select></div><div><label for="announcementStartsAt">Starts</label><input id="announcementStartsAt" name="starts_at" type="datetime-local" /></div><div><label for="announcementEndsAt">Ends (optional)</label><input id="announcementEndsAt" name="ends_at" type="datetime-local" /></div><div><label for="announcementStatus">Initial status</label><select id="announcementStatus" name="status"><option value="draft">Draft</option><option value="published">Publish now</option></select></div></div><div class="form-actions"><button id="announcementSaveButton" class="primary" type="submit">Create announcement</button><button id="announcementCancelEdit" class="secondary hidden" type="button">Cancel edit</button></div><p id="announcementMessage" class="message" role="status"></p></form><div id="adminAnnouncementsState" class="state-panel" aria-live="polite">Loading announcements...</div><div id="adminAnnouncementsList" class="grid modules" aria-live="polite"></div></section>
       <section class="admin-view" data-admin-section="audit"><div class="section-head"><div><span class="eyebrow">Governance</span><h2>Audit activity</h2></div><button class="secondary admin-refresh" data-refresh="audit" type="button">Refresh</button></div><div id="adminAuditState" class="state-panel">Loading audit activity...</div><div id="adminAuditList" class="card hidden"></div></section>
@@ -428,6 +545,6 @@
       </form>
     </dialog>
   </section>
-  <script src="js/admin.js?v=admin-partner-management-v2" defer></script>
+  <script src="js/admin.js?v=admin-support-tickets-v1" defer></script>
 </body>
 </html>

@@ -125,7 +125,7 @@
 
         <section class="view" data-section="profile">
           <div class="section-head"><div><span class="eyebrow">Account</span><h2>My profile</h2></div></div>
-          <form id="profileForm" class="card"><div class="form-grid"><div><label for="profileName">Full name</label><input id="profileName" name="name" required /></div><div><label for="profileEmail">Email</label><input id="profileEmail" name="email" type="email" readonly /></div><div><label for="profilePhone">Phone</label><input id="profilePhone" name="phone" /></div></div><button class="primary" type="submit">Save profile</button><p id="profileMessage" class="message" role="status"></p></form>
+          <form id="profileForm" class="card"><div class="form-grid"><div><label for="profileName">Full name</label><input id="profileName" name="name" required /></div><div><label for="profileEmail">Email</label><input id="profileEmail" name="email" type="email" readonly required /></div><div><label for="profilePhone">Phone</label><input id="profilePhone" name="phone" type="tel" autocomplete="tel" maxlength="40" required /></div></div><button class="primary" type="submit">Save profile</button><p id="profileMessage" class="message" role="status"></p></form>
           <form id="passwordForm" class="card"><div class="section-head compact"><div><span class="eyebrow">Security</span><h3>Change password</h3></div></div><label for="currentPassword">Current password</label><input id="currentPassword" name="current_password" type="password" autocomplete="current-password" required /><label for="newPassword">New password</label><input id="newPassword" name="new_password" type="password" autocomplete="new-password" minlength="8" required /><button class="secondary" type="submit">Change password</button><p id="passwordMessage" class="message" role="status"></p></form>
           <div id="sessionDetails" class="card"><div class="section-head compact"><div><span class="eyebrow">Session</span><h3>Current session</h3></div></div><p class="muted">Authenticated customer session</p><button id="accountLogoutButton" class="secondary" type="button">Sign out</button></div>
         </section>
@@ -135,6 +135,6 @@
     </main>
   </section>
 
-  <script src="js/portal.js" defer></script>
+  <script src="js/portal.js?v=support-ticket-status-v1" defer></script>
 </body>
 </html>

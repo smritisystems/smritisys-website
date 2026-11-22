@@ -21,7 +21,7 @@ import fs from "node:fs";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { hashCustomerInviteToken, onRequest } from "../functions/api/[[path]].js";
-import { sampleD1Database } from "../d1-ops/src/index.js";
+import d1Operations, { sampleD1Database } from "../d1-ops/src/index.js";
 
 const TEST_LICENSE_CODE_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -43,6 +43,7 @@ function createD1Mock() {
   const m11 = fs.readFileSync(new URL("./fixtures/migrations/0011_admin_staging_seed.sql", import.meta.url), "utf8");
   const m14 = fs.readFileSync(new URL("../migrations/0014_signed_license_artifacts.sql", import.meta.url), "utf8");
   const m15 = fs.readFileSync(new URL("../migrations/0015_prathamone_product_registration.sql", import.meta.url), "utf8");
+  const m28 = fs.readFileSync(new URL("../migrations/0028_customer_profile_management.sql", import.meta.url), "utf8");
 
   db.exec(schema);
   db.exec(m2);
@@ -57,6 +58,7 @@ function createD1Mock() {
   db.exec(m11);
   db.exec(m14);
   db.exec(m15);
+  db.exec(m28);
 
   return {
     raw: db,
@@ -87,6 +89,7 @@ function createD1Mock() {
           const stmt = db.prepare(query);
           const info = stmt.run(...boundValues);
           return {
+            success: true,
             meta: {
               changes: info.changes,
               last_row_id: Number(info.lastInsertRowid),
@@ -154,6 +157,36 @@ test("D1 capacity monitoring is restricted to super admins and reports backups d
   assert.equal(response.data.snapshots[0].size_bytes, 716800);
   assert.equal(response.data.backup_status, "disabled");
   assert.deepEqual(response.data.backups, []);
+});
+
+test("organization details require a super admin and omit license keys", async () => {
+  const d1 = createD1Mock();
+  const anonymous = await callApi(d1, "admin/organizations/101");
+  assert.equal(anonymous.status, 403);
+
+  const token = "organization-details-test-session";
+  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+1 hour'))")
+    .run(token);
+  const customerToken = "organization-details-customer-session";
+  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+1 hour'))")
+    .run(customerToken);
+  const customer = await callApi(d1, "admin/organizations/101", { token: customerToken });
+  assert.equal(customer.status, 403);
+
+  const response = await callApi(d1, "admin/organizations/101", { token });
+  assert.equal(response.status, 200);
+  assert.equal(response.data.organization.name, "Organization A");
+  assert.equal(response.data.organization.gst_number, "27AABCO1234A1Z5");
+  assert.equal(response.data.organization.relationship_types, "customer");
+  assert.equal(response.data.members[0].email, "customer.a@smritibooks.com");
+  assert.equal(response.data.members[0].member_role, "customer");
+  assert.deepEqual(response.data.relationships.map((link) => [link.relationship_type, link.organization_name]), [
+    ["Partner", "Channel Partner Pvt Ltd"],
+  ]);
+  assert.equal(response.data.licenses.length, 1);
+  assert.equal(response.data.licenses[0].product_name, "SMRITI Retail OS");
+  assert.doesNotMatch(JSON.stringify(response.data), /SMRITI-RET-ENT-2026-001/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 });
 
 test("D1 sampler records a scheduled size sample for the canonical database", async () => {
@@ -340,6 +373,15 @@ test("staff bootstrap uses Worker-supported PBKDF2 and can log in", async () => 
   const storedHash = d1.raw.prepare("SELECT password_hash FROM users WHERE email = ?").get("bootstrap@example.test").password_hash;
   const iterations = Number(storedHash.split("$")[1]);
   assert.ok(iterations > 0 && iterations <= 100000);
+  const missingCustomerPhone = await callApi(d1, "signup", {
+    method: "POST",
+    body: {
+      type: "customer",
+      email: "customer-without-phone@example.test",
+      password: "Customer-signup-passphrase-2026!",
+    },
+  });
+  assert.equal(missingCustomerPhone.status, 400);
 
   const login = await callApi(d1, "login", {
     method: "POST",
@@ -393,11 +435,17 @@ test("customer setup invitations are one-time and provision the canonical custom
 
   const denied = await callApi(d1, "admin/customer-invites");
   assert.equal(denied.status, 403);
+  const missingPhone = await callApi(d1, "admin/customer-invites", {
+    method: "POST",
+    token: adminToken,
+    body: { email: "missing-phone@example.test", company: "Example Academy" },
+  });
+  assert.equal(missingPhone.status, 400);
 
   const invite = await callApi(d1, "admin/customer-invites", {
     method: "POST",
     token: adminToken,
-    body: { email: "invitee@example.test", name: "Invitee", company: "Example Academy" },
+    body: { email: "invitee@example.test", phone: "+1 555 0100", name: "Invitee", company: "Example Academy" },
   });
   assert.equal(invite.status, 201);
   const token = invite.data.setup_path.match(/#token=([a-f0-9]{48})$/)?.[1];
@@ -420,9 +468,10 @@ test("customer setup invitations are one-time and provision the canonical custom
   assert.equal(accepted.status, 200);
   assert.equal(d1.raw.prepare("SELECT status FROM customer_invites WHERE id = ?").get(invite.data.invite_id).status, "accepted");
 
-  const customer = d1.raw.prepare("SELECT id, password_hash FROM customers WHERE email = ?").get("invitee@example.test");
+  const customer = d1.raw.prepare("SELECT id, password_hash, phone FROM customers WHERE email = ?").get("invitee@example.test");
   assert.ok(customer);
   assert.match(customer.password_hash, /^pbkdf2-sha256\$/);
+  assert.equal(customer.phone, "+1 555 0100");
   const identity = d1.raw.prepare(
     `SELECT p.email, o.legal_name, m.member_role
      FROM people p
@@ -439,6 +488,12 @@ test("customer setup invitations are one-time and provision the canonical custom
     body: { type: "customer", email: "invitee@example.test", password },
   });
   assert.equal(login.status, 200);
+  const missingPhoneUpdate = await callApi(d1, "profile", {
+    method: "PUT",
+    token: login.data.token,
+    body: { name: "Invitee", phone: "" },
+  });
+  assert.equal(missingPhoneUpdate.status, 400);
 
   const inviteList = await callApi(d1, "admin/customer-invites", { token: adminToken });
   assert.equal(inviteList.status, 200);
@@ -462,7 +517,7 @@ test("customer invitations can be revoked or expire before acceptance", async ()
   const createInvite = async (email) => callApi(d1, "admin/customer-invites", {
     method: "POST",
     token: adminToken,
-    body: { email, company: "Example Academy" },
+    body: { email, phone: "+1 555 0101", company: "Example Academy" },
   });
   const revokedInvite = await createInvite("revoked@example.test");
   assert.equal(revokedInvite.status, 201);
@@ -493,6 +548,195 @@ test("customer invitations can be revoked or expire before acceptance", async ()
   assert.equal(expiredAcceptance.status, 410);
 });
 
+test("admin customer profiles are searchable, editable, and recover access with single-use reset links", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-admin-customer-profile";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+7 days'))"
+  ).bind("customer-profile-old-session").run();
+
+  assert.equal((await callApi(d1, "admin/customers")).status, 403);
+  const search = await callApi(d1, "admin/customers?q=Organization%20A", { token: adminToken });
+  assert.equal(search.status, 200);
+  assert.ok(search.data.customers.some((customer) => customer.id === 101));
+  assert.equal("password_hash" in search.data.customers[0], false);
+
+  const detail = await callApi(d1, "admin/customers/101", { token: adminToken });
+  assert.equal(detail.status, 200);
+  assert.equal(detail.data.profile.email, "customer.a@smritibooks.com");
+  assert.equal(detail.data.organizations[0].name, "Organization A");
+  assert.equal(JSON.stringify(detail.data).includes("password_hash"), false);
+
+  const immutableEmail = await callApi(d1, "admin/customers/101", {
+    method: "PATCH",
+    token: adminToken,
+    body: { name: "Changed", phone: "+1 555 0140", email: "changed@example.test" },
+  });
+  assert.equal(immutableEmail.status, 400);
+  const updated = await callApi(d1, "admin/customers/101", {
+    method: "PATCH",
+    token: adminToken,
+    body: {
+      name: "Customer A Updated",
+      phone: "+1 555 0140",
+      gst_number: "27AABCO1234A1Z5",
+      website: "https://organization-a.example.com",
+      bio: "Updated from the admin profile",
+      timezone: "Asia/Kolkata",
+    },
+  });
+  assert.equal(updated.status, 200);
+  assert.ok(updated.data.updated_fields.includes("name"));
+  assert.equal(d1.raw.prepare("SELECT name, phone FROM customers WHERE id = 101").get().name, "Customer A Updated");
+  assert.equal(d1.raw.prepare("SELECT name FROM people WHERE source_type = 'customer' AND source_id = 101").get().name, "Customer A Updated");
+  const partialUpdate = await callApi(d1, "admin/customers/101", {
+    method: "PATCH",
+    token: adminToken,
+    body: { name: "Customer A Final", phone: "+1 555 0140" },
+  });
+  assert.equal(partialUpdate.status, 200);
+  assert.equal(d1.raw.prepare("SELECT bio FROM customer_profiles WHERE customer_id = 101").get().bio, "Updated from the admin profile");
+  const foreignAddressId = d1.raw.prepare(
+    `INSERT INTO customer_addresses (customer_id, address_line1, city, country)
+     VALUES (102, 'Private address', 'Other City', 'India')`
+  ).run().lastInsertRowid;
+  const addressUpdate = await callApi(d1, "admin/customers/101", {
+    method: "PATCH",
+    token: adminToken,
+    body: {
+      name: "Customer A Final",
+      phone: "+1 555 0140",
+      addresses: [{
+        address_type: "billing",
+        address_line1: "12 Example Road",
+        city: "Pune",
+        state: "Maharashtra",
+        postal_code: "411001",
+        country: "India",
+        is_default: true,
+      }],
+    },
+  });
+  assert.equal(addressUpdate.status, 200);
+  const customerAddress = d1.raw.prepare(
+    "SELECT id, address_line1, city, is_default FROM customer_addresses WHERE customer_id = 101"
+  ).get();
+  assert.equal(customerAddress.address_line1, "12 Example Road");
+  assert.equal(customerAddress.city, "Pune");
+  assert.equal(customerAddress.is_default, 1);
+  const savedAddressUpdate = await callApi(d1, "admin/customers/101", {
+    method: "PATCH",
+    token: adminToken,
+    body: {
+      name: "Customer A Final",
+      phone: "+1 555 0140",
+      addresses: [{
+        id: customerAddress.id,
+        address_type: "billing",
+        address_line1: "12 Example Road",
+        city: "Nashik",
+        state: "Maharashtra",
+        postal_code: "411001",
+        country: "India",
+        is_default: false,
+      }],
+    },
+  });
+  assert.equal(savedAddressUpdate.status, 200);
+  assert.equal(d1.raw.prepare("SELECT city, is_default FROM customer_addresses WHERE id = ?").get(customerAddress.id).city, "Nashik");
+  const foreignAddressUpdate = await callApi(d1, "admin/customers/101", {
+    method: "PATCH",
+    token: adminToken,
+    body: {
+      name: "Customer A Final",
+      phone: "+1 555 0140",
+      addresses: [{
+        id: Number(foreignAddressId),
+        address_type: "billing",
+        address_line1: "Attempted cross-customer edit",
+        country: "India",
+        is_default: true,
+      }],
+    },
+  });
+  assert.equal(foreignAddressUpdate.status, 404);
+  assert.equal(d1.raw.prepare("SELECT address_line1 FROM customer_addresses WHERE id = ?").get(foreignAddressId).address_line1, "Private address");
+
+  const reset = await callApi(d1, "admin/customers/101/password-reset", {
+    method: "POST",
+    token: adminToken,
+    body: {},
+  });
+  assert.equal(reset.status, 201);
+  const token = reset.data.reset_path.match(/#token=([a-f0-9]{48})$/)?.[1];
+  assert.ok(token);
+  const storedReset = d1.raw.prepare(
+    "SELECT token_hash, status FROM customer_password_resets WHERE customer_id = 101"
+  ).get();
+  assert.equal(storedReset.token_hash, await hashCustomerInviteToken(token));
+  assert.equal(storedReset.status, "pending");
+  assert.notEqual(storedReset.token_hash, token);
+
+  const newPassword = "Customer-reset-passphrase-2026!";
+  const completed = await callApi(d1, "password-reset/complete", {
+    method: "POST",
+    body: { token, password: newPassword },
+  });
+  assert.equal(completed.status, 200);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM sessions WHERE token = 'customer-profile-old-session'").get().count, 0);
+  assert.equal(d1.raw.prepare("SELECT status FROM customer_password_resets WHERE token_hash = ?").get(storedReset.token_hash).status, "used");
+  const replay = await callApi(d1, "password-reset/complete", {
+    method: "POST",
+    body: { token, password: newPassword },
+  });
+  assert.equal(replay.status, 410);
+  const login = await callApi(d1, "login", {
+    method: "POST",
+    body: { type: "customer", email: "customer.a@smritibooks.com", password: newPassword },
+  });
+  assert.equal(login.status, 200);
+  assert.ok(d1.raw.prepare("SELECT id FROM audit_logs WHERE action = 'CUSTOMER_PASSWORD_RESET_COMPLETED'").get());
+});
+
+test("partners can update only contacts in their active customer assignments", async () => {
+  const d1 = createD1Mock();
+  const partnerToken = "test-token-partner-customer-contact";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 103, datetime('now', '+7 days'))"
+  ).bind(partnerToken).run();
+
+  const contacts = await callApi(d1, "partner/customers", { token: partnerToken });
+  assert.equal(contacts.status, 200);
+  assert.equal(contacts.data.permissions.manage_customer_contacts, true);
+  assert.ok(contacts.data.contacts.some((contact) => contact.id === 101));
+
+  const deniedFields = await callApi(d1, "partner/customers/101/contact", {
+    method: "PATCH",
+    token: partnerToken,
+    body: { name: "Partner Edit", phone: "+1 555 0141", email: "changed@example.test" },
+  });
+  assert.equal(deniedFields.status, 400);
+  const updated = await callApi(d1, "partner/customers/101/contact", {
+    method: "PATCH",
+    token: partnerToken,
+    body: { name: "Partner Updated Contact", phone: "+1 555 0141" },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(d1.raw.prepare("SELECT name, phone, email FROM customers WHERE id = 101").get().email, "customer.a@smritibooks.com");
+  assert.equal(d1.raw.prepare("SELECT name FROM customers WHERE id = 101").get().name, "Partner Updated Contact");
+
+  const unassigned = await callApi(d1, "partner/customers/102/contact", {
+    method: "PATCH",
+    token: partnerToken,
+    body: { name: "Out of scope", phone: "+1 555 0142" },
+  });
+  assert.equal(unassigned.status, 404);
+  assert.ok(d1.raw.prepare("SELECT id FROM audit_logs WHERE action = 'PARTNER_CUSTOMER_CONTACT_UPDATED'").get());
+});
+
 test("customer contacts reuse an organization and inactive activation-only accounts can be converted", async () => {
   const d1 = createD1Mock();
   const adminToken = "test-token-customer-org-reuse";
@@ -504,7 +748,7 @@ test("customer contacts reuse an organization and inactive activation-only accou
   const invite = await callApi(d1, "admin/customer-invites", {
     method: "POST",
     token: adminToken,
-    body: { email: "second-contact@example.test", name: "Second Contact", organization_id: 101 },
+    body: { email: "second-contact@example.test", phone: "+1 555 0102", name: "Second Contact", organization_id: 101 },
   });
   assert.equal(invite.status, 201);
   assert.equal(d1.raw.prepare("SELECT organization_id FROM customer_invites WHERE id = ?").get(invite.data.invite_id).organization_id, 101);
@@ -523,7 +767,7 @@ test("customer contacts reuse an organization and inactive activation-only accou
   const alreadyMember = await callApi(d1, "admin/customer-invites", {
     method: "POST",
     token: adminToken,
-    body: { email: "customer.a@smritibooks.com", organization_id: 101 },
+    body: { email: "customer.a@smritibooks.com", phone: "+1 555 0103", organization_id: 101 },
   });
   assert.equal(alreadyMember.status, 200);
   assert.equal(alreadyMember.data.membership_added, false);
@@ -533,7 +777,7 @@ test("customer contacts reuse an organization and inactive activation-only accou
   const conversion = await callApi(d1, "admin/customer-invites", {
     method: "POST",
     token: adminToken,
-    body: { email: "customer.b@example.com", organization_id: 102 },
+    body: { email: "customer.b@example.com", phone: "+1 555 0104", organization_id: 102 },
   });
   assert.equal(conversion.status, 201);
   const conversionInviteId = conversion.data.invite_id;
@@ -569,13 +813,32 @@ test("partner onboarding, customer links, and partner setup invitations are scop
       partner_type: "implementation_partner",
       partner_role: "partner_admin",
       email: "partner-admin@example.test",
+      phone: "+1 555 0105",
       name: "Partner Admin",
+      address: "100 Market Street",
+      city: "San Francisco",
+      state: "California",
+      pincode: "94105",
+      country: "United States",
+      organization_phone: "+1 555 0199",
     },
   });
   assert.equal(created.status, 201);
   const partnerId = created.data.partner_organization_id;
   const inviteToken = created.data.setup_path.match(/#type=partner&token=([a-f0-9]{48})$/)[1];
   const organizationCount = d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count;
+  const missingPartnerPhone = await callApi(d1, "admin/partners", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      organization_name: "Partner Without Contact Phone",
+      partner_type: "reseller",
+      partner_role: "partner_admin",
+      email: "partner-no-phone@example.test",
+    },
+  });
+  assert.equal(missingPartnerPhone.status, 400);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count, organizationCount);
   const invalidContact = await callApi(d1, "admin/partners", {
     method: "POST",
     token: adminToken,
@@ -584,6 +847,7 @@ test("partner onboarding, customer links, and partner setup invitations are scop
       partner_type: "reseller",
       partner_role: "partner_admin",
       email: d1.raw.prepare("SELECT email FROM users WHERE id = 201").get().email,
+      phone: "+1 555 0106",
     },
   });
   assert.equal(invalidContact.status, 409);
@@ -599,13 +863,14 @@ test("partner onboarding, customer links, and partner setup invitations are scop
       organization_id: 101,
       partner_type: "channel_partner",
       email: "customer-org-partner@example.test",
+      phone: "+1 555 0107",
     },
   });
   assert.equal(customerOrganizationAsPartner.status, 404);
   const misclassifiedCustomerInvite = await callApi(d1, "admin/customer-invites", {
     method: "POST",
     token: adminToken,
-    body: { email: "wrong-organization@example.test", organization_id: partnerId },
+    body: { email: "wrong-organization@example.test", phone: "+1 555 0108", organization_id: partnerId },
   });
   assert.equal(misclassifiedCustomerInvite.status, 400);
   const listed = await callApi(d1, "admin/partners", { token: adminToken });
@@ -627,6 +892,10 @@ test("partner onboarding, customer links, and partner setup invitations are scop
     1,
   );
   assert.equal(
+    d1.raw.prepare("SELECT phone FROM customers WHERE email = 'partner-admin@example.test'").get().phone,
+    "+1 555 0105",
+  );
+  assert.equal(
     d1.raw.prepare("SELECT COUNT(*) AS count FROM relationships WHERE organization_id = ? AND relationship_type = 'customer'").get(partnerId).count,
     0,
   );
@@ -643,6 +912,8 @@ test("partner onboarding, customer links, and partner setup invitations are scop
   const partnerMe = await callApi(d1, "partner/me", { token: login.data.token });
   assert.equal(partnerMe.status, 200);
   assert.equal(partnerMe.data.partner.partner_type, "implementation_partner");
+  assert.equal(partnerMe.data.partner.city, "San Francisco");
+  assert.equal(partnerMe.data.partner.phone, "+1 555 0199");
   const initialMembers = await callApi(d1, "admin/partners", { token: adminToken });
   const partnerAdmin = initialMembers.data.members.find(
     (member) => member.partner_organization_id === partnerId && member.email === "partner-admin@example.test",
@@ -669,6 +940,12 @@ test("partner onboarding, customer links, and partner setup invitations are scop
     d1.raw.prepare("SELECT partner_type FROM partner_memberships WHERE id = ?").get(partnerAdmin.id).partner_type,
     "channel_partner",
   );
+  const missingPartnerCustomerPhone = await callApi(d1, "partner/customers", {
+    method: "POST",
+    token: login.data.token,
+    body: { email: "partner-customer-no-phone@example.test", company: "No Phone Academy" },
+  });
+  assert.equal(missingPartnerCustomerPhone.status, 400);
 
   const memberInvite = await callApi(d1, `admin/partners/${partnerId}/members`, {
     method: "POST",
@@ -677,6 +954,7 @@ test("partner onboarding, customer links, and partner setup invitations are scop
       partner_type: "channel_partner",
       partner_role: "partner_member",
       email: "partner-member@example.test",
+      phone: "+1 555 0109",
       name: "Partner Member",
     },
   });
@@ -760,6 +1038,32 @@ test("partner onboarding, customer links, and partner setup invitations are scop
     "revoked",
   );
   assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'PARTNER_CUSTOMER_LINK_REVOKED'").get());
+
+  const partnerCustomerInvite = await callApi(d1, "partner/customers", {
+    method: "POST",
+    token: login.data.token,
+    body: {
+      email: "partner-created-customer@example.test",
+      phone: "+1 555 0111",
+      name: "Partner Customer",
+      company: "Partner Customer Academy",
+    },
+  });
+  assert.equal(partnerCustomerInvite.status, 201);
+  const partnerCustomerToken = partnerCustomerInvite.data.setup_path.match(/#token=([a-f0-9]{48})$/)[1];
+  const acceptedPartnerCustomer = await callApi(d1, "customer-invites/accept", {
+    method: "POST",
+    body: { token: partnerCustomerToken, password: "Partner-created-customer-passphrase-2026!" },
+  });
+  assert.equal(acceptedPartnerCustomer.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT phone FROM customers WHERE email = 'partner-created-customer@example.test'").get().phone,
+    "+1 555 0111",
+  );
+  assert.equal(
+    d1.raw.prepare("SELECT COUNT(*) AS count FROM partner_customer_links WHERE partner_organization_id = ? AND status = 'active'").get(partnerId).count,
+    1,
+  );
 });
 
 test("direct license issuance registers an activation-only customer and reveals the key once", async () => {
@@ -788,6 +1092,7 @@ test("direct license issuance registers an activation-only customer and reveals 
   const body = {
     customer_mode: "new",
     customer_email: "license-only@example.test",
+    customer_phone: "+1 555 0110",
     customer_name: "License Contact",
     customer_company: "Example Coaching Academy",
     product_id: productId,
@@ -807,6 +1112,12 @@ test("direct license issuance registers an activation-only customer and reveals 
     body: { ...body, customer_mode: "existing", organization_id: 201 },
   });
   assert.equal(internalOrganization.status, 400);
+  const missingCustomerPhone = await callApi(d1, "licenses", {
+    method: "POST",
+    token: adminToken,
+    body: { ...body, customer_phone: "" },
+  });
+  assert.equal(missingCustomerPhone.status, 400);
 
   const issued = await callApi(d1, "licenses", { method: "POST", token: adminToken, body });
   assert.equal(issued.status, 201);
@@ -814,9 +1125,10 @@ test("direct license issuance registers an activation-only customer and reveals 
   assert.match(issued.data.license.license_key, /^LIC-[A-F0-9]+$/);
   const licenseId = issued.data.license.id;
   const customer = d1.raw.prepare(
-    "SELECT id, password_hash, status FROM customers WHERE email = ?"
+    "SELECT id, password_hash, phone, status FROM customers WHERE email = ?"
   ).get("license-only@example.test");
   assert.equal(customer.status, "inactive");
+  assert.equal(customer.phone, "+1 555 0110");
   assert.match(customer.password_hash, /^pbkdf2-sha256\$/);
   assert.equal(d1.raw.prepare(
     "SELECT COUNT(*) AS count FROM customer_invites WHERE lower(email) = lower(?)"
@@ -866,6 +1178,35 @@ test("direct license issuance registers an activation-only customer and reveals 
   assert.equal(monitoredRegistration.registered_email_masked, "v***t@example.test");
   assert.equal(monitoredRegistration.active_activation_count, 1);
   assert.equal(JSON.stringify(registrations.data).includes("license-only@example.test"), false);
+  d1.raw.prepare(
+    "UPDATE organization_members SET status = 'inactive' WHERE account_type = 'customer' AND account_id = ?"
+  ).run(customer.id);
+  const customerRegistrations = await callApi(
+    d1,
+    `admin/license-registrations?customer_id=${customer.id}&page_size=100`,
+    { token: adminToken },
+  );
+  d1.raw.prepare(
+    "UPDATE organization_members SET status = 'active' WHERE account_type = 'customer' AND account_id = ?"
+  ).run(customer.id);
+  assert.equal(customerRegistrations.status, 200);
+  assert.equal(customerRegistrations.data.total, 1);
+  assert.equal(customerRegistrations.data.registrations[0].license_id, licenseId);
+  assert.equal(customerRegistrations.data.registrations[0].organization_name, null);
+  assert.equal(customerRegistrations.data.metrics.total_licenses, 1);
+  const otherCustomer = await callApi(
+    d1,
+    "admin/license-registrations?customer_id=999999&page_size=100",
+    { token: adminToken },
+  );
+  assert.equal(otherCustomer.status, 200);
+  assert.equal(otherCustomer.data.total, 0);
+  const invalidCustomerFilter = await callApi(
+    d1,
+    "admin/license-registrations?customer_id=not-a-customer",
+    { token: adminToken },
+  );
+  assert.equal(invalidCustomerFilter.status, 400);
   const registrationDetails = await callApi(
     d1,
     `admin/license-registrations/${licenseId}`,
@@ -2037,6 +2378,74 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
 
     const crossTenant = await callApi(d1, "tickets/102", { token: sessionToken });
     assert.equal(crossTenant.status, 404);
+  });
+
+  await t.test("Admin can review, reply to, close, and audit customer tickets", async () => {
+    const anonymous = await callApi(d1, "admin/support-tickets");
+    assert.equal(anonymous.status, 403);
+    const customerAccess = await callApi(d1, "admin/support-tickets", { token: sessionToken });
+    assert.equal(customerAccess.status, 403);
+
+    const filtered = await callApi(d1, "admin/support-tickets?status=open&q=Organization%20A%20ticket&page=1&page_size=1", {
+      token: adminToken,
+    });
+    assert.equal(filtered.status, 200);
+    assert.equal(filtered.data.total, 1);
+    assert.equal(filtered.data.tickets[0].id, 101);
+    const secondPage = await callApi(d1, "admin/support-tickets?page=2&page_size=1", { token: adminToken });
+    assert.equal(secondPage.status, 200);
+    assert.equal(secondPage.data.page, 2);
+    assert.equal(secondPage.data.tickets.length, 1);
+
+    const detail = await callApi(d1, "admin/support-tickets/101", { token: adminToken });
+    assert.equal(detail.status, 200);
+    assert.equal(detail.data.ticket.customer_id, 101);
+    assert.ok(Array.isArray(detail.data.activity));
+
+    const invalidStatus = await callApi(d1, "admin/support-tickets/101/status", {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "archived" },
+    });
+    assert.equal(invalidStatus.status, 400);
+
+    const reply = await callApi(d1, "admin/support-tickets/101/messages", {
+      method: "POST",
+      token: adminToken,
+      body: { message: "We are investigating this issue." },
+    });
+    assert.equal(reply.status, 201);
+
+    const closed = await callApi(d1, "admin/support-tickets/101/status", {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "closed" },
+    });
+    assert.equal(closed.status, 200);
+    assert.equal(closed.data.status, "closed");
+
+    const customerDetail = await callApi(d1, "tickets/101", { token: sessionToken });
+    assert.equal(customerDetail.data.ticket.status, "closed");
+    assert.ok(customerDetail.data.ticket.messages.some((message) => message.author_type === "staff"));
+
+    const customerReply = await callApi(d1, "tickets/101/messages", {
+      method: "POST",
+      token: sessionToken,
+      body: { message: "The issue still persists." },
+    });
+    assert.equal(customerReply.status, 201);
+    assert.equal(
+      d1.raw.prepare("SELECT status FROM support_tickets WHERE id = 101").get().status,
+      "open",
+    );
+    assert.equal(
+      d1.raw.prepare(
+        "SELECT COUNT(*) AS count FROM audit_logs WHERE resource_type = 'support_ticket' AND resource_id = '101' AND action IN ('ADMIN_SUPPORT_TICKET_REPLIED', 'ADMIN_SUPPORT_TICKET_STATUS_CHANGED', 'SUPPORT_TICKET_REOPENED_BY_CUSTOMER')"
+      ).get().count,
+      3,
+    );
+    const finalDetail = await callApi(d1, "admin/support-tickets/101", { token: adminToken });
+    assert.ok(finalDetail.data.activity.some((event) => event.action === "SUPPORT_TICKET_REOPENED_BY_CUSTOMER"));
   });
 
   await t.test("10. Customer can create a ticket without supplying ownership", async () => {

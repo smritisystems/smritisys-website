@@ -50,6 +50,11 @@ function validEmail(value) {
   return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.toLowerCase() : null;
 }
 
+function optionalPartnerOrganizationValue(value, maxLength) {
+  if (value == null || typeof value !== "string" || value.trim() === "") return null;
+  return boundedString(value, maxLength);
+}
+
 function getCookie(request, name) {
   const cookies = request.headers.get("Cookie") || "";
   const match = cookies.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
@@ -2027,13 +2032,14 @@ async function createLicense(request, env) {
   const suppliedName = body.customer_name;
   const customerName = suppliedName == null || suppliedName === "" ? null : boundedString(suppliedName, 120);
   const customerCompany = provisionCustomer ? boundedString(body.customer_company, 200) : null;
+  const customerPhone = provisionCustomer ? boundedString(body.customer_phone, 40) : null;
   if ((!provisionCustomer && !organizationId) || !productId || !editionId ||
       !LICENSE_STATUSES.includes(status) || !["DRAFT", "ACTIVE"].includes(status)) {
     return json({ ok: false, error: "Organization or new customer details, product, edition, and a valid initial status are required" }, 400);
   }
-  if (provisionCustomer && (!customerEmail || !customerCompany ||
+  if (provisionCustomer && (!customerEmail || !customerPhone || !customerCompany ||
       (suppliedName != null && suppliedName !== "" && !customerName))) {
-    return json({ ok: false, error: "A valid customer email, organization name, and optional contact name are required" }, 400);
+    return json({ ok: false, error: "A valid customer email, phone number, organization name, and optional contact name are required" }, 400);
   }
   if (expiresAt && expiresAt < startsAt) return json({ ok: false, error: "Expiry date must not precede start date" }, 400);
   const product = await env.DB.prepare(
@@ -2092,9 +2098,9 @@ async function createLicense(request, env) {
   try {
     const statements = provisionCustomer ? [
       env.DB.prepare(
-        `INSERT INTO customers (email, password_hash, name, company, status)
-         VALUES (?, ?, ?, ?, 'inactive')`
-      ).bind(customerEmail, customerPasswordHash, customerName, customerCompany),
+        `INSERT INTO customers (email, password_hash, name, phone, company, status)
+         VALUES (?, ?, ?, ?, ?, 'inactive')`
+      ).bind(customerEmail, customerPasswordHash, customerName, customerPhone, customerCompany),
       ...customerIdentityStatements(
         env,
         "(SELECT id FROM customers WHERE email = ?)",
@@ -3064,6 +3070,8 @@ async function listAdminLicenseRegistrations(request, env) {
     return value.length <= maxLength ? value : null;
   };
   const search = readFilter("q", 100);
+  const customerIdValue = readFilter("customer_id", 20);
+  const customerId = customerIdValue ? numericId(customerIdValue) : null;
   const licenseStatusValue = readFilter("status", 32);
   const licenseStatus = licenseStatusValue === null ? null : licenseStatusValue.toUpperCase();
   const activationStatus = readFilter("activation", 24);
@@ -3073,7 +3081,8 @@ async function listAdminLicenseRegistrations(request, env) {
   const requestedPage = Number(url.searchParams.get("page") || 1);
   const pageSize = Number(url.searchParams.get("page_size") || 25);
   const validStatuses = LICENSE_STATUSES;
-  if ([search, licenseStatus, activationStatus, emailStatus, createdAfter, createdBefore].some((value) => value === null) ||
+  if ([search, customerIdValue, licenseStatus, activationStatus, emailStatus, createdAfter, createdBefore].some((value) => value === null) ||
+      (customerIdValue && !customerId) ||
       (licenseStatus && !validStatuses.includes(licenseStatus)) ||
       !["", "active", "never_activated", "released"].includes(activationStatus) ||
       !["", "registered", "missing"].includes(emailStatus) ||
@@ -3087,7 +3096,7 @@ async function listAdminLicenseRegistrations(request, env) {
 
   const registrationsCte = `
     WITH registration_rows AS (
-      SELECT l.id AS license_id, l.serial_number, upper(l.status) AS license_status,
+      SELECT l.id AS license_id, l.customer_id, l.serial_number, upper(l.status) AS license_status,
              l.starts_at AS start_date, l.expires_at AS expiry_date,
              l.registered_email, c.email AS account_email, c.name AS contact_name,
              COALESCE(NULLIF(o.legal_name, ''), o.name) AS organization_name,
@@ -3107,7 +3116,7 @@ async function listAdminLicenseRegistrations(request, env) {
       FROM licenses l
       JOIN customers c ON c.id = l.customer_id
       JOIN products p ON p.id = l.product_id
-      JOIN organizations o ON o.id = (
+      LEFT JOIN organizations o ON o.id = (
         SELECT om.organization_id
         FROM organization_members om
         JOIN organizations candidate ON candidate.id = om.organization_id AND candidate.status = 'active'
@@ -3132,6 +3141,10 @@ async function listAdminLicenseRegistrations(request, env) {
       instr(lower(coalesce(product_code, '')), lower(?)) > 0
     )`);
     bindings.push(search, search, search, search, search, search, search, search);
+  }
+  if (customerId) {
+    conditions.push("customer_id = ?");
+    bindings.push(customerId);
   }
   if (licenseStatus) {
     conditions.push("license_status = ?");
@@ -3162,7 +3175,9 @@ async function listAdminLicenseRegistrations(request, env) {
     ).bind(...bindings, pageSize, (requestedPage - 1) * pageSize).all(),
     env.DB.prepare(
       `SELECT COUNT(*) AS total_licenses,
-              (SELECT COUNT(*) FROM license_activations WHERE status = 'active') AS active_installations,
+              (SELECT COUNT(*) FROM license_activations la
+               JOIN licenses active_license ON active_license.id = la.license_id
+               WHERE la.status = 'active' AND (? IS NULL OR active_license.customer_id = ?)) AS active_installations,
               SUM(CASE WHEN NOT EXISTS (
                 SELECT 1 FROM license_activations la WHERE la.license_id = l.id
               ) THEN 1 ELSE 0 END) AS never_activated,
@@ -3170,8 +3185,9 @@ async function listAdminLicenseRegistrations(request, env) {
                 SELECT 1 FROM license_activations la
                 WHERE la.license_id = l.id AND la.status = 'active'
               ) THEN 1 ELSE 0 END) AS missing_registered_email
-       FROM licenses l`
-    ).first(),
+       FROM licenses l
+       WHERE (? IS NULL OR l.customer_id = ?)`
+    ).bind(customerId, customerId, customerId, customerId).first(),
   ]);
   return json({
     ok: true,
@@ -3342,7 +3358,8 @@ async function handleAdminControl(request, env, resource) {
 
   if (resource === "organizations") {
     const { results } = await env.DB.prepare(
-      `SELECT o.id, o.name, o.legal_name, o.status, o.created_at,
+      `SELECT o.id, o.name, o.legal_name, o.address, o.city, o.state, o.pincode,
+              o.country, o.phone, o.gst_number, o.tax_id, o.website, o.status, o.created_at,
               COUNT(DISTINCT m.id) AS member_count,
               GROUP_CONCAT(DISTINCT r.relationship_type) AS relationship_types
        FROM organizations o
@@ -3351,6 +3368,61 @@ async function handleAdminControl(request, env, resource) {
        GROUP BY o.id ORDER BY o.created_at DESC, o.id DESC`
     ).all();
     return json({ ok: true, organizations: results });
+  }
+
+  const organizationDetailMatch = resource.match(/^organization:(\d+)$/);
+  if (organizationDetailMatch) {
+    const organizationId = numericId(organizationDetailMatch[1]);
+    if (!organizationId) return json({ ok: false, error: "A valid organization id is required" }, 400);
+    const organization = await env.DB.prepare(
+      `SELECT id, name, legal_name, gst_number, tax_id, address, city, state, pincode,
+              country, phone, website, status, created_at,
+              (SELECT GROUP_CONCAT(r.relationship_type)
+               FROM relationships r
+               WHERE r.organization_id = organizations.id AND r.status = 'active') AS relationship_types
+       FROM organizations WHERE id = ?`
+    ).bind(organizationId).first();
+    if (!organization) return json({ ok: false, error: "Organization not found" }, 404);
+    const [members, relationships, licenses] = await Promise.all([
+      env.DB.prepare(
+        `SELECT om.account_type, om.account_id, om.member_role, om.status, om.created_at,
+                p.name, p.email
+         FROM organization_members om
+         LEFT JOIN people p ON p.source_type = om.account_type AND p.source_id = om.account_id
+         WHERE om.organization_id = ?
+         ORDER BY om.status, p.name, p.email`
+      ).bind(organizationId).all(),
+      env.DB.prepare(
+        `SELECT 'Customer' AS relationship_type, customer.id AS organization_id,
+                customer.name AS organization_name, pcl.status, pcl.created_at
+         FROM partner_customer_links pcl
+         JOIN organizations customer ON customer.id = pcl.customer_organization_id
+         WHERE pcl.partner_organization_id = ?
+         UNION ALL
+         SELECT 'Partner' AS relationship_type, partner.id AS organization_id,
+                partner.name AS organization_name, pcl.status, pcl.created_at
+         FROM partner_customer_links pcl
+         JOIN organizations partner ON partner.id = pcl.partner_organization_id
+         WHERE pcl.customer_organization_id = ?
+         ORDER BY relationship_type, organization_name`
+      ).bind(organizationId, organizationId).all(),
+      env.DB.prepare(
+        `SELECT l.id, l.serial_number, l.status, l.starts_at, l.expires_at, l.seats,
+                p.name AS product_name, p.slug AS product_code
+         FROM organization_members om
+         JOIN licenses l ON l.customer_id = om.account_id
+         JOIN products p ON p.id = l.product_id
+         WHERE om.organization_id = ? AND om.account_type = 'customer'
+         ORDER BY l.id DESC`
+      ).bind(organizationId).all(),
+    ]);
+    return json({
+      ok: true,
+      organization,
+      members: members.results || [],
+      relationships: relationships.results || [],
+      licenses: licenses.results || [],
+    }, 200, null, { "Cache-Control": "no-store" });
   }
 
   if (resource === "audit") {
@@ -3363,6 +3435,370 @@ async function handleAdminControl(request, env, resource) {
   }
 
   return json({ ok: false, error: "Unsupported admin operation" }, 405);
+}
+
+async function handleAdminCustomers(request, env, customerId = null) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (!customerId && request.method === "GET") {
+    const url = new URL(request.url);
+    const suppliedQuery = url.searchParams.get("q") || "";
+    const query = suppliedQuery ? boundedString(suppliedQuery, 100) : "";
+    if (suppliedQuery && !query) return json({ ok: false, error: "Search text must be 100 characters or fewer" }, 400);
+    const pattern = query ? `%${query.toLowerCase()}%` : "";
+    const { results } = await env.DB.prepare(
+      `SELECT c.id, c.email, c.name, c.phone, c.company, c.status, c.created_at,
+              (SELECT o.name
+               FROM organization_members om
+               JOIN organizations o ON o.id = om.organization_id
+               WHERE om.account_type = 'customer' AND om.account_id = c.id
+                 AND om.status = 'active'
+               ORDER BY om.id LIMIT 1) AS organization_name,
+              (SELECT COUNT(*) FROM licenses l WHERE l.customer_id = c.id) AS license_count
+       FROM customers c
+       WHERE ? = ''
+          OR CAST(c.id AS TEXT) = ?
+          OR lower(COALESCE(c.email, '')) LIKE ?
+          OR lower(COALESCE(c.name, '')) LIKE ?
+          OR lower(COALESCE(c.phone, '')) LIKE ?
+          OR lower(COALESCE(c.company, '')) LIKE ?
+          OR lower(COALESCE((
+            SELECT o.name
+            FROM organization_members om
+            JOIN organizations o ON o.id = om.organization_id
+            WHERE om.account_type = 'customer' AND om.account_id = c.id
+              AND om.status = 'active'
+            ORDER BY om.id LIMIT 1
+          ), '')) LIKE ?
+       ORDER BY c.id DESC LIMIT 200`
+    ).bind(query, query, pattern, pattern, pattern, pattern, pattern).all();
+    return json({ ok: true, customers: results || [] }, 200, null, { "Cache-Control": "no-store" });
+  }
+
+  const id = numericId(String(customerId || ""));
+  if (!id) return json({ ok: false, error: "A valid customer id is required" }, 400);
+
+  if (request.method === "GET") {
+    const profile = await env.DB.prepare(
+      `SELECT c.id, c.email, c.name, c.phone, c.company, c.status, c.created_at,
+              cp.gst_number, cp.website, cp.bio, cp.timezone, cp.updated_at AS profile_updated_at
+       FROM customers c
+       LEFT JOIN customer_profiles cp ON cp.customer_id = c.id
+       WHERE c.id = ?`
+    ).bind(id).first();
+    if (!profile) return json({ ok: false, error: "Customer not found" }, 404);
+    const [organizations, addresses, partners] = await Promise.all([
+      env.DB.prepare(
+        `SELECT o.id, o.name, o.legal_name, o.gst_number, o.address, o.city, o.state,
+                o.pincode, o.country, o.phone, o.tax_id, o.website, o.status,
+                om.member_role, om.status AS membership_status
+         FROM organization_members om
+         JOIN organizations o ON o.id = om.organization_id
+         WHERE om.account_type = 'customer' AND om.account_id = ?
+         ORDER BY om.id`
+      ).bind(id).all(),
+      env.DB.prepare(
+        `SELECT id, address_type, address_line1, address_line2, city, state,
+                postal_code, country, is_default
+         FROM customer_addresses WHERE customer_id = ?
+         ORDER BY is_default DESC, id`
+      ).bind(id).all(),
+      env.DB.prepare(
+        `SELECT DISTINCT p.id, p.name, pcl.status
+         FROM organization_members om
+         JOIN partner_customer_links pcl ON pcl.customer_organization_id = om.organization_id
+         JOIN organizations p ON p.id = pcl.partner_organization_id
+         WHERE om.account_type = 'customer' AND om.account_id = ?
+         ORDER BY p.name`
+      ).bind(id).all(),
+    ]);
+    await writeAudit(env, request, session, "ADMIN_CUSTOMER_PROFILE_VIEWED", "customer", id, null, {
+      organizations: (organizations.results || []).length,
+    });
+    return json({
+      ok: true,
+      profile,
+      organizations: organizations.results || [],
+      addresses: addresses.results || [],
+      partners: partners.results || [],
+    }, 200, null, { "Cache-Control": "no-store" });
+  }
+
+  if (request.method !== "PATCH") return json({ ok: false, error: "Unsupported customer profile operation" }, 405);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid customer profile is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid customer profile is required" }, 400);
+  }
+  const allowedFields = new Set(["name", "phone", "gst_number", "website", "bio", "timezone", "addresses"]);
+  if (Object.keys(body).some((field) => !allowedFields.has(field))) {
+    return json({ ok: false, error: "Customer id, login email, and account status are not editable here" }, 400);
+  }
+  const name = boundedString(body.name, 120);
+  const phone = boundedString(body.phone, 40);
+  const optionalFields = [
+    ["gst_number", body.gst_number, 80],
+    ["website", body.website, 255],
+    ["bio", body.bio, 2000],
+    ["timezone", body.timezone, 100],
+  ];
+  if (!name || !phone || optionalFields.some(([, value, maxLength]) =>
+    value != null && (typeof value !== "string" || value.trim().length > maxLength))) {
+    return json({ ok: false, error: "A valid name, phone number, and customer profile are required" }, 400);
+  }
+  const addressesProvided = Object.prototype.hasOwnProperty.call(body, "addresses");
+  if (addressesProvided && (!Array.isArray(body.addresses) || body.addresses.length > 20)) {
+    return json({ ok: false, error: "Customer addresses must be a list of at most 20 entries" }, 400);
+  }
+  const addresses = addressesProvided ? body.addresses.map((address) => {
+    if (!address || typeof address !== "object" || Array.isArray(address) ||
+        Object.keys(address).some((field) => !["id", "address_type", "address_line1", "address_line2", "city", "state", "postal_code", "country", "is_default"].includes(field))) {
+      return null;
+    }
+    const id = address.id == null || address.id === "" ? null : numericId(String(address.id));
+    const addressType = boundedString(address.address_type, 30);
+    const addressLine1 = boundedString(address.address_line1, 255);
+    const optionalAddressFields = [
+      ["address_line2", address.address_line2, 255],
+      ["city", address.city, 120],
+      ["state", address.state, 120],
+      ["postal_code", address.postal_code, 32],
+      ["country", address.country, 120],
+    ];
+    if ((address.id != null && address.id !== "" && !id) || !addressType || !addressLine1 ||
+        optionalAddressFields.some(([, value, maxLength]) =>
+          value != null && (typeof value !== "string" || value.trim().length > maxLength)) ||
+        ![undefined, null, true, false, 0, 1].includes(address.is_default)) {
+      return null;
+    }
+    return {
+      id,
+      address_type: addressType,
+      address_line1: addressLine1,
+      address_line2: optionalPartnerOrganizationValue(address.address_line2, 255),
+      city: optionalPartnerOrganizationValue(address.city, 120),
+      state: optionalPartnerOrganizationValue(address.state, 120),
+      postal_code: optionalPartnerOrganizationValue(address.postal_code, 32),
+      country: optionalPartnerOrganizationValue(address.country, 120) || "India",
+      is_default: address.is_default === true || address.is_default === 1 ? 1 : 0,
+    };
+  }) : [];
+  if (addressesProvided && (addresses.some((address) => !address) ||
+      addresses.filter((address) => address.is_default).length > 1 ||
+      new Set(addresses.filter((address) => address.id).map((address) => address.id)).size !== addresses.filter((address) => address.id).length)) {
+    return json({ ok: false, error: "Each address must be valid and at most one can be marked as default" }, 400);
+  }
+  const current = await env.DB.prepare(
+    `SELECT c.name, c.phone, cp.gst_number, cp.website, cp.bio, cp.timezone
+     FROM customers c LEFT JOIN customer_profiles cp ON cp.customer_id = c.id
+     WHERE c.id = ?`
+  ).bind(id).first();
+  if (!current) return json({ ok: false, error: "Customer not found" }, 404);
+  const profileValues = Object.fromEntries(optionalFields.map(([field, value, maxLength]) => [
+    field,
+    Object.prototype.hasOwnProperty.call(body, field)
+      ? optionalPartnerOrganizationValue(value, maxLength)
+      : current[field] ?? null,
+  ]));
+  const timezoneProvided = Object.prototype.hasOwnProperty.call(body, "timezone");
+  const websiteProvided = Object.prototype.hasOwnProperty.call(body, "website");
+  profileValues.timezone = profileValues.timezone || "Asia/Kolkata";
+  if (websiteProvided && profileValues.website) {
+    try {
+      const website = new URL(profileValues.website);
+      if (!["http:", "https:"].includes(website.protocol)) throw new TypeError("Unsupported website protocol");
+    } catch {
+      return json({ ok: false, error: "Website must be a valid HTTP or HTTPS URL" }, 400);
+    }
+  }
+  if (timezoneProvided) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: profileValues.timezone });
+    } catch {
+      return json({ ok: false, error: "A valid timezone is required" }, 400);
+    }
+  }
+  const updates = { name, phone, ...profileValues };
+  const changedFields = Object.keys(updates).filter((field) =>
+    String(current[field] ?? "") !== String(updates[field] ?? ""));
+  let currentAddresses = [];
+  if (addressesProvided) {
+    const { results } = await env.DB.prepare(
+      `SELECT id, address_type, address_line1, address_line2, city, state, postal_code, country, is_default
+       FROM customer_addresses WHERE customer_id = ? ORDER BY id`
+    ).bind(id).all();
+    currentAddresses = results || [];
+    const existingIds = addresses.filter((address) => address.id).map((address) => address.id);
+    if (existingIds.length) {
+      const placeholders = existingIds.map(() => "?").join(",");
+      const { results: ownedAddresses } = await env.DB.prepare(
+        `SELECT id FROM customer_addresses WHERE customer_id = ? AND id IN (${placeholders})`
+      ).bind(id, ...existingIds).all();
+      if ((ownedAddresses || []).length !== existingIds.length) {
+        return json({ ok: false, error: "One or more addresses do not belong to this customer" }, 404);
+      }
+    }
+    const oldById = new Map(currentAddresses.map((address) => [Number(address.id), address]));
+    const addressChanges = addresses.some((address) => {
+      if (!address.id) return true;
+      const old = oldById.get(address.id);
+      return !old || ["address_type", "address_line1", "address_line2", "city", "state", "postal_code", "country", "is_default"]
+        .some((field) => String(old[field] ?? "") !== String(address[field] ?? ""));
+    });
+    if (addressChanges) changedFields.push("addresses");
+  }
+  if (changedFields.length) {
+    const statements = [
+      env.DB.prepare("UPDATE customers SET name = ?, phone = ? WHERE id = ?").bind(name, phone, id),
+      env.DB.prepare(
+        "UPDATE people SET name = ? WHERE source_type = 'customer' AND source_id = ?"
+      ).bind(name, id),
+      env.DB.prepare(
+        `INSERT INTO customer_profiles (customer_id, gst_number, website, bio, timezone, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(customer_id) DO UPDATE SET
+           gst_number = excluded.gst_number, website = excluded.website,
+           bio = excluded.bio, timezone = excluded.timezone, updated_at = datetime('now')`
+      ).bind(id, profileValues.gst_number, profileValues.website, profileValues.bio, profileValues.timezone),
+    ];
+    if (addressesProvided && changedFields.includes("addresses")) {
+      if (addresses.some((address) => address.is_default)) {
+        statements.push(env.DB.prepare("UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?").bind(id));
+      }
+      for (const address of addresses) {
+        statements.push(address.id
+          ? env.DB.prepare(
+            `UPDATE customer_addresses SET address_type = ?, address_line1 = ?, address_line2 = ?,
+             city = ?, state = ?, postal_code = ?, country = ?, is_default = ?
+             WHERE id = ? AND customer_id = ?`
+          ).bind(
+            address.address_type, address.address_line1, address.address_line2, address.city,
+            address.state, address.postal_code, address.country, address.is_default, address.id, id,
+          )
+          : env.DB.prepare(
+            `INSERT INTO customer_addresses
+             (customer_id, address_type, address_line1, address_line2, city, state, postal_code, country, is_default)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            id, address.address_type, address.address_line1, address.address_line2, address.city,
+            address.state, address.postal_code, address.country, address.is_default,
+          ));
+      }
+    }
+    await env.DB.batch(statements);
+    await writeAudit(env, request, session, "ADMIN_CUSTOMER_PROFILE_UPDATED", "customer", id, {
+      fields: changedFields,
+    }, {
+      fields: changedFields,
+    });
+  }
+  return json({ ok: true, updated_fields: changedFields }, 200, null, { "Cache-Control": "no-store" });
+}
+
+async function createAdminCustomerPasswordReset(request, env, customerId) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+  const limited = await requireRateLimit(
+    env, request, "admin-customer-password-reset", 10, 3600, String(session.person_id),
+  );
+  if (limited) return limited;
+  const customer = await env.DB.prepare(
+    "SELECT id, status FROM customers WHERE id = ?"
+  ).bind(customerId).first();
+  if (!customer) return json({ ok: false, error: "Customer not found" }, 404);
+  if (!["active", "trial"].includes(customer.status)) {
+    return json({ ok: false, error: "Only active customer accounts can reset their password" }, 409);
+  }
+
+  const token = makeToken();
+  const tokenHash = await hashCustomerInviteToken(token);
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE customer_password_resets SET status = 'revoked' WHERE customer_id = ? AND status = 'pending'"
+    ).bind(customer.id),
+    env.DB.prepare(
+      `INSERT INTO customer_password_resets (token_hash, customer_id, created_by, expires_at)
+       VALUES (?, ?, ?, datetime('now', '+30 minutes'))`
+    ).bind(tokenHash, customer.id, session.person_id),
+  ]);
+  await writeAudit(env, request, session, "CUSTOMER_PASSWORD_RESET_LINK_CREATED", "customer", customer.id, null, {
+    expires_in_minutes: 30,
+  });
+  return json({
+    ok: true,
+    reset_path: `/reset-password.html#token=${token}`,
+    expires_in_minutes: 30,
+  }, 201, null, { "Cache-Control": "no-store" });
+}
+
+async function completeCustomerPasswordReset(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid password reset request is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A valid password reset request is required" }, 400);
+  }
+  const token = body.token;
+  const password = boundedString(body.password, 128);
+  if (!isValidCustomerInviteToken(token) || !password || password.length < 12) {
+    return json({ ok: false, error: "A valid reset link and password of at least 12 characters are required" }, 400);
+  }
+  const limited = await requireRateLimit(env, request, "customer-password-reset-complete", 10, 900);
+  if (limited) return limited;
+
+  const tokenHash = await hashCustomerInviteToken(token);
+  const reset = await env.DB.prepare(
+    `SELECT r.id, r.customer_id, om.organization_id
+     FROM customer_password_resets r
+     JOIN customers c ON c.id = r.customer_id AND c.status IN ('active', 'trial')
+     LEFT JOIN organization_members om ON om.account_type = 'customer'
+       AND om.account_id = c.id AND om.status = 'active'
+     WHERE r.token_hash = ? AND r.status = 'pending' AND r.expires_at > datetime('now')
+     ORDER BY om.id LIMIT 1`
+  ).bind(tokenHash).first();
+  if (!reset) {
+    return json({ ok: false, error: "This password reset link is invalid, expired, or already used" }, 410, null, {
+      "Cache-Control": "no-store",
+    });
+  }
+  const passwordHash = await hashPassword(password);
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE customer_password_resets
+       SET status = 'used', used_at = datetime('now')
+       WHERE id = ? AND status = 'pending' AND expires_at > datetime('now')`
+    ).bind(reset.id),
+    env.DB.prepare(
+      `UPDATE customers SET password_hash = ?
+       WHERE id = ? AND status IN ('active', 'trial') AND changes() = 1`
+    ).bind(passwordHash, reset.customer_id),
+    env.DB.prepare(
+      "DELETE FROM sessions WHERE account_type = 'customer' AND account_id = ? AND changes() = 1"
+    ).bind(reset.customer_id),
+  ]);
+  if (results[1]?.meta?.changes !== 1) {
+    return json({ ok: false, error: "This password reset link is invalid, expired, or already used" }, 410, null, {
+      "Cache-Control": "no-store",
+    });
+  }
+  await writeAudit(env, request, {
+    person_id: null,
+    organization_id: reset.organization_id,
+  }, "CUSTOMER_PASSWORD_RESET_COMPLETED", "customer", reset.customer_id, null, {
+    password_reset: true,
+  });
+  return json({ ok: true, message: "Password updated. Please sign in again." }, 200, null, {
+    "Cache-Control": "no-store",
+  });
 }
 
 async function handleProfile(request, env) {
@@ -3388,11 +3824,11 @@ async function handleProfile(request, env) {
   const body = await request.json();
   const name = boundedString(body.name, 120);
   const phone = boundedString(body.phone, 40);
-  if (!name) {
-    return json({ ok: false, error: "Name is required" }, 400);
+  if (!name || !phone) {
+    return json({ ok: false, error: "Name and phone number are required" }, 400);
   }
 
-  await env.DB.prepare(`UPDATE customers SET name = ?, phone = ? WHERE id = ?`).bind(name, phone || null, session.account_id).run();
+  await env.DB.prepare(`UPDATE customers SET name = ?, phone = ? WHERE id = ?`).bind(name, phone, session.account_id).run();
   await writeAudit(env, request, session, "CUSTOMER_PROFILE_UPDATED", "customer", session.account_id, null, { name, phone });
 
   return json({ ok: true, message: "Profile updated" });
@@ -3713,13 +4149,26 @@ async function handleTicketResource(request, env, ticketId, resource) {
     const body = await request.json();
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message || message.length > 10000) return json({ ok: false, error: "Message is required" }, 400);
-    await env.DB.batch([
+    const reopensTicket = ["resolved", "closed"].includes(ticket.status);
+    const nextStatus = reopensTicket ? "open" : ticket.status;
+    const results = await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO support_ticket_messages (ticket_id, author_type, author_id, message)
          VALUES (?, 'customer', ?, ?)`
       ).bind(ticket.id, session.account_id, message),
-      env.DB.prepare("UPDATE support_tickets SET updated_at = datetime('now') WHERE id = ?").bind(ticket.id),
+      env.DB.prepare("UPDATE support_tickets SET status = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(nextStatus, ticket.id),
     ]);
+    await writeAudit(
+      env,
+      request,
+      session,
+      reopensTicket ? "SUPPORT_TICKET_REOPENED_BY_CUSTOMER" : "SUPPORT_TICKET_CUSTOMER_REPLIED",
+      "support_ticket",
+      ticket.id,
+      reopensTicket ? { status: ticket.status } : null,
+      { message_id: results[0]?.meta?.last_row_id, ...(reopensTicket ? { status: nextStatus } : {}) },
+    );
     return json({ ok: true, message: "Reply added" }, 201);
   }
 
@@ -3729,6 +4178,141 @@ async function handleTicketResource(request, env, ticketId, resource) {
      FROM support_ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`
   ).bind(ticket.id).all();
   return json({ ok: true, ticket: { ...ticket, messages } });
+}
+
+const SUPPORT_TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"];
+
+async function handleAdminSupportTickets(request, env, ticketId = null, resource = null) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+  const noStoreHeaders = { "Cache-Control": "no-store" };
+
+  if (ticketId === null) {
+    if (request.method !== "GET") return json({ ok: false, error: "Unsupported support ticket operation" }, 405);
+    const url = new URL(request.url);
+    const status = (url.searchParams.get("status") || "").trim();
+    const search = (url.searchParams.get("q") || "").trim();
+    const pageValue = url.searchParams.get("page") || "1";
+    const pageSizeValue = url.searchParams.get("page_size") || "50";
+    if (status && !SUPPORT_TICKET_STATUSES.includes(status)) {
+      return json({ ok: false, error: "A valid support ticket status is required" }, 400);
+    }
+    if (search.length > 100) return json({ ok: false, error: "Search must be 100 characters or fewer" }, 400);
+    if (!/^\d+$/.test(pageValue) || !Number.isSafeInteger(Number(pageValue)) || Number(pageValue) < 1) {
+      return json({ ok: false, error: "A valid page number is required" }, 400);
+    }
+    if (!/^\d+$/.test(pageSizeValue) || !Number.isSafeInteger(Number(pageSizeValue)) ||
+        Number(pageSizeValue) < 1 || Number(pageSizeValue) > 100) {
+      return json({ ok: false, error: "Page size must be between 1 and 100" }, 400);
+    }
+
+    const clauses = [];
+    const values = [];
+    if (status) {
+      clauses.push("t.status = ?");
+      values.push(status);
+    }
+    if (search) {
+      const pattern = `%${search}%`;
+      clauses.push(`(
+        CAST(t.id AS TEXT) LIKE ? OR t.subject LIKE ? OR t.description LIKE ? OR
+        c.name LIKE ? OR c.email LIKE ? OR c.company LIKE ?
+      )`);
+      values.push(pattern, pattern, pattern, pattern, pattern, pattern);
+    }
+    const from = "FROM support_tickets t JOIN customers c ON c.id = t.customer_id";
+    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+    const count = await env.DB.prepare(`SELECT COUNT(*) AS total ${from}${where}`).bind(...values).first();
+    const total = Number(count?.total || 0);
+    const pageSize = Number(pageSizeValue);
+    const page = Math.min(Number(pageValue), Math.max(1, Math.ceil(total / pageSize)));
+    const { results } = await env.DB.prepare(
+      `SELECT t.id, t.customer_id, t.subject, t.description, t.priority, t.status,
+              t.created_at, t.updated_at, c.name AS customer_name, c.email AS customer_email,
+              c.phone AS customer_phone, c.company AS customer_company
+       ${from}${where}
+       ORDER BY t.updated_at DESC, t.id DESC LIMIT ? OFFSET ?`
+    ).bind(...values, pageSize, (page - 1) * pageSize).all();
+    return json({ ok: true, tickets: results, total, page, page_size: pageSize }, 200, null, noStoreHeaders);
+  }
+
+  const ticket = await env.DB.prepare(
+    `SELECT t.id, t.customer_id, t.subject, t.description, t.priority, t.status,
+            t.created_at, t.updated_at, c.name AS customer_name, c.email AS customer_email,
+            c.phone AS customer_phone, c.company AS customer_company
+     FROM support_tickets t
+     JOIN customers c ON c.id = t.customer_id
+     WHERE t.id = ?`
+  ).bind(ticketId).first();
+  if (!ticket) return json({ ok: false, error: "Ticket not found" }, 404);
+
+  if (resource === "messages" && request.method === "POST") {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: "A valid JSON reply is required" }, 400);
+    }
+    const message = typeof body?.message === "string" ? body.message.trim() : "";
+    if (!message || message.length > 10000) {
+      return json({ ok: false, error: "Reply must contain 1 to 10000 characters" }, 400);
+    }
+    const results = await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO support_ticket_messages (ticket_id, author_type, author_id, message)
+         VALUES (?, 'staff', ?, ?)`
+      ).bind(ticket.id, session.account_id, message),
+      env.DB.prepare("UPDATE support_tickets SET updated_at = datetime('now') WHERE id = ?").bind(ticket.id),
+    ]);
+    await writeAudit(env, request, session, "ADMIN_SUPPORT_TICKET_REPLIED", "support_ticket", ticket.id, null, {
+      message_id: results[0]?.meta?.last_row_id,
+    });
+    return json({ ok: true, message: "Reply sent to customer" }, 201, null, noStoreHeaders);
+  }
+
+  if (resource === "status" && request.method === "PATCH") {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: "A valid JSON status update is required" }, 400);
+    }
+    const status = typeof body?.status === "string" ? body.status : "";
+    if (!SUPPORT_TICKET_STATUSES.includes(status)) {
+      return json({ ok: false, error: "Choose open, in progress, resolved, or closed" }, 400);
+    }
+    if (status === ticket.status) return json({ ok: true, status, changed: false }, 200, null, noStoreHeaders);
+    const update = await env.DB.prepare(
+      "UPDATE support_tickets SET status = ?, updated_at = datetime('now') WHERE id = ? AND status = ?"
+    ).bind(status, ticket.id, ticket.status).run();
+    if (update.meta.changes !== 1) {
+      return json({ ok: false, error: "Ticket status changed; refresh and try again" }, 409);
+    }
+    await writeAudit(env, request, session, "ADMIN_SUPPORT_TICKET_STATUS_CHANGED", "support_ticket", ticket.id, {
+      status: ticket.status,
+    }, {
+      status,
+    });
+    return json({ ok: true, status, changed: true }, 200, null, noStoreHeaders);
+  }
+
+  if (resource || request.method !== "GET") {
+    return json({ ok: false, error: "Unsupported support ticket operation" }, 405);
+  }
+
+  const { results: messages } = await env.DB.prepare(
+    `SELECT id, author_type, author_id, message, created_at
+     FROM support_ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`
+  ).bind(ticket.id).all();
+  const { results: activity } = await env.DB.prepare(
+    `SELECT a.action, a.old_value, a.new_value, a.actor_person_id, a.created_at,
+            COALESCE(NULLIF(p.name, ''), NULLIF(p.email, ''), 'System') AS actor_name
+     FROM audit_logs a
+     LEFT JOIN people p ON p.id = a.actor_person_id
+     WHERE a.resource_type = 'support_ticket' AND a.resource_id = ?
+     ORDER BY a.id ASC`
+  ).bind(String(ticket.id)).all();
+  return json({ ok: true, ticket, messages, activity }, 200, null, noStoreHeaders);
 }
 
 async function handleRequirements(request, env) {
@@ -3986,10 +4570,12 @@ async function handlePartner(request, env, resource) {
 
   if (resource === "me") {
     const organization = await env.DB.prepare(
-      `SELECT id, name, legal_name, gst_number, status, created_at FROM organizations WHERE id = ?`
+      `SELECT id, name, legal_name, gst_number, address, city, state, pincode, country,
+              phone, tax_id, website, status, created_at FROM organizations WHERE id = ?`
     ).bind(session.partner_organization_id).first();
-    const [canRegisterCustomers, canViewInventory, canRevealKeys] = await Promise.all([
+    const [canRegisterCustomers, canManageCustomerContacts, canViewInventory, canRevealKeys] = await Promise.all([
       hasPartnerPermission(env, session, "partner.customer.create"),
+      hasPartnerPermission(env, session, "partner.customer.update_contact"),
       hasPartnerPermission(env, session, "partner.inventory.view"),
       hasPartnerPermission(env, session, "partner.inventory.reveal"),
     ]);
@@ -4000,6 +4586,7 @@ async function handlePartner(request, env, resource) {
       partner: { ...organization, partner_role: session.partner_role, partner_type: session.partner_type },
       permissions: {
         register_customers: canRegisterCustomers && PARTNER_SALES_TYPES.includes(session.partner_type),
+        manage_customer_contacts: canManageCustomerContacts && PARTNER_SALES_TYPES.includes(session.partner_type),
         view_inventory: canViewInventory,
         reveal_activation_keys: canRevealKeys,
       },
@@ -4009,7 +4596,10 @@ async function handlePartner(request, env, resource) {
   if (resource === "customers") {
     if (request.method === "POST") return await createPartnerCustomerInvite(request, env, session);
     if (request.method !== "GET") return json({ ok: false, error: "Unsupported partner customer operation" }, 405);
-    const [customers, pendingInvites] = await Promise.all([
+    const canManageCustomerContacts =
+      PARTNER_SALES_TYPES.includes(session.partner_type) &&
+      await hasPartnerPermission(env, session, "partner.customer.update_contact");
+    const [customers, contacts, pendingInvites] = await Promise.all([
       env.DB.prepare(
       `SELECT o.id, o.name, o.legal_name, o.status, pcl.created_at
        FROM partner_customer_links pcl
@@ -4017,6 +4607,17 @@ async function handlePartner(request, env, resource) {
        WHERE pcl.partner_organization_id = ? AND pcl.status = 'active' AND o.status = 'active'
        ORDER BY o.name`
       ).bind(session.partner_organization_id).all(),
+      canManageCustomerContacts
+        ? env.DB.prepare(
+          `SELECT DISTINCT c.id, c.name, c.phone, om.organization_id
+           FROM partner_customer_links pcl
+           JOIN organization_members om ON om.organization_id = pcl.customer_organization_id
+             AND om.account_type = 'customer' AND om.status = 'active'
+           JOIN customers c ON c.id = om.account_id AND c.status IN ('active', 'trial')
+           WHERE pcl.partner_organization_id = ? AND pcl.status = 'active'
+           ORDER BY om.organization_id, c.id`
+        ).bind(session.partner_organization_id).all()
+        : Promise.resolve({ results: [] }),
       env.DB.prepare(
         `SELECT id, email, name, company,
                 CASE WHEN status = 'pending' AND expires_at <= datetime('now') THEN 'expired' ELSE status END AS status,
@@ -4029,8 +4630,10 @@ async function handlePartner(request, env, resource) {
     return json({
       ok: true,
       customers: customers.results || [],
+      contacts: contacts.results || [],
+      permissions: { manage_customer_contacts: canManageCustomerContacts },
       pending_invites: pendingInvites.results || [],
-    });
+    }, 200, null, { "Cache-Control": "no-store" });
   }
 
   if (resource === "inventory") {
@@ -4104,6 +4707,66 @@ async function handlePartner(request, env, resource) {
   return json({ ok: false, error: "Unsupported partner operation" }, 405);
 }
 
+async function updatePartnerCustomerContact(request, env, customerId) {
+  const session = await getPartnerSession(request, env);
+  if (!session || !(await hasPartnerPermission(env, session, "partner.view"))) {
+    return json({ ok: false, error: "Partner access required" }, 403);
+  }
+  if (!PARTNER_SALES_TYPES.includes(session.partner_type) ||
+      !(await hasPartnerPermission(env, session, "partner.customer.update_contact"))) {
+    return json({ ok: false, error: "Customer contact updates are not authorized for this partner" }, 403);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid customer contact is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some((field) => !["name", "phone"].includes(field))) {
+    return json({ ok: false, error: "Only customer contact name and phone can be updated" }, 400);
+  }
+  const name = boundedString(body.name, 120);
+  const phone = boundedString(body.phone, 40);
+  if (!name || !phone) return json({ ok: false, error: "A valid contact name and phone number are required" }, 400);
+
+  const customer = await env.DB.prepare(
+    `SELECT c.id, c.name, c.phone, om.organization_id
+     FROM customers c
+     JOIN organization_members om ON om.account_type = 'customer'
+       AND om.account_id = c.id AND om.status = 'active'
+     JOIN organizations customer_org ON customer_org.id = om.organization_id
+       AND customer_org.status = 'active'
+     JOIN partner_customer_links pcl ON pcl.customer_organization_id = om.organization_id
+       AND pcl.partner_organization_id = ? AND pcl.status = 'active'
+     WHERE c.id = ? AND c.status IN ('active', 'trial')
+     ORDER BY om.id LIMIT 1`
+  ).bind(session.partner_organization_id, customerId).first();
+  if (!customer) return json({ ok: false, error: "Assigned customer contact not found" }, 404);
+  const changedFields = [];
+  if (customer.name !== name) changedFields.push("name");
+  if (customer.phone !== phone) changedFields.push("phone");
+  if (changedFields.length) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE customers SET name = ?, phone = ? WHERE id = ?").bind(name, phone, customer.id),
+      env.DB.prepare(
+        "UPDATE people SET name = ? WHERE source_type = 'customer' AND source_id = ?"
+      ).bind(name, customer.id),
+    ]);
+    await env.DB.prepare(
+      `INSERT INTO audit_logs
+       (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+       VALUES (?, ?, 'PARTNER_CUSTOMER_CONTACT_UPDATED', 'customer', ?, ?, ?, ?)`
+    ).bind(
+      session.person_id, customer.organization_id, String(customer.id),
+      JSON.stringify({ fields: changedFields }), JSON.stringify({ fields: changedFields }),
+      request.headers.get("CF-Connecting-IP") || null,
+    ).run();
+  }
+  return json({ ok: true, updated_fields: changedFields }, 200, null, { "Cache-Control": "no-store" });
+}
+
 async function createPartnerCustomerInvite(request, env, session) {
   if (!(await hasPartnerPermission(env, session, "partner.customer.create")) ||
       !PARTNER_SALES_TYPES.includes(session.partner_type)) {
@@ -4124,10 +4787,11 @@ async function createPartnerCustomerInvite(request, env, session) {
     return json({ ok: false, error: "A valid customer registration request is required" }, 400);
   }
   const email = validEmail(body.email);
+  const phone = boundedString(body.phone, 40);
   const company = boundedString(body.company, 200);
   const name = body.name == null || body.name === "" ? null : boundedString(body.name, 120);
-  if (!email || !company || (body.name != null && body.name !== "" && !name)) {
-    return json({ ok: false, error: "A valid customer email, organization name, and optional contact name are required" }, 400);
+  if (!email || !phone || !company || (body.name != null && body.name !== "" && !name)) {
+    return json({ ok: false, error: "A valid customer email, phone number, organization name, and optional contact name are required" }, 400);
   }
   if (await emailAlreadyRegistered(env, email)) {
     return json({ ok: false, error: "This account already exists. Ask SMRITISYS to link the existing customer." }, 409);
@@ -4167,9 +4831,9 @@ async function createPartnerCustomerInvite(request, env, session) {
       ).bind(email),
       env.DB.prepare(
         `INSERT INTO customer_invites
-         (token_hash, email, name, company, created_by, expires_at, invited_by_partner_organization_id)
-         VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'), ?)`
-      ).bind(tokenHash, email, name, company, session.person_id, session.partner_organization_id),
+        (token_hash, email, name, phone, company, created_by, expires_at, invited_by_partner_organization_id)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+24 hours'), ?)`
+      ).bind(tokenHash, email, name, phone, company, session.person_id, session.partner_organization_id),
       env.DB.prepare(
         `INSERT INTO audit_logs
          (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
@@ -4377,22 +5041,23 @@ async function handleAdminCustomerInvites(request, env, origin) {
   }
 
   const email = validEmail(body.email);
+  const phone = boundedString(body.phone, 40);
   const suppliedCompany = boundedString(body.company, 200);
   const requestedOrganizationId = body.organization_id == null || body.organization_id === ""
     ? null
     : numericId(String(body.organization_id));
   const suppliedName = body.name;
   const name = suppliedName == null || suppliedName === "" ? null : boundedString(suppliedName, 120);
-  if (!email || (body.organization_id != null && body.organization_id !== "" && !requestedOrganizationId) ||
+  if (!email || !phone || (body.organization_id != null && body.organization_id !== "" && !requestedOrganizationId) ||
       (suppliedName != null && suppliedName !== "" && !name)) {
-    return json({ ok: false, error: "A valid email, optional organization, and optional name are required" }, 400);
+    return json({ ok: false, error: "A valid email and phone number, optional organization, and optional name are required" }, 400);
   }
 
   const existingUser = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").bind(email).first();
   if (existingUser) return json({ ok: false, error: "This email belongs to an internal user account" }, 409);
 
   const existingCustomer = await env.DB.prepare(
-    "SELECT id, status, company FROM customers WHERE lower(email) = ? LIMIT 1"
+    "SELECT id, status, company, phone FROM customers WHERE lower(email) = ? LIMIT 1"
   ).bind(email).first();
   let organization = null;
   if (requestedOrganizationId) {
@@ -4422,6 +5087,15 @@ async function handleAdminCustomerInvites(request, env, origin) {
     const activeOrganizationIds = (memberships.results || []).map((membership) => Number(membership.organization_id));
     if (activeOrganizationIds.some((id) => id !== Number(organization.id))) {
       return json({ ok: false, error: "This account is already assigned to another organization" }, 409);
+    }
+    if (!existingCustomer.phone) {
+      await env.DB.prepare(
+        "UPDATE customers SET phone = ? WHERE id = ? AND (phone IS NULL OR trim(phone) = '')"
+      ).bind(phone, existingCustomer.id).run();
+      await writeAudit(
+        env, request, principal, "CUSTOMER_CONTACT_PHONE_ADDED", "customer",
+        existingCustomer.id, null, { email, organization_id: organization.id },
+      );
     }
     if (!activeOrganizationIds.includes(Number(organization.id))) {
       await env.DB.batch([
@@ -4515,9 +5189,9 @@ async function handleAdminCustomerInvites(request, env, origin) {
       ).bind(email),
       env.DB.prepare(
         `INSERT INTO customer_invites
-         (token_hash, email, name, company, created_by, expires_at, organization_id, customer_id)
-         VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?)`
-      ).bind(tokenHash, email, name, company, principal.person_id, organization?.id || null, customerId),
+         (token_hash, email, name, phone, company, created_by, expires_at, organization_id, customer_id)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+24 hours'), ?, ?)`
+      ).bind(tokenHash, email, name, phone, company, principal.person_id, organization?.id || null, customerId),
       env.DB.prepare(
         `INSERT INTO audit_logs
          (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
@@ -4596,7 +5270,7 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
 
   const tokenHash = await hashCustomerInviteToken(token);
   const invitation = await env.DB.prepare(
-    `SELECT id, email, name, company, organization_id, customer_id,
+    `SELECT id, email, name, phone, company, organization_id, customer_id,
             invited_by_partner_organization_id
      FROM customer_invites
      WHERE token_hash = ? AND status = 'pending' AND expires_at > datetime('now')
@@ -4612,6 +5286,9 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
        )`
   ).bind(tokenHash).first();
   if (!invitation) return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+  if (!invitation.phone) {
+    return json({ ok: false, error: "This invitation predates required contact details. Ask the administrator for a new invitation." }, 409);
+  }
   const existingCustomer = invitation.customer_id
     ? await env.DB.prepare(
      `SELECT id FROM customers
@@ -4677,10 +5354,11 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
        acceptInvite,
        env.DB.prepare(
          `UPDATE customers
-          SET password_hash = ?, name = COALESCE(?, name), company = ?, status = 'active'
+          SET password_hash = ?, name = COALESCE(?, name),
+              phone = COALESCE(NULLIF(phone, ''), ?), company = ?, status = 'active'
           WHERE id = ? AND status = 'inactive'
             AND EXISTS (SELECT 1 FROM customer_invites WHERE id = ? AND status = 'accepted')`
-       ).bind(passwordHash, invitation.name, invitation.company, invitation.customer_id, invitation.id),
+       ).bind(passwordHash, invitation.name, invitation.phone, invitation.company, invitation.customer_id, invitation.id),
        env.DB.prepare(
          `UPDATE people SET name = COALESCE(?, name), status = 'active'
           WHERE source_type = 'customer' AND source_id = ?`
@@ -4693,8 +5371,8 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
        acceptInvite,
        env.DB.prepare(
          `INSERT INTO customers (email, password_hash, name, phone, company)
-          SELECT ?, ?, ?, NULL, ? WHERE changes() = 1`
-       ).bind(invitation.email, passwordHash, invitation.name, invitation.company),
+          SELECT ?, ?, ?, ?, ? WHERE changes() = 1`
+       ).bind(invitation.email, passwordHash, invitation.name, invitation.phone, invitation.company),
        env.DB.prepare(
          `UPDATE customer_invites
           SET customer_id = (SELECT id FROM customers WHERE lower(email) = lower(?) LIMIT 1)
@@ -4745,7 +5423,8 @@ async function handleAdminPartners(request, env, origin) {
   if (request.method === "GET") {
     const [partners, members, links] = await Promise.all([
       env.DB.prepare(
-        `SELECT o.id, o.name, o.legal_name, o.status, r.relationship_type AS partner_type,
+        `SELECT o.id, o.name, o.legal_name, o.address, o.city, o.state, o.pincode,
+                o.country, o.phone, o.status, r.relationship_type AS partner_type,
                 COUNT(DISTINCT pm.id) AS member_count,
                 COUNT(DISTINCT CASE WHEN pcl.status = 'active' THEN pcl.id END) AS linked_customer_count,
                 (SELECT COUNT(*) FROM partner_invites pi
@@ -5046,6 +5725,7 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
   }
 
   const email = validEmail(body.email);
+  const phone = boundedString(body.phone, 40);
   const name = body.name == null || body.name === "" ? null : boundedString(body.name, 120);
   const organizationName = body.organization_name == null || body.organization_name === ""
     ? null
@@ -5055,19 +5735,47 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
   const bodyOrganizationId = body.organization_id == null || body.organization_id === ""
     ? null
     : numericId(String(body.organization_id));
-  if (!email || (body.name != null && body.name !== "" && !name) ||
+  if (!email || !phone || (body.name != null && body.name !== "" && !name) ||
       !isAdminPartnerType(partnerType) ||
       !["partner_admin", "partner_member"].includes(partnerRole) ||
       (body.organization_id != null && body.organization_id !== "" && !bodyOrganizationId) ||
       (requestedPartnerId && bodyOrganizationId && Number(requestedPartnerId) !== bodyOrganizationId)) {
-    return json({ ok: false, error: "A valid email, partner type, role, and organization are required" }, 400);
+    return json({ ok: false, error: "A valid email and phone number, partner type, role, and organization are required" }, 400);
+  }
+
+  const organizationDetails = {
+    legal_name: optionalPartnerOrganizationValue(body.legal_name, 200),
+    address: optionalPartnerOrganizationValue(body.address, 500),
+    city: optionalPartnerOrganizationValue(body.city, 120),
+    state: optionalPartnerOrganizationValue(body.state, 120),
+    pincode: optionalPartnerOrganizationValue(body.pincode, 20),
+    country: optionalPartnerOrganizationValue(body.country, 120),
+    phone: optionalPartnerOrganizationValue(body.organization_phone, 40),
+    tax_id: optionalPartnerOrganizationValue(body.tax_id, 80),
+    website: optionalPartnerOrganizationValue(body.website, 255),
+  };
+  const organizationDetailInputs = [
+    ["legal_name", body.legal_name, 200],
+    ["address", body.address, 500],
+    ["city", body.city, 120],
+    ["state", body.state, 120],
+    ["pincode", body.pincode, 20],
+    ["country", body.country, 120],
+    ["phone", body.organization_phone, 40],
+    ["tax_id", body.tax_id, 80],
+    ["website", body.website, 255],
+  ];
+  if (organizationDetailInputs.some(([key, value, maxLength]) =>
+    value != null && (typeof value !== "string" ||
+      (value.trim() !== "" && (value.trim().length > maxLength || !organizationDetails[key]))))) {
+    return json({ ok: false, error: "One or more partner organization details are invalid" }, 400);
   }
 
   const organizationId = requestedPartnerId || bodyOrganizationId;
   const internalUser = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").bind(email).first();
   if (internalUser) return json({ ok: false, error: "This email belongs to an internal user account" }, 409);
   const existingCustomer = await env.DB.prepare(
-    "SELECT id, status FROM customers WHERE lower(email) = ? LIMIT 1"
+    "SELECT id, status, phone FROM customers WHERE lower(email) = ? LIMIT 1"
   ).bind(email).first();
   if (existingCustomer && existingCustomer.status !== "active") {
     return json({ ok: false, error: "Activate this existing customer account before assigning partner access" }, 409);
@@ -5110,8 +5818,21 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
       return json({ ok: false, error: "This organization already exists. Select it to reuse the existing record." }, 409);
     }
     const created = await env.DB.prepare(
-      "INSERT INTO organizations (name, legal_name, status) VALUES (?, ?, 'active')"
-    ).bind(organizationName, organizationName).run();
+      `INSERT INTO organizations
+       (name, legal_name, address, city, state, pincode, country, phone, tax_id, website, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`
+    ).bind(
+      organizationName,
+      organizationDetails.legal_name || organizationName,
+      organizationDetails.address,
+      organizationDetails.city,
+      organizationDetails.state,
+      organizationDetails.pincode,
+      organizationDetails.country,
+      organizationDetails.phone,
+      organizationDetails.tax_id,
+      organizationDetails.website,
+    ).run();
     organization = {
       id: created.meta.last_row_id,
       name: organizationName,
@@ -5130,7 +5851,6 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
   if (assignedPartnerType && assignedPartnerType.relationship_type !== partnerType) {
     return json({ ok: false, error: "This organization is already classified as a different partner type" }, 409);
   }
-
   const token = existingCustomer ? null : makeToken();
   const tokenHash = token ? await hashCustomerInviteToken(token) : null;
   const auditAction = existingCustomer ? "PARTNER_MEMBER_ADDED" : "PARTNER_INVITE_CREATED";
@@ -5140,6 +5860,7 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
     partner_role: partnerRole,
     organization_id: organization.id,
     existing_customer_id: existingCustomer?.id || null,
+    contact_phone_added: Boolean(existingCustomer && !existingCustomer.phone),
   });
   const clientIp = request.headers.get("CF-Connecting-IP") || null;
   const statements = [
@@ -5150,6 +5871,36 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
        DO UPDATE SET status = 'active'`
     ).bind(organization.id, partnerType),
   ];
+  const updatedOrganizationFields = Object.entries(organizationDetails)
+    .filter(([, value]) => value !== null)
+    .map(([field]) => field);
+  if (organizationId && updatedOrganizationFields.length) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE organizations
+         SET legal_name = COALESCE(?, legal_name), address = COALESCE(?, address),
+             city = COALESCE(?, city), state = COALESCE(?, state), pincode = COALESCE(?, pincode),
+             country = COALESCE(?, country), phone = COALESCE(?, phone),
+             tax_id = COALESCE(?, tax_id), website = COALESCE(?, website)
+         WHERE id = ?`
+      ).bind(
+        organizationDetails.legal_name, organizationDetails.address, organizationDetails.city,
+        organizationDetails.state, organizationDetails.pincode, organizationDetails.country,
+        organizationDetails.phone, organizationDetails.tax_id, organizationDetails.website,
+        organization.id,
+      ),
+      env.DB.prepare(
+        `INSERT INTO audit_logs
+         (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
+         SELECT ?, ?, 'PARTNER_ORGANIZATION_DETAILS_UPDATED', 'organization', ?, NULL, ?, ?
+         WHERE changes() = 1`
+      ).bind(
+        principal.person_id, organization.id, String(organization.id),
+        JSON.stringify({ fields: updatedOrganizationFields }),
+        clientIp,
+      ),
+    );
+  }
   if (existingCustomer) {
     statements.push(
       env.DB.prepare(
@@ -5168,13 +5919,18 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
                        partner_type = excluded.partner_type, status = excluded.status`
       ).bind(organization.id, existingCustomer.id, partnerRole, partnerType),
     );
+    if (!existingCustomer.phone) {
+      statements.push(env.DB.prepare(
+        "UPDATE customers SET phone = ? WHERE id = ? AND (phone IS NULL OR trim(phone) = '')"
+      ).bind(phone, existingCustomer.id));
+    }
   } else {
     statements.push(
       env.DB.prepare(
         `INSERT INTO partner_invites
-         (token_hash, partner_organization_id, email, name, partner_type, partner_role, created_by, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+24 hours'))`
-      ).bind(tokenHash, organization.id, email, name, partnerType, partnerRole, principal.person_id),
+         (token_hash, partner_organization_id, email, name, phone, partner_type, partner_role, created_by, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+24 hours'))`
+      ).bind(tokenHash, organization.id, email, name, phone, partnerType, partnerRole, principal.person_id),
     );
   }
   statements.push(
@@ -5357,7 +6113,7 @@ async function handlePartnerInviteAcceptance(request, env, origin) {
   }
   const tokenHash = await hashCustomerInviteToken(body.token);
   const invitation = await env.DB.prepare(
-    `SELECT pi.id, pi.email, pi.name, pi.partner_organization_id, pi.partner_type, pi.partner_role,
+    `SELECT pi.id, pi.email, pi.name, pi.phone, pi.partner_organization_id, pi.partner_type, pi.partner_role,
             o.name AS partner_name
      FROM partner_invites pi
      JOIN organizations o ON o.id = pi.partner_organization_id AND o.status = 'active'
@@ -5366,6 +6122,9 @@ async function handlePartnerInviteAcceptance(request, env, origin) {
      WHERE pi.token_hash = ? AND pi.status = 'pending' AND pi.expires_at > datetime('now')`
   ).bind(tokenHash).first();
   if (!invitation) return json({ ok: false, error: "This invitation is invalid, expired, or already used" }, 410);
+  if (!invitation.phone) {
+    return json({ ok: false, error: "This invitation predates required contact details. Ask the administrator for a new invitation." }, 409);
+  }
   if (await emailAlreadyRegistered(env, invitation.email)) {
     return json({ ok: false, error: "An account already exists for this invitation email" }, 409);
   }
@@ -5385,8 +6144,8 @@ async function handlePartnerInviteAcceptance(request, env, origin) {
       ).bind(invitation.id),
       env.DB.prepare(
         `INSERT INTO customers (email, password_hash, name, phone, company)
-         SELECT ?, ?, ?, NULL, ? WHERE changes() = 1`
-      ).bind(invitation.email, passwordHash, invitation.name, invitation.partner_name),
+         SELECT ?, ?, ?, ?, ? WHERE changes() = 1`
+      ).bind(invitation.email, passwordHash, invitation.name, invitation.phone, invitation.partner_name),
       env.DB.prepare(
         `UPDATE partner_invites
          SET customer_id = (SELECT id FROM customers WHERE lower(email) = lower(?) LIMIT 1)
@@ -5452,10 +6211,13 @@ async function handleSignup(request, env) {
   const company = boundedString(body.company, 200);
 
   if (!email || !password || password.length < 12 || !type) {
-    return json({ ok: false, error: "A valid email, a password of at least 12 characters, and an account type are required" }, 400);
+    return json({ ok: false, error: "A valid email, password of at least 12 characters, and account type are required" }, 400);
   }
   if (!["user", "customer"].includes(type)) {
     return json({ ok: false, error: "type must be 'user' or 'customer'" }, 400);
+  }
+  if (type === "customer" && !phone) {
+    return json({ ok: false, error: "A customer phone number is required" }, 400);
   }
 
   if (type === "user") {
@@ -5491,7 +6253,7 @@ async function handleSignup(request, env) {
       const result = await env.DB.prepare(
         `INSERT INTO customers (email, password_hash, name, phone, company) VALUES (?, ?, ?, ?, ?)`
       )
-        .bind(email.toLowerCase(), password_hash, name || null, phone || null, company || null)
+        .bind(email.toLowerCase(), password_hash, name || null, phone, company || null)
         .run();
       await ensureIdentityForAccount(env, "customer", result.meta.last_row_id, email.toLowerCase(), name, "active", company, "customer");
     }
@@ -5696,6 +6458,9 @@ export async function onRequest(context) {
     if (path === "customer-invites/accept" && request.method === "POST") {
       return await handleCustomerInviteAcceptance(request, env, origin);
     }
+    if (path === "password-reset/complete" && request.method === "POST") {
+      return await completeCustomerPasswordReset(request, env);
+    }
     if (path === "partner-invites/accept" && request.method === "POST") {
       return await handlePartnerInviteAcceptance(request, env, origin);
     }
@@ -5707,6 +6472,21 @@ export async function onRequest(context) {
     if (path === "admin/password" && request.method === "POST") return await handleAdminPasswordChange(request, env);
     if (path === "admin/customer-invites" && ["GET", "POST"].includes(request.method)) {
       return await handleAdminCustomerInvites(request, env, origin);
+    }
+    if (path === "admin/customers" && request.method === "GET") {
+      return await handleAdminCustomers(request, env);
+    }
+    const customerPasswordResetMatch = path.match(/^admin\/customers\/(\d+)\/password-reset$/);
+    if (customerPasswordResetMatch && request.method === "POST") {
+      const customerId = numericId(customerPasswordResetMatch[1]);
+      if (!customerId) return json({ ok: false, error: "A valid customer id is required" }, 400);
+      return await createAdminCustomerPasswordReset(request, env, customerId);
+    }
+    const adminCustomerProfileMatch = path.match(/^admin\/customers\/(\d+)$/);
+    if (adminCustomerProfileMatch && ["GET", "PATCH"].includes(request.method)) {
+      const customerId = numericId(adminCustomerProfileMatch[1]);
+      if (!customerId) return json({ ok: false, error: "A valid customer id is required" }, 400);
+      return await handleAdminCustomers(request, env, customerId);
     }
     if (path === "admin/partners" && ["GET", "POST"].includes(request.method)) {
       return await handleAdminPartners(request, env, origin);
@@ -5805,6 +6585,12 @@ export async function onRequest(context) {
     if (path === "partner/customers" && request.method === "POST") {
       return await handlePartner(request, env, "customers");
     }
+    const partnerCustomerContactMatch = path.match(/^partner\/customers\/(\d+)\/contact$/);
+    if (partnerCustomerContactMatch && request.method === "PATCH") {
+      const customerId = numericId(partnerCustomerContactMatch[1]);
+      if (!customerId) return json({ ok: false, error: "A valid customer id is required" }, 400);
+      return await updatePartnerCustomerContact(request, env, customerId);
+    }
     if (path.startsWith("partner/") && path.split("/").length === 2 && request.method === "GET") {
       return await handlePartner(request, env, path.split("/")[1]);
     }
@@ -5841,6 +6627,15 @@ export async function onRequest(context) {
     if (path === "accounting/notes" && ["GET", "POST"].includes(request.method)) return await handleAccounting(request, env, "notes");
     if (path === "accounting/ledger" && request.method === "GET") return await handleAccounting(request, env, "ledger");
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
+    if (path === "admin/support-tickets" && request.method === "GET") {
+      return await handleAdminSupportTickets(request, env);
+    }
+    const adminSupportTicketMatch = path.match(/^admin\/support-tickets\/([^/]+)(?:\/(messages|status))?$/);
+    if (adminSupportTicketMatch && ["GET", "POST", "PATCH"].includes(request.method)) {
+      const ticketId = numericId(adminSupportTicketMatch[1]);
+      if (!ticketId) return json({ ok: false, error: "A valid ticket id is required" }, 400);
+      return await handleAdminSupportTickets(request, env, ticketId, adminSupportTicketMatch[2] || null);
+    }
     if (path === "admin/overview" && request.method === "GET") return await handleAdminControl(request, env, "overview");
     if (path === "admin/d1-operations" && request.method === "GET") {
       return await handleAdminControl(request, env, "d1-operations");
@@ -5853,6 +6648,10 @@ export async function onRequest(context) {
       return await handleAdminControl(request, env, `license-registration:${registrationMatch[1]}`);
     }
     if (path === "admin/organizations" && request.method === "GET") return await handleAdminControl(request, env, "organizations");
+    const adminOrganizationMatch = path.match(/^admin\/organizations\/(\d+)$/);
+    if (adminOrganizationMatch && request.method === "GET") {
+      return await handleAdminControl(request, env, `organization:${adminOrganizationMatch[1]}`);
+    }
     if (path === "admin/audit" && request.method === "GET") return await handleAdminControl(request, env, "audit");
     if (path === "admin/users" && request.method === "GET") return await handleAdminUsers(request, env);
     if (path.startsWith("admin/users/") && request.method === "PATCH") {

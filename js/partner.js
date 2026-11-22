@@ -11,7 +11,7 @@
  *
  * @version     1.0.0
  * @created     2026-11-06
- * @updated     2026-11-15
+ * @updated     2026-11-16
  *
  * @description Manages partner customer onboarding and assigned activation inventory.
  */
@@ -44,6 +44,15 @@ function partnerMessage(element, text, ok) {
 }
 
 function showPartnerLogin(message = '') {
+  const contactDialog = partner$('#partnerCustomerContactDialog');
+  if (contactDialog?.open) contactDialog.close();
+  partner$('#partnerCustomerContactForm').reset();
+  partner$('#partnerCustomerContactForm').dataset.customerId = '';
+  partner$('#partnerCustomerList').textContent = '';
+  partner$('#partnerCustomerState').textContent = 'Sign in to view assigned customers.';
+  partner$('#partnerCustomerState').className = 'state-panel';
+  clearPartnerCustomerInviteLink();
+  partnerState.permissions = {};
   partner$('#partnerPortalView').classList.add('hidden');
   partner$('#partnerLoginView').classList.remove('hidden');
   partnerMessage(partner$('#partnerLoginMessage'), message, false);
@@ -74,7 +83,8 @@ async function loadPartnerProfile() {
   partner$('#partnerOrganizationName').textContent = partner.name;
   partner$('#partnerType').textContent = `${partner.partner_type} · ${partner.partner_role}`;
   partner$('#partnerOrganizationDetails').className = 'card';
-  partner$('#partnerOrganizationDetails').innerHTML = `<span class="eyebrow">Partner organization</span><h3>${partnerEscape(partner.name)}</h3><p>${partnerEscape(partner.legal_name || 'Legal name not provided')}</p><p class="muted">${partnerEscape(partner.partner_type)} · ${partnerEscape(partner.partner_role)}</p>`;
+  const location = [partner.address, partner.city, partner.state, partner.pincode, partner.country].filter(Boolean);
+  partner$('#partnerOrganizationDetails').innerHTML = `<span class="eyebrow">Partner organization</span><h3>${partnerEscape(partner.name)}</h3><p>${partnerEscape(partner.legal_name || 'Legal name not provided')}</p>${location.length ? `<p>${partnerEscape(location.join(', '))}</p>` : ''}${partner.phone ? `<p>${partnerEscape(partner.phone)}</p>` : ''}${partner.website ? `<p>${partnerEscape(partner.website)}</p>` : ''}<p class="muted">${partnerEscape(partner.partner_type)} · ${partnerEscape(partner.partner_role)}</p>`;
   partner$('#partnerCustomerInviteForm').classList.toggle('hidden', !partnerState.permissions.register_customers);
   partner$('button[data-partner-view="inventory"]').hidden = !partnerState.permissions.view_inventory;
 }
@@ -84,14 +94,56 @@ async function loadPartnerCustomers() {
     const data = await partnerApi('partner/customers');
     partner$('#partnerCustomerCount').textContent = data.customers.length;
     const pending = data.pending_invites || [];
-    if (!data.customers.length && !pending.length) return renderPartnerState('partnerCustomerState', 'partnerCustomerList', 'No managed customer organizations yet.');
+    const contacts = data.contacts || [];
+    partnerState.permissions.manage_customer_contacts = Boolean(data.permissions?.manage_customer_contacts);
+    if (!data.customers.length && !pending.length && !contacts.length) return renderPartnerState('partnerCustomerState', 'partnerCustomerList', 'No managed customer organizations yet.');
     partner$('#partnerCustomerState').classList.add('hidden');
     partner$('#partnerCustomerList').classList.remove('hidden');
-    partner$('#partnerCustomerList').innerHTML = `${data.customers.length ? `<h3>Linked customers</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${partnerEscape(customer.name)}</td><td>${partnerEscape(customer.legal_name || 'Not provided')}</td><td><span class="status">${partnerEscape(customer.status)}</span></td></tr>`).join('')}</tbody></table>` : ''}${pending.length ? `<h3>Pending customer setup</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Contact</th><th>Status</th><th>Expires</th></tr></thead><tbody>${pending.map((invite) => `<tr><td>${partnerEscape(invite.company)}</td><td>${partnerEscape(invite.name || invite.email)}</td><td><span class="status">${partnerEscape(invite.status)}</span></td><td>${partnerEscape(invite.expires_at)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+    const organizationNames = new Map(data.customers.map((customer) => [String(customer.id), customer.name]));
+    partner$('#partnerCustomerList').innerHTML = `${data.customers.length ? `<h3>Linked customers</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${partnerEscape(customer.name)}</td><td>${partnerEscape(customer.legal_name || 'Not provided')}</td><td><span class="status">${partnerEscape(customer.status)}</span></td></tr>`).join('')}</tbody></table>` : ''}${contacts.length ? `<h3>Assigned customer contacts</h3><p class="muted">Contact details are limited to customers assigned to this partner. Email and password information is not available here.</p><table class="partner-table"><thead><tr><th>Customer organization</th><th>Customer ID</th><th>Contact</th><th>Phone</th><th>Action</th></tr></thead><tbody>${contacts.map((contact) => `<tr><td>${partnerEscape(organizationNames.get(String(contact.organization_id)) || `Organization ${contact.organization_id}`)}</td><td>${partnerEscape(contact.id)}</td><td>${partnerEscape(contact.name || '—')}</td><td>${partnerEscape(contact.phone || '—')}</td><td>${partnerState.permissions.manage_customer_contacts ? `<button class="secondary" type="button" data-partner-customer-contact="${partnerEscape(contact.id)}" data-contact-name="${partnerEscape(contact.name || '')}" data-contact-phone="${partnerEscape(contact.phone || '')}">Edit contact</button>` : '—'}</td></tr>`).join('')}</tbody></table>` : ''}${pending.length ? `<h3>Pending customer setup</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Contact</th><th>Status</th><th>Expires</th></tr></thead><tbody>${pending.map((invite) => `<tr><td>${partnerEscape(invite.company)}</td><td>${partnerEscape(invite.name || invite.email)}</td><td><span class="status">${partnerEscape(invite.status)}</span></td><td>${partnerEscape(invite.expires_at)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+    partner$('#partnerCustomerList').querySelectorAll('[data-partner-customer-contact]').forEach((button) => {
+      button.addEventListener('click', () => openPartnerCustomerContact(button));
+    });
   } catch (error) {
     renderPartnerState('partnerCustomerState', 'partnerCustomerList', error.status === 403 ? 'You are not authorized to view linked customers.' : 'Linked customers are unavailable.', true);
   }
 }
+
+function openPartnerCustomerContact(button) {
+  const form = partner$('#partnerCustomerContactForm');
+  form.dataset.customerId = button.dataset.partnerCustomerContact;
+  partner$('#partnerCustomerContactName').value = button.dataset.contactName;
+  partner$('#partnerCustomerContactPhone').value = button.dataset.contactPhone;
+  partnerMessage(partner$('#partnerCustomerContactMessage'), '', true);
+  partner$('#partnerCustomerContactDialog').showModal();
+}
+
+partner$('#partnerCustomerContactForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const customerId = form.dataset.customerId;
+  if (!customerId) return;
+  const values = new FormData(form);
+  const button = partner$('#partnerCustomerContactSave');
+  button.disabled = true;
+  partnerMessage(partner$('#partnerCustomerContactMessage'), 'Saving customer contact...', true);
+  try {
+    await partnerApi(`partner/customers/${encodeURIComponent(customerId)}/contact`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: values.get('name'), phone: values.get('phone') }),
+    });
+    partner$('#partnerCustomerContactDialog').close();
+    await loadPartnerCustomers();
+  } catch (error) {
+    partnerMessage(partner$('#partnerCustomerContactMessage'), error.message || 'The customer contact could not be saved.', false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+partner$('#partnerCustomerContactCancel').addEventListener('click', () => {
+  partner$('#partnerCustomerContactDialog').close();
+});
 
 async function loadPartnerInventory() {
   try {
@@ -200,6 +252,7 @@ partner$('#partnerCustomerInviteForm').addEventListener('submit', async (event) 
       method: 'POST',
       body: JSON.stringify({
         email: form.get('email'),
+        phone: form.get('phone'),
         name: form.get('name'),
         company: form.get('company'),
       }),

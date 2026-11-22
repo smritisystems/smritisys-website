@@ -29,6 +29,7 @@ const d1WorkerConfig = fs.readFileSync(new URL("../d1-ops/wrangler.jsonc", impor
   assert.match(html, /adminLoginForm/);
   assert.match(html, /data-admin-view="users"/);
   assert.match(html, /data-admin-view="organizations"/);
+  assert.match(html, /data-admin-view="support"/);
   assert.match(html, /data-admin-view="audit"/);
   assert.match(html, /data-admin-view="announcements"/);
   assert.match(html, /data-admin-view="security"/);
@@ -51,6 +52,35 @@ test("admin endpoints require the super-admin guard", () => {
   assert.match(api, /Super admin access required/);
 });
 
+test("organizations can be filtered and opened in a detail view without exposing license keys", () => {
+  assert.match(html, /id="adminOrganizationFilters"/);
+  assert.match(html, /id="adminOrganizationSearch"/);
+  assert.match(html, /id="adminOrganizationStatus"/);
+  assert.match(html, /id="adminOrganizationType"/);
+  assert.match(html, /id="adminOrganizationDetail"/);
+  assert.match(script, /data-admin-organization-detail/);
+  assert.match(script, /admin\/organizations\/\$\{encodeURIComponent\(organizationId\)\}/);
+  assert.match(script, /Product licenses/);
+  assert.match(api, /organizationDetailMatch/);
+  assert.match(api, /requireSuperAdmin\(request, env\)/);
+  assert.match(api, /p\.name AS product_name/);
+  assert.doesNotMatch(api.slice(api.indexOf('const organizationDetailMatch'), api.indexOf('if (resource === "audit")')), /license_key/);
+});
+
+test("admin support workspace can review, reply to, and close customer tickets", () => {
+  assert.match(html, /data-admin-section="support"/);
+  assert.match(html, /id="adminSupportFilters"/);
+  assert.match(html, /id="adminSupportDetail"/);
+  assert.match(script, /admin\/support-tickets/);
+  assert.match(script, /data-admin-support-status/);
+  assert.match(script, /data-admin-support-reply/);
+  assert.match(api, /async function handleAdminSupportTickets/);
+  assert.match(api, /requireSuperAdmin\(request, env\)/);
+  assert.match(api, /ADMIN_SUPPORT_TICKET_STATUS_CHANGED/);
+  assert.match(api, /ADMIN_SUPPORT_TICKET_REPLIED/);
+  assert.match(api, /SUPPORT_TICKET_REOPENED_BY_CUSTOMER/);
+});
+
 test("license workspace exposes issuance, lifecycle, activation, and edition policy controls", () => {
   assert.match(html, /id="licenseIssueForm"/);
   assert.match(html, /id="licensePolicyForm"/);
@@ -61,10 +91,16 @@ test("license workspace exposes issuance, lifecycle, activation, and edition pol
   assert.match(html, /id="adminRegistrationMetrics"/);
   assert.match(html, /id="adminRegistrationFilters"/);
   assert.match(html, /id="adminRegistrationPagination"/);
+  assert.match(html, /id="adminRegistrationCustomerId" name="customer_id" type="hidden"/);
+  assert.match(html, /id="adminCustomerLicenses"/);
+  assert.match(html, /id="adminCustomerLicensesManage"/);
   assert.match(script, /data-license-suspend/);
   assert.match(script, /data-license-renew/);
   assert.match(script, /data-activation-revoke/);
   assert.match(script, /admin\/license-registrations/);
+  assert.match(script, /data-customer-license-inspect/);
+  assert.match(script, /customer_id=\$\{encodeURIComponent\(customerId\)\}/);
+  assert.match(api, /const customerIdValue = readFilter\("customer_id", 20\)/);
   assert.match(script, /registered_email_masked/);
   assert.match(script, /License-registered email/);
   assert.match(script, /evaluation-policy/);
@@ -77,7 +113,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=admin-partner-management-v2/);
+  assert.match(html, /js\/admin\.js\?v=admin-support-tickets-v1/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);

@@ -23,9 +23,17 @@ const adminState = {
   registrationPage: 1,
   registrationRequestId: 0,
   organizations: [],
+  organizationDetailRequestId: 0,
   partners: [],
   licenseBatchCodes: null,
   licenseCodeBatchId: null,
+  customerProfileId: null,
+  supportTickets: [],
+  supportTicketId: null,
+  supportPage: 1,
+  supportTotal: 0,
+  supportListRequestId: 0,
+  supportDetailRequestId: 0,
 };
 const admin$ = (selector) => document.querySelector(selector);
 const admin$$ = (selector) => [...document.querySelectorAll(selector)];
@@ -67,10 +75,39 @@ function clearCustomerInviteLink() {
   admin$('#licenseBatchDownload')?.classList.add('hidden');
 }
 
+function clearAdminCustomerResetLink() {
+  const link = admin$('#adminCustomerResetLink');
+  if (link) link.value = '';
+  admin$('#adminCustomerResetResult')?.classList.add('hidden');
+}
+
 function showAdminLogin(message = '') {
   const revealDialog = admin$('#licenseCodeRevealDialog');
   if (revealDialog?.open) revealDialog.close();
+  adminState.supportTickets = [];
+  adminState.supportTicketId = null;
+  adminState.supportPage = 1;
+  adminState.supportTotal = 0;
+  adminState.supportListRequestId += 1;
+  adminState.supportDetailRequestId += 1;
+  admin$('#adminSupportList').textContent = '';
+  admin$('#adminSupportDetail').textContent = '';
+  admin$('#adminSupportPagination').classList.add('hidden');
   clearCustomerInviteLink();
+  clearAdminCustomerResetLink();
+  adminState.customerProfileId = null;
+  admin$('#adminCustomerProfilePanel').classList.add('hidden');
+  admin$('#adminCustomerProfileForm').reset();
+  admin$('#adminCustomerAddresses').textContent = '';
+  admin$('#adminCustomerLicenses').textContent = '';
+  admin$('#adminCustomerLicensesState').textContent = '';
+  admin$('#adminCustomerProfileIdentity').textContent = '';
+  admin$('#adminCustomerProfileRelationships').textContent = '';
+  admin$('#adminCustomersList').textContent = '';
+  admin$('#adminCustomerSearch').value = '';
+  admin$('#adminCustomerProfileMessage').textContent = '';
+  admin$('#adminCustomerResetMessage').textContent = '';
+  setAdminCustomerProfileEditMode(false);
   admin$('#adminPortalView').classList.add('hidden');
   admin$('#adminLoginView').classList.remove('hidden');
   adminMessage(admin$('#adminLoginMessage'), message, false);
@@ -366,12 +403,66 @@ async function loadAdminOrganizations() {
     const data = await adminApi('admin/organizations');
     adminState.organizations = data.organizations || [];
     populateOrganizationSelectors();
-    if (!data.organizations.length) return adminStatePanel('adminOrganizationsState', 'adminOrganizationsList', 'No organizations found.');
+    if (!adminState.organizations.length) {
+      admin$('#adminOrganizationDetail').classList.add('hidden');
+      return adminStatePanel('adminOrganizationsState', 'adminOrganizationsList', 'No organizations found.');
+    }
     admin$('#adminOrganizationsState').classList.add('hidden');
-    const list = admin$('#adminOrganizationsList');
-    list.classList.remove('hidden');
-    list.innerHTML = `<table class="admin-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Relationships</th><th>Status</th><th>Members</th></tr></thead><tbody>${data.organizations.map((organization) => `<tr><td>${adminEscape(organization.name)}</td><td>${adminEscape(organization.legal_name || 'Not provided')}</td><td>${adminEscape((organization.relationship_types || '').split(',').filter(Boolean).join(', ') || 'Unclassified')}</td><td><span class="status">${adminEscape(organization.status)}</span></td><td>${adminEscape(organization.member_count)}</td></tr>`).join('')}</tbody></table>`;
+    renderAdminOrganizations();
   } catch (error) { adminStatePanel('adminOrganizationsState', 'adminOrganizationsList', 'Organizations are unavailable.', true); }
+}
+
+function renderAdminOrganizations() {
+  const search = admin$('#adminOrganizationSearch').value.trim().toLowerCase();
+  const status = admin$('#adminOrganizationStatus').value;
+  const relationship = admin$('#adminOrganizationType').value;
+  const organizations = adminState.organizations.filter((organization) => {
+    const types = (organization.relationship_types || '').split(',').map((type) => type.trim().toLowerCase()).filter(Boolean);
+    const searchable = [
+      organization.name, organization.legal_name, organization.address, organization.city,
+      organization.state, organization.pincode, organization.country, organization.phone,
+      organization.gst_number, organization.tax_id, organization.website,
+    ].join(' ').toLowerCase();
+    const matchesRelationship = !relationship
+      || (relationship === 'customer' && types.includes('customer'))
+      || (relationship === 'partner' && types.some((type) => !['customer', 'internal'].includes(type)))
+      || (relationship === 'internal' && types.includes('internal'))
+      || (relationship === 'unclassified' && types.length === 0);
+    return (!search || searchable.includes(search))
+      && (!status || String(organization.status).toLowerCase() === status)
+      && matchesRelationship;
+  });
+  const list = admin$('#adminOrganizationsList');
+  list.classList.remove('hidden');
+  list.innerHTML = `<table class="admin-table"><thead><tr><th>Organization</th><th>Relationships</th><th>Status</th><th>Active members</th><th>Details</th></tr></thead><tbody>${organizations.length ? organizations.map((organization) => `<tr><td><strong>${adminEscape(organization.name)}</strong><br><small>${adminEscape(organization.legal_name || 'Legal name not provided')}</small></td><td>${adminEscape((organization.relationship_types || '').split(',').filter(Boolean).join(', ') || 'Unclassified')}</td><td><span class="status">${adminEscape(organization.status)}</span></td><td>${adminEscape(organization.member_count)}</td><td><button class="text-button" type="button" data-admin-organization-detail="${adminEscape(organization.id)}">View details</button></td></tr>`).join('') : '<tr><td colspan="5">No organizations match these filters.</td></tr>'}</tbody></table>`;
+}
+
+async function loadAdminOrganizationDetail(organizationId) {
+  const panel = admin$('#adminOrganizationDetail');
+  const requestId = ++adminState.organizationDetailRequestId;
+  panel.classList.remove('hidden');
+  panel.textContent = 'Loading organization details...';
+  try {
+    const data = await adminApi(`admin/organizations/${encodeURIComponent(organizationId)}`);
+    if (requestId !== adminState.organizationDetailRequestId) return;
+    const organization = data.organization;
+    const fields = [
+      ['Organization ID', organization.id], ['Name', organization.name],
+      ['Legal name', organization.legal_name], ['Status', organization.status],
+      ['Relationships', (organization.relationship_types || '').split(',').filter(Boolean).join(', ')],
+      ['GST number', organization.gst_number], ['Tax ID', organization.tax_id],
+      ['Phone', organization.phone], ['Website', organization.website],
+      ['Address', [organization.address, organization.city, organization.state, organization.pincode, organization.country].filter(Boolean).join(', ')],
+      ['Created', organization.created_at],
+    ];
+    const members = data.members || [];
+    const relationships = data.relationships || [];
+    const licenses = data.licenses || [];
+    panel.innerHTML = `<div class="section-head"><div><span class="eyebrow">Organization profile</span><h3>${adminEscape(organization.name)}</h3></div><button class="secondary" type="button" data-admin-organization-close>Close details</button></div><div class="admin-organization-detail-grid"><article class="card"><h4>Profile</h4><dl class="admin-organization-fields">${fields.map(([label, value]) => `<div><dt>${adminEscape(label)}</dt><dd>${adminEscape(value || 'Not provided')}</dd></div>`).join('')}</dl></article><article class="card"><h4>Members and roles <span class="muted">(${members.length})</span></h4>${members.length ? `<div class="table-scroll"><table><thead><tr><th>Name / email</th><th>Account</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead><tbody>${members.map((member) => `<tr><td>${adminEscape(member.name || 'Name unavailable')}<br><small>${adminEscape(member.email || 'Email unavailable')}</small></td><td>${adminEscape(member.account_type)}</td><td>${adminEscape(member.member_role)}</td><td>${adminEscape(member.status)}</td><td>${adminEscape(member.created_at || 'Not available')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No organization members found.</p>'}</article><article class="card"><h4>Partner / customer links <span class="muted">(${relationships.length})</span></h4>${relationships.length ? `<div class="table-scroll"><table><thead><tr><th>Link type</th><th>Organization</th><th>Status</th><th>Since</th></tr></thead><tbody>${relationships.map((link) => `<tr><td>${adminEscape(link.relationship_type)}</td><td>${adminEscape(link.organization_name)}</td><td>${adminEscape(link.status)}</td><td>${adminEscape(link.created_at || 'Not available')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No linked partner or customer organizations.</p>'}</article><article class="card"><h4>Product licenses <span class="muted">(${licenses.length})</span></h4>${licenses.length ? `<div class="table-scroll"><table><thead><tr><th>Product</th><th>Serial</th><th>Status</th><th>Seats</th><th>Term</th></tr></thead><tbody>${licenses.map((license) => `<tr><td>${adminEscape(license.product_name)}<br><small>${adminEscape(license.product_code)}</small></td><td>${adminEscape(license.serial_number || 'Not assigned')}</td><td>${adminEscape(license.status)}</td><td>${adminEscape(license.seats)}</td><td>${adminEscape(license.starts_at)} – ${adminEscape(license.expires_at || 'No expiry')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No product licenses are assigned to this organization.</p>'}</article></div>`;
+  } catch (error) {
+    if (requestId !== adminState.organizationDetailRequestId) return;
+    panel.textContent = `Organization details could not be loaded: ${error.message}`;
+  }
 }
 
 function populateOrganizationSelectors() {
@@ -400,11 +491,27 @@ function updateCustomerInviteOrganizationFields() {
 }
 
 function updatePartnerOrganizationFields() {
-  const hasOrganization = Boolean(admin$('#partnerContactOrganization').value);
+  const organizationId = admin$('#partnerContactOrganization').value;
+  const hasOrganization = Boolean(organizationId);
   const name = admin$('#partnerOrganizationName');
   admin$('#partnerOrganizationNameWrap').classList.toggle('hidden', hasOrganization);
   name.required = !hasOrganization;
   name.disabled = hasOrganization;
+  const organization = adminState.organizations.find((item) => String(item.id) === organizationId);
+  const fields = {
+    partnerOrganizationLegalName: 'legal_name',
+    partnerOrganizationPhone: 'phone',
+    partnerOrganizationAddress: 'address',
+    partnerOrganizationCity: 'city',
+    partnerOrganizationState: 'state',
+    partnerOrganizationPincode: 'pincode',
+    partnerOrganizationCountry: 'country',
+    partnerOrganizationTaxId: 'tax_id',
+    partnerOrganizationWebsite: 'website',
+  };
+  for (const [id, key] of Object.entries(fields)) {
+    admin$(`#${id}`).value = organization?.[key] || '';
+  }
 }
 
 async function loadAdminCustomerInvites() {
@@ -429,6 +536,151 @@ async function loadAdminCustomerInvites() {
     }));
   } catch (error) {
     adminStatePanel('adminCustomerInvitesState', 'adminCustomerInvitesList', 'Customer invitations are unavailable.', true);
+  }
+}
+
+function setAdminCustomerProfileEditMode(enabled) {
+  admin$('#adminCustomerProfileForm').querySelectorAll('input, textarea').forEach((input) => {
+    input.disabled = !enabled;
+  });
+  admin$('#adminCustomerAddressAdd').classList.toggle('hidden', !enabled);
+  admin$('#adminCustomerProfileEdit').classList.toggle('hidden', enabled);
+  admin$('#adminCustomerProfileSave').classList.toggle('hidden', !enabled);
+  admin$('#adminCustomerProfileCancel').classList.toggle('hidden', !enabled);
+}
+
+function renderAdminCustomerAddress(address = {}) {
+  const isSaved = Boolean(address.id);
+  return `<fieldset class="card" data-customer-address-row${isSaved ? ` data-address-id="${adminEscape(address.id)}"` : ''}>
+    <legend>${isSaved ? `Address ${adminEscape(address.id)}` : 'New address'}</legend>
+    <div class="form-grid">
+      <div><label>Address type<input name="address_type" maxlength="30" value="${adminEscape(address.address_type || 'billing')}" disabled required /></label></div>
+      <div><label>Country<input name="country" maxlength="120" value="${adminEscape(address.country || (isSaved ? '' : 'India'))}" disabled /></label></div>
+      <div class="full"><label>Address line 1<input name="address_line1" maxlength="255" value="${adminEscape(address.address_line1 || '')}" disabled required /></label></div>
+      <div class="full"><label>Address line 2<input name="address_line2" maxlength="255" value="${adminEscape(address.address_line2 || '')}" disabled /></label></div>
+      <div><label>City<input name="city" maxlength="120" value="${adminEscape(address.city || '')}" disabled /></label></div>
+      <div><label>State / province<input name="state" maxlength="120" value="${adminEscape(address.state || '')}" disabled /></label></div>
+      <div><label>Postal code<input name="postal_code" maxlength="32" value="${adminEscape(address.postal_code || '')}" disabled /></label></div>
+      <div><label><input name="is_default" type="checkbox" ${address.is_default ? 'checked' : ''} disabled /> Default address</label></div>
+    </div>
+    ${isSaved ? '' : '<button class="text-button" type="button" data-remove-new-customer-address>Remove unsaved address</button>'}
+  </fieldset>`;
+}
+
+async function loadAdminCustomers(query = admin$('#adminCustomerSearch').value.trim()) {
+  adminStatePanel('adminCustomersState', 'adminCustomersList', 'Loading customer accounts...');
+  try {
+    const data = await adminApi(`admin/customers${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+    const list = admin$('#adminCustomersList');
+    if (!data.customers.length) {
+      return adminStatePanel('adminCustomersState', 'adminCustomersList', query ? 'No matching customer accounts found.' : 'No customer accounts found.');
+    }
+    admin$('#adminCustomersState').classList.add('hidden');
+    list.classList.remove('hidden');
+    list.innerHTML = `<table class="admin-table"><thead><tr><th>Customer ID</th><th>Contact</th><th>Email</th><th>Organization</th><th>Phone</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${adminEscape(customer.id)}</td><td>${adminEscape(customer.name || '—')}</td><td>${adminEscape(customer.email)}</td><td>${adminEscape(customer.organization_name || customer.company || '—')}</td><td>${adminEscape(customer.phone || '—')}</td><td><span class="status">${adminEscape(customer.status)}</span></td><td><button class="text-button" type="button" data-admin-customer-profile="${adminEscape(customer.id)}">Manage profile</button></td></tr>`).join('')}</tbody></table>`;
+    list.querySelectorAll('[data-admin-customer-profile]').forEach((button) => {
+      button.addEventListener('click', () => openAdminCustomerProfile(button.dataset.adminCustomerProfile));
+    });
+  } catch (error) {
+    adminStatePanel('adminCustomersState', 'adminCustomersList', error.message || 'Customer accounts are unavailable.', true);
+  }
+}
+
+async function openAdminCustomerProfile(customerId) {
+  const panel = admin$('#adminCustomerProfilePanel');
+  panel.classList.remove('hidden');
+  admin$('#adminCustomerProfileMessage').textContent = '';
+  admin$('#adminCustomerResetMessage').textContent = '';
+  admin$('#adminCustomerResetResult').classList.add('hidden');
+  admin$('#adminCustomerResetLink').value = '';
+  adminState.customerProfileId = customerId;
+  try {
+    const data = await adminApi(`admin/customers/${encodeURIComponent(customerId)}`);
+    if (adminState.customerProfileId !== customerId) return false;
+    const profile = data.profile;
+    admin$('#adminCustomerProfileHeading').textContent = profile.name || `Customer ${profile.id}`;
+    admin$('#adminCustomerProfileIdentity').innerHTML = `Customer ID <strong>${adminEscape(profile.id)}</strong> · ${adminEscape(profile.email)} · <span class="status">${adminEscape(profile.status)}</span>${profile.company ? ` · ${adminEscape(profile.company)}` : ''}`;
+    const values = {
+      adminCustomerProfileName: profile.name,
+      adminCustomerProfilePhone: profile.phone,
+      adminCustomerProfileGst: profile.gst_number,
+      adminCustomerProfileWebsite: profile.website,
+      adminCustomerProfileTimezone: profile.timezone || 'Asia/Kolkata',
+      adminCustomerProfileBio: profile.bio,
+    };
+    for (const [id, value] of Object.entries(values)) admin$(`#${id}`).value = value || '';
+    setAdminCustomerProfileEditMode(false);
+    admin$('#adminCustomerResetButton').disabled = !['active', 'trial'].includes(profile.status);
+    const organizations = data.organizations || [];
+    const partners = (data.partners || []).map((item) =>
+      `<li>${adminEscape(item.name)} · ${adminEscape(item.status)}</li>`);
+    admin$('#adminCustomerAddresses').innerHTML = (data.addresses || []).length
+      ? data.addresses.map((item) => renderAdminCustomerAddress(item)).join('')
+      : '<p class="muted">No saved addresses.</p>';
+    admin$('#adminCustomerProfileRelationships').innerHTML = [
+      `<h4>Organizations</h4>${organizations.length ? `<ul>${organizations.map((item) => {
+        const details = [item.address, item.city, item.state, item.pincode, item.country, item.phone, item.gst_number, item.website].filter(Boolean).join(' · ');
+        return `<li><strong>${adminEscape(item.name)}</strong>${item.legal_name ? ` · ${adminEscape(item.legal_name)}` : ''} · ${adminEscape(item.member_role)} (${adminEscape(item.membership_status)})<small class="muted">${adminEscape(details)}</small></li>`;
+      }).join('')}</ul>` : '<p>No organization membership.</p>'}`,
+      `<h4>Assigned partners</h4>${partners.length ? `<ul>${partners.join('')}</ul>` : '<p>No active partner assignment.</p>'}`,
+    ].join('');
+    await loadAdminCustomerLicenses(customerId);
+    return true;
+  } catch (error) {
+    if (adminState.customerProfileId !== customerId) return false;
+    panel.classList.add('hidden');
+    adminMessage(admin$('#adminError'), error.message || 'Customer profile is unavailable.', false);
+    admin$('#adminError').className = 'state-panel error-state';
+    return false;
+  }
+}
+
+function renderAdminCustomerLicenses(data) {
+  const state = admin$('#adminCustomerLicensesState');
+  const list = admin$('#adminCustomerLicenses');
+  const registrations = data.registrations || [];
+  if (!registrations.length) {
+    list.classList.add('hidden');
+    state.className = 'state-panel';
+    state.textContent = 'No licenses are linked to this customer.';
+    return;
+  }
+
+  state.classList.add('hidden');
+  list.classList.remove('hidden');
+  const scopeNote = Number(data.total) > registrations.length
+    ? `<p class="muted">Showing ${adminEscape(registrations.length)} of ${adminEscape(data.total)} licenses. Use “Manage all licenses” for the complete list.</p>`
+    : '';
+  list.innerHTML = `${scopeNote}<div class="admin-license-table-wrap"><table class="admin-license-table">
+    <thead><tr><th>Serial / status</th><th>Product / edition</th><th>Validity</th><th>Installations</th><th>Activity</th></tr></thead>
+    <tbody>${registrations.map((registration) => {
+      const id = adminEscape(registration.license_id);
+      return `<tr>
+        <td><strong>${adminEscape(registration.serial_number || '—')}</strong><small>${adminEscape(registration.license_status || 'Unknown')}</small></td>
+        <td><strong>${adminEscape(registration.product?.name || 'Product')}</strong><small>${adminEscape(registration.edition?.name || 'No edition')}</small></td>
+        <td>${adminEscape(registration.start_date || '—')} → ${adminEscape(registration.expiry_date || 'Perpetual')}</td>
+        <td>${adminEscape(registration.active_activation_count)} active / ${adminEscape(registration.total_activation_count)} total</td>
+        <td><button class="secondary" type="button" data-customer-license-inspect="${id}">Inspect activity</button></td>
+      </tr><tr class="admin-license-detail-row" data-customer-license-detail-row="${id}" hidden><td colspan="5"><div class="license-details hidden" data-customer-license-detail-panel="${id}"></div></td></tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+async function loadAdminCustomerLicenses(customerId) {
+  const state = admin$('#adminCustomerLicensesState');
+  const list = admin$('#adminCustomerLicenses');
+  state.className = 'state-panel';
+  state.textContent = 'Loading customer licenses...';
+  list.classList.add('hidden');
+  list.textContent = '';
+  try {
+    const data = await adminApi(`admin/license-registrations?customer_id=${encodeURIComponent(customerId)}&page_size=100`);
+    if (adminState.customerProfileId !== customerId) return;
+    renderAdminCustomerLicenses(data);
+  } catch (error) {
+    if (adminState.customerProfileId !== customerId) return;
+    state.className = 'state-panel error-state';
+    state.textContent = `Customer licenses are unavailable: ${error.message}`;
   }
 }
 
@@ -460,7 +712,7 @@ async function loadAdminPartners() {
     } else {
       state.classList.add('hidden');
       list.classList.remove('hidden');
-      list.innerHTML = `<h3>Partner organizations</h3><div class="admin-partner-table-wrap"><table class="admin-table admin-partner-table"><thead><tr><th>Organization</th><th>Status</th><th>Partner type</th><th>Contacts</th><th>Customers</th><th>Codes allocated / claimed</th><th>Pending invites</th><th>Actions</th></tr></thead><tbody>${adminState.partners.map((partner) => `<tr><td><strong>${adminEscape(partner.name)}</strong><small>${adminEscape(partner.legal_name || '')}</small></td><td><span class="status">${adminEscape(partner.status)}</span></td><td><div class="admin-partner-controls"><select data-partner-type-select="${adminEscape(partner.id)}" aria-label="Partner type for ${adminEscape(partner.name)}">${partnerTypes.map((type) => `<option value="${adminEscape(type)}" ${type === partner.partner_type ? 'selected' : ''}>${adminEscape(type.replace(/_/g, ' '))}</option>`).join('')}</select><button class="text-button" type="button" data-partner-type-save="${adminEscape(partner.id)}">Save</button></div></td><td>${adminEscape(partner.member_count)}</td><td>${adminEscape(partner.linked_customer_count)}</td><td>${adminEscape(partner.allocated_code_count)} / ${adminEscape(partner.claimed_code_count)}</td><td>${adminEscape(partner.pending_invite_count)}</td><td><button class="text-button" type="button" data-partner-status="${adminEscape(partner.id)}:${partner.status === 'active' ? 'inactive' : 'active'}">${partner.status === 'active' ? 'Deactivate' : 'Reactivate'}</button></td></tr>`).join('')}</tbody></table></div><h3>Customer links</h3>${data.links.length ? `<div class="admin-partner-table-wrap"><table class="admin-table"><thead><tr><th>Partner</th><th>Customer</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.links.map((link) => `<tr><td>${adminEscape(link.partner_name)}</td><td>${adminEscape(link.customer_name)}</td><td><span class="status">${adminEscape(link.status)}</span></td><td>${link.status === 'active' ? `<button class="text-button" type="button" data-partner-link-revoke="${adminEscape(link.partner_organization_id)}:${adminEscape(link.customer_organization_id)}">Unlink</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No customer links recorded.</p>'}`;
+      list.innerHTML = `<h3>Partner organizations</h3><div class="admin-partner-table-wrap"><table class="admin-table admin-partner-table"><thead><tr><th>Organization</th><th>Location</th><th>Phone</th><th>Status</th><th>Partner type</th><th>Contacts</th><th>Customers</th><th>Codes allocated / claimed</th><th>Pending invites</th><th>Actions</th></tr></thead><tbody>${adminState.partners.map((partner) => `<tr><td><strong>${adminEscape(partner.name)}</strong><small>${adminEscape(partner.legal_name || '')}</small></td><td>${adminEscape([partner.address, partner.city, partner.state, partner.pincode, partner.country].filter(Boolean).join(', ') || 'Not provided')}</td><td>${adminEscape(partner.phone || 'Not provided')}</td><td><span class="status">${adminEscape(partner.status)}</span></td><td><div class="admin-partner-controls"><select data-partner-type-select="${adminEscape(partner.id)}" aria-label="Partner type for ${adminEscape(partner.name)}">${partnerTypes.map((type) => `<option value="${adminEscape(type)}" ${type === partner.partner_type ? 'selected' : ''}>${adminEscape(type.replace(/_/g, ' '))}</option>`).join('')}</select><button class="text-button" type="button" data-partner-type-save="${adminEscape(partner.id)}">Save</button></div></td><td>${adminEscape(partner.member_count)}</td><td>${adminEscape(partner.linked_customer_count)}</td><td>${adminEscape(partner.allocated_code_count)} / ${adminEscape(partner.claimed_code_count)}</td><td>${adminEscape(partner.pending_invite_count)}</td><td><button class="text-button" type="button" data-partner-status="${adminEscape(partner.id)}:${partner.status === 'active' ? 'inactive' : 'active'}">${partner.status === 'active' ? 'Deactivate' : 'Reactivate'}</button></td></tr>`).join('')}</tbody></table></div><h3>Customer links</h3>${data.links.length ? `<div class="admin-partner-table-wrap"><table class="admin-table"><thead><tr><th>Partner</th><th>Customer</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.links.map((link) => `<tr><td>${adminEscape(link.partner_name)}</td><td>${adminEscape(link.customer_name)}</td><td><span class="status">${adminEscape(link.status)}</span></td><td>${link.status === 'active' ? `<button class="text-button" type="button" data-partner-link-revoke="${adminEscape(link.partner_organization_id)}:${adminEscape(link.customer_organization_id)}">Unlink</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No customer links recorded.</p>'}`;
       list.querySelectorAll('[data-partner-link-revoke]').forEach((button) => button.addEventListener('click', async () => {
         if (!window.confirm('Revoke this partner-to-customer link?')) return;
         const [partnerId, customerId] = button.dataset.partnerLinkRevoke.split(':');
@@ -858,7 +1110,13 @@ async function loadLicenseRegistrations({ resetPage = false } = {}) {
     page: String(adminState.registrationPage),
     page_size: '25',
   });
-  for (const key of ['q', 'status', 'activation', 'email', 'from', 'to']) {
+  const customerId = String(values.get('customer_id') || '').trim();
+  const customerScope = admin$('#adminRegistrationCustomerScope');
+  customerScope.classList.toggle('hidden', !customerId);
+  admin$('#adminRegistrationCustomerScopeLabel').textContent = customerId
+    ? `Showing licenses for customer ID ${customerId}.`
+    : '';
+  for (const key of ['q', 'customer_id', 'status', 'activation', 'email', 'from', 'to']) {
     const value = String(values.get(key) || '').trim();
     if (value) params.set(key, value);
   }
@@ -880,7 +1138,7 @@ async function loadLicenseRegistrations({ resetPage = false } = {}) {
   }
 }
 
-function renderLicenseDetails(licenseId, data) {
+function renderLicenseDetails(licenseId, data, { allowActivationRevoke = true } = {}) {
   const registration = data.registration.registration;
   const registrationGroups = [
     {
@@ -913,13 +1171,13 @@ function renderLicenseDetails(licenseId, data) {
     },
   ].map((group) => `<section><h4>${adminEscape(group.title)}</h4><dl>${group.fields.map(([label, value]) => `<dt>${adminEscape(label)}</dt><dd>${adminEscape(value || 'Not available')}</dd>`).join('')}</dl></section>`).join('');
   const entitlements = data.entitlements.entitlements.map((item) => `<div><dt>${adminEscape(item.key)}</dt><dd>${adminEscape(typeof item.value === 'object' ? JSON.stringify(item.value) : item.value)}</dd></div>`).join('');
-  const activations = data.activations.activations.map((item, index) => `<li><strong>Installation ${index + 1} (${adminEscape(String(item.installation_id || '').slice(-4) || '—')})</strong> · ${adminEscape(item.status)} · Last seen ${adminEscape(item.last_seen_at || '—')}${item.status === 'active' ? ` <button type="button" class="text-button" data-activation-revoke="${adminEscape(item.id)}" data-license-id="${adminEscape(licenseId)}">Revoke</button>` : ''}</li>`).join('');
+  const activations = data.activations.activations.map((item, index) => `<li><strong>Installation ${index + 1} (${adminEscape(String(item.installation_id || '').slice(-4) || '—')})</strong> · ${adminEscape(item.status)} · Last seen ${adminEscape(item.last_seen_at || '—')}${item.status === 'active' && allowActivationRevoke ? ` <button type="button" class="text-button" data-activation-revoke="${adminEscape(item.id)}" data-license-id="${adminEscape(licenseId)}">Revoke</button>` : ''}</li>`).join('');
   const artifacts = data.artifacts.artifacts.map((item) => `<li>${adminEscape(item.document_id)} · ${adminEscape(item.algorithm)} · key ${adminEscape(item.key_id)} · ${adminEscape(item.issued_at)}</li>`).join('');
   const events = data.events.events.map((item) => `<li>${adminEscape(item.created_at)} · ${adminEscape(item.event_type)} · ${adminEscape(item.previous_status || '—')} → ${adminEscape(item.new_status || '—')}</li>`).join('');
   return `<div class="registration-detail-grid">${registrationGroups}</div><div class="license-detail-grid"><section><h4>Entitlements</h4><dl class="entitlement-list">${entitlements || '<dd>None</dd>'}</dl></section><section><h4>Activations</h4><ul>${activations || '<li>None</li>'}</ul></section><section><h4>Signed artifacts</h4><ul>${artifacts || '<li>None</li>'}</ul></section><section><h4>Lifecycle timeline</h4><ul>${events || '<li>No lifecycle events recorded</li>'}</ul></section></div>`;
 }
 
-async function loadLicenseDetails(licenseId, panel) {
+async function loadLicenseDetails(licenseId, panel, options = {}) {
   panel.textContent = 'Loading license details...';
   panel.classList.remove('hidden');
   try {
@@ -930,7 +1188,7 @@ async function loadLicenseDetails(licenseId, panel) {
       adminApi(`licenses/${licenseId}/events`),
       adminApi(`admin/license-registrations/${licenseId}`),
     ]);
-    panel.innerHTML = renderLicenseDetails(licenseId, { entitlements, activations, artifacts, events, registration });
+    panel.innerHTML = renderLicenseDetails(licenseId, { entitlements, activations, artifacts, events, registration }, options);
     panel.dataset.loaded = 'true';
   } catch (error) {
     panel.textContent = `License details could not be loaded: ${error.message}`;
@@ -946,6 +1204,167 @@ async function loadAdminAudit() {
     list.classList.remove('hidden');
     list.innerHTML = `<table class="admin-table"><thead><tr><th>Action</th><th>Resource</th><th>Actor</th><th>Organization</th><th>Created</th></tr></thead><tbody>${data.audit.map((event) => `<tr><td>${adminEscape(event.action)}</td><td>${adminEscape(event.resource_type || 'System')} ${adminEscape(event.resource_id || '')}</td><td>${adminEscape(event.actor_person_id || 'System')}</td><td>${adminEscape(event.organization_id || 'Global')}</td><td>${adminEscape(event.created_at)}</td></tr>`).join('')}</tbody></table>`;
   } catch (error) { adminStatePanel('adminAuditState', 'adminAuditList', 'Audit activity is unavailable.', true); }
+}
+
+function adminSupportStatusLabel(status) {
+  return ({
+    open: 'Open',
+    in_progress: 'In progress',
+    resolved: 'Resolved',
+    closed: 'Closed',
+  }[status] || String(status || 'Unknown').replaceAll('_', ' '));
+}
+
+function adminSupportActivityDescription(event) {
+  const labels = {
+    SUPPORT_TICKET_CREATED: 'Ticket created',
+    SUPPORT_TICKET_CUSTOMER_REPLIED: 'Customer replied',
+    SUPPORT_TICKET_REOPENED_BY_CUSTOMER: 'Reopened by customer',
+    ADMIN_SUPPORT_TICKET_REPLIED: 'Support replied',
+    ADMIN_SUPPORT_TICKET_STATUS_CHANGED: 'Status changed',
+  };
+  if (event.action === 'ADMIN_SUPPORT_TICKET_STATUS_CHANGED') {
+    const readStatus = (value) => {
+      try {
+        return JSON.parse(value || '{}').status || '';
+      } catch {
+        return '';
+      }
+    };
+    const oldStatus = readStatus(event.old_value);
+    const newStatus = readStatus(event.new_value);
+    if (oldStatus && newStatus) {
+      return `Status changed: ${adminSupportStatusLabel(oldStatus)} to ${adminSupportStatusLabel(newStatus)}`;
+    }
+  }
+  return labels[event.action] || String(event.action || 'Ticket activity').replaceAll('_', ' ').toLowerCase();
+}
+
+function renderAdminSupportTicketList(pageSize) {
+  const list = admin$('#adminSupportList');
+  list.innerHTML = adminState.supportTickets.map((ticket) => `
+    <button class="admin-support-ticket${ticket.id === adminState.supportTicketId ? ' active' : ''}" type="button"
+      data-admin-support-ticket="${ticket.id}" aria-pressed="${ticket.id === adminState.supportTicketId}">
+      <span class="admin-support-ticket-head"><span>Ticket #${adminEscape(ticket.id)} · ${adminEscape(String(ticket.priority || 'normal').toUpperCase())}</span><span class="status">${adminEscape(adminSupportStatusLabel(ticket.status))}</span></span>
+      <strong>${adminEscape(ticket.subject)}</strong>
+      <small>${adminEscape(ticket.customer_name || 'Customer')} · ${adminEscape(ticket.customer_email)}</small>
+      <small>${adminEscape(ticket.customer_company || 'Company not provided')} · Updated ${adminEscape(ticket.updated_at)}</small>
+    </button>
+  `).join('');
+  const pagination = admin$('#adminSupportPagination');
+  const pageCount = Math.max(1, Math.ceil(adminState.supportTotal / pageSize));
+  pagination.classList.toggle('hidden', adminState.supportTotal <= pageSize);
+  admin$('#adminSupportPaginationStatus').textContent =
+    `Page ${adminState.supportPage} of ${pageCount} · ${adminState.supportTotal} tickets`;
+  pagination.querySelector('[data-admin-support-page="previous"]').disabled = adminState.supportPage <= 1;
+  pagination.querySelector('[data-admin-support-page="next"]').disabled = adminState.supportPage >= pageCount;
+}
+
+async function loadAdminSupportTickets(page = adminState.supportPage, preferredTicketId = adminState.supportTicketId) {
+  const requestId = ++adminState.supportListRequestId;
+  const search = admin$('#adminSupportSearch').value.trim();
+  const status = admin$('#adminSupportStatus').value;
+  const pageSize = 50;
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (search) query.set('q', search);
+  if (status) query.set('status', status);
+  adminStatePanel('adminSupportState', 'adminSupportList', 'Loading support tickets...');
+  admin$('#adminSupportPagination').classList.add('hidden');
+
+  try {
+    const data = await adminApi(`admin/support-tickets?${query.toString()}`);
+    if (requestId !== adminState.supportListRequestId) return;
+    adminState.supportTickets = data.tickets;
+    adminState.supportPage = data.page;
+    adminState.supportTotal = data.total;
+    if (!data.tickets.length) {
+      adminState.supportTicketId = null;
+      adminStatePanel('adminSupportState', 'adminSupportList', 'No tickets match these filters.');
+      admin$('#adminSupportDetail').className = 'card state-panel';
+      admin$('#adminSupportDetail').textContent = 'Select another filter or refresh to check for new tickets.';
+      return;
+    }
+
+    const selectedTicket = data.tickets.find((ticket) => ticket.id === preferredTicketId) || data.tickets[0];
+    adminState.supportTicketId = selectedTicket.id;
+    admin$('#adminSupportState').classList.add('hidden');
+    admin$('#adminSupportList').classList.remove('hidden');
+    renderAdminSupportTicketList(pageSize);
+    await loadAdminSupportTicket(selectedTicket.id);
+  } catch (error) {
+    if (requestId !== adminState.supportListRequestId) return;
+    adminStatePanel(
+      'adminSupportState',
+      'adminSupportList',
+      error.status === 403 ? 'Super admin access required.' : `Support ticket queue is unavailable: ${error.message}`,
+      true,
+    );
+    admin$('#adminSupportDetail').className = 'card state-panel error-state';
+    admin$('#adminSupportDetail').textContent = 'Ticket details are unavailable.';
+  }
+}
+
+async function loadAdminSupportTicket(ticketId) {
+  const requestId = ++adminState.supportDetailRequestId;
+  const panel = admin$('#adminSupportDetail');
+  panel.className = 'card state-panel';
+  panel.textContent = 'Loading ticket details...';
+  try {
+    const data = await adminApi(`admin/support-tickets/${ticketId}`);
+    if (requestId !== adminState.supportDetailRequestId || ticketId !== adminState.supportTicketId) return;
+    const { ticket, messages, activity } = data;
+    const messageMarkup = messages.length
+      ? messages.map((message) => `
+        <article class="admin-support-message">
+          <div class="admin-support-message-head"><strong>${adminEscape(message.author_type === 'customer' ? ticket.customer_name || 'Customer' : 'SMRITISYS Support')}</strong><time>${adminEscape(message.created_at)}</time></div>
+          <p>${adminEscape(message.message)}</p>
+        </article>
+      `).join('')
+      : '<p class="muted">No replies yet.</p>';
+    const activityMarkup = activity.length
+      ? activity.map((event) => `
+        <div class="admin-activity-item">
+          <strong>${adminEscape(adminSupportActivityDescription(event))}</strong>
+          <time>${adminEscape(event.created_at)}</time>
+          <small class="admin-activity-meta">By ${adminEscape(event.actor_name || 'System')}</small>
+        </div>
+      `).join('')
+      : '<p class="muted">No activity recorded.</p>';
+    panel.className = 'card admin-support-detail';
+    panel.innerHTML = `
+      <div class="section-head compact">
+        <div><span class="eyebrow">Ticket #${adminEscape(ticket.id)} · ${adminEscape(String(ticket.priority || 'normal').toUpperCase())} priority</span><h3>${adminEscape(ticket.subject)}</h3></div>
+        <span class="status">${adminEscape(adminSupportStatusLabel(ticket.status))}</span>
+      </div>
+      <p class="admin-support-contact">${adminEscape(ticket.customer_name || 'Customer')} · ${adminEscape(ticket.customer_email)} · ${adminEscape(ticket.customer_phone || 'Phone not provided')} · ${adminEscape(ticket.customer_company || 'Company not provided')}</p>
+      <p class="admin-support-description">${adminEscape(ticket.description)}</p>
+      <form class="admin-support-status-form" data-admin-support-status="${ticket.id}">
+        <div class="form-actions">
+          <label for="adminSupportStatusSelect">Ticket status</label>
+          <select id="adminSupportStatusSelect" name="status">
+            ${['open', 'in_progress', 'resolved', 'closed'].map((status) => `<option value="${status}" ${ticket.status === status ? 'selected' : ''}>${adminEscape(adminSupportStatusLabel(status))}</option>`).join('')}
+          </select>
+          <button class="secondary" type="submit">Update status</button>
+        </div>
+        <p class="message" data-admin-support-feedback="status" role="status"></p>
+      </form>
+      <h4>Conversation</h4>
+      <div class="admin-support-messages">${messageMarkup}</div>
+      <form class="admin-support-reply" data-admin-support-reply="${ticket.id}">
+        <label for="adminSupportReply">Reply to customer</label>
+        <textarea id="adminSupportReply" name="message" maxlength="10000" rows="4" required></textarea>
+        <div class="form-actions"><button class="primary" type="submit">Send reply</button></div>
+        <p class="message" data-admin-support-feedback="reply" role="status"></p>
+      </form>
+      <h4>Activity</h4>
+      <div class="admin-support-activity">${activityMarkup}</div>
+      <p class="muted">Created ${adminEscape(ticket.created_at)} · Last updated ${adminEscape(ticket.updated_at)}</p>
+    `;
+  } catch (error) {
+    if (requestId !== adminState.supportDetailRequestId) return;
+    panel.className = 'card state-panel error-state';
+    panel.textContent = error.status === 404 ? 'Ticket not found.' : `Ticket details are unavailable: ${error.message}`;
+  }
 }
 
 function adminDateInput(value) {
@@ -1000,6 +1419,7 @@ function navigateAdmin(view, productTab = null) {
   const button = admin$(`button[data-admin-view="${view}"]`);
   if (!button) return;
   if (view !== 'organizations') clearCustomerInviteLink();
+  if (view !== 'organizations') clearAdminCustomerResetLink();
   admin$$('.admin-nav button').forEach((item) => item.classList.remove('active'));
   button.classList.add('active');
   admin$$('.admin-view').forEach((section) => section.classList.toggle('active', section.dataset.adminSection === view));
@@ -1009,11 +1429,13 @@ function navigateAdmin(view, productTab = null) {
   if (view === 'organizations') {
     loadAdminOrganizations().then(loadAdminPartners);
     loadAdminCustomerInvites();
+    loadAdminCustomers();
   }
   if (view === 'products') {
     loadAdminProducts();
     if (productTab) selectAdminProductTab(productTab);
   }
+  if (view === 'support') loadAdminSupportTickets();
   if (view === 'announcements') loadAdminAnnouncements();
   if (view === 'audit') loadAdminAudit();
 }
@@ -1044,9 +1466,211 @@ admin$$('.admin-product-tab').forEach((tab, index, tabs) => {
   });
 });
 selectAdminProductTab('overview');
-admin$$('.admin-refresh').forEach((button) => button.addEventListener('click', () => navigateAdmin(button.dataset.refresh)));
+admin$$('.admin-refresh').forEach((button) => button.addEventListener('click', () => {
+  if (button.dataset.refresh === 'customer-profiles') loadAdminCustomers();
+  else navigateAdmin(button.dataset.refresh);
+}));
 admin$('#adminOverviewRefresh').addEventListener('click', loadAdminOverview);
 admin$('#adminD1Refresh').addEventListener('click', loadAdminD1Operations);
+admin$('#adminOrganizationFilters').addEventListener('submit', (event) => event.preventDefault());
+admin$('#adminOrganizationSearch').addEventListener('input', renderAdminOrganizations);
+admin$('#adminOrganizationStatus').addEventListener('change', renderAdminOrganizations);
+admin$('#adminOrganizationType').addEventListener('change', renderAdminOrganizations);
+admin$('#adminOrganizationsList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-admin-organization-detail]');
+  if (button) loadAdminOrganizationDetail(button.dataset.adminOrganizationDetail);
+});
+admin$('#adminOrganizationDetail').addEventListener('click', (event) => {
+  if (!event.target.closest('[data-admin-organization-close]')) return;
+  adminState.organizationDetailRequestId += 1;
+  admin$('#adminOrganizationDetail').classList.add('hidden');
+});
+admin$('#adminSupportFilters').addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadAdminSupportTickets(1, null);
+});
+admin$('#adminSupportList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-admin-support-ticket]');
+  if (!button) return;
+  adminState.supportTicketId = Number(button.dataset.adminSupportTicket);
+  renderAdminSupportTicketList(50);
+  loadAdminSupportTicket(adminState.supportTicketId);
+});
+admin$('#adminSupportPagination').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-admin-support-page]');
+  if (!button || button.disabled) return;
+  const nextPage = adminState.supportPage + (button.dataset.adminSupportPage === 'next' ? 1 : -1);
+  loadAdminSupportTickets(nextPage, null);
+});
+admin$('#adminSupportDetail').addEventListener('submit', async (event) => {
+  const statusForm = event.target.closest('[data-admin-support-status]');
+  const replyForm = event.target.closest('[data-admin-support-reply]');
+  const form = statusForm || replyForm;
+  if (!form) return;
+  event.preventDefault();
+  const ticketId = Number(form.dataset.adminSupportStatus || form.dataset.adminSupportReply);
+  const button = form.querySelector('button[type="submit"]');
+  const feedback = form.querySelector('[data-admin-support-feedback]');
+  button.disabled = true;
+  try {
+    if (statusForm) {
+      await adminApi(`admin/support-tickets/${ticketId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: new FormData(statusForm).get('status') }),
+      });
+    } else {
+      await adminApi(`admin/support-tickets/${ticketId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ message: new FormData(replyForm).get('message') }),
+      });
+    }
+    await loadAdminSupportTickets(adminState.supportPage, ticketId);
+    if (adminState.supportTicketId === ticketId) {
+      const feedbackType = statusForm ? 'status' : 'reply';
+      const currentFeedback = admin$('#adminSupportDetail').querySelector(`[data-admin-support-feedback="${feedbackType}"]`);
+      if (currentFeedback) currentFeedback.textContent = statusForm ? 'Ticket status updated.' : 'Reply sent to customer.';
+    }
+  } catch (error) {
+    feedback.textContent = error.message;
+    button.disabled = false;
+  }
+});
+
+admin$('#adminCustomerSearchForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadAdminCustomers(admin$('#adminCustomerSearch').value.trim());
+});
+admin$('#adminCustomerProfileClose').addEventListener('click', () => {
+  adminState.customerProfileId = null;
+  admin$('#adminCustomerProfilePanel').classList.add('hidden');
+  admin$('#adminCustomerProfileForm').reset();
+  admin$('#adminCustomerLicenses').textContent = '';
+  admin$('#adminCustomerLicensesState').textContent = '';
+  clearAdminCustomerResetLink();
+});
+admin$('#adminCustomerLicensesManage').addEventListener('click', () => {
+  const customerId = adminState.customerProfileId;
+  if (!customerId) return;
+  admin$('#adminRegistrationFilters').reset();
+  admin$('#adminRegistrationCustomerId').value = customerId;
+  adminState.registrationPage = 1;
+  navigateAdmin('products', 'licenses');
+});
+admin$('#adminCustomerLicenses').addEventListener('click', async (event) => {
+  const inspectButton = event.target.closest('[data-customer-license-inspect]');
+  if (!inspectButton) return;
+  const licenseId = inspectButton.dataset.customerLicenseInspect;
+  const row = admin$(`[data-customer-license-detail-row="${licenseId}"]`);
+  const panel = admin$(`[data-customer-license-detail-panel="${licenseId}"]`);
+  if (panel.dataset.loaded === 'true') {
+    const show = row.hidden;
+    row.hidden = !show;
+    panel.classList.toggle('hidden', !show);
+    return;
+  }
+  row.hidden = false;
+  await loadLicenseDetails(licenseId, panel, { allowActivationRevoke: false });
+});
+admin$('#adminCustomerProfileEdit').addEventListener('click', () => setAdminCustomerProfileEditMode(true));
+admin$('#adminCustomerAddressAdd').addEventListener('click', () => {
+  admin$('#adminCustomerAddresses').insertAdjacentHTML('beforeend', renderAdminCustomerAddress());
+  const lastRow = admin$('#adminCustomerAddresses').lastElementChild;
+  lastRow.querySelectorAll('input, textarea').forEach((input) => { input.disabled = false; });
+  lastRow.querySelector('[name="address_line1"]').focus();
+});
+admin$('#adminCustomerAddresses').addEventListener('click', (event) => {
+  if (event.target.closest('[data-remove-new-customer-address]')) {
+    event.target.closest('[data-customer-address-row]').remove();
+  }
+});
+admin$('#adminCustomerProfileCancel').addEventListener('click', () => {
+  if (adminState.customerProfileId) openAdminCustomerProfile(adminState.customerProfileId);
+});
+admin$('#adminCustomerProfileForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const customerId = adminState.customerProfileId;
+  if (!customerId) return;
+  const button = admin$('#adminCustomerProfileSave');
+  const form = new FormData(event.currentTarget);
+  const addresses = [...admin$('#adminCustomerAddresses').querySelectorAll('[data-customer-address-row]')].map((row) => {
+    const value = (name) => row.querySelector(`[name="${name}"]`).value;
+    return {
+      ...(row.dataset.addressId ? { id: Number(row.dataset.addressId) } : {}),
+      address_type: value('address_type'),
+      address_line1: value('address_line1'),
+      address_line2: value('address_line2'),
+      city: value('city'),
+      state: value('state'),
+      postal_code: value('postal_code'),
+      country: value('country'),
+      is_default: row.querySelector('[name="is_default"]').checked,
+    };
+  });
+  button.disabled = true;
+  adminMessage(admin$('#adminCustomerProfileMessage'), 'Saving customer profile...', true);
+  try {
+    await adminApi(`admin/customers/${encodeURIComponent(customerId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name: form.get('name'),
+        phone: form.get('phone'),
+        gst_number: form.get('gst_number'),
+        website: form.get('website'),
+        bio: form.get('bio'),
+        timezone: form.get('timezone'),
+        addresses,
+      }),
+    });
+    const [profileLoaded] = await Promise.all([
+      openAdminCustomerProfile(customerId),
+      loadAdminCustomers(),
+    ]);
+    if (adminState.customerProfileId === customerId && profileLoaded) {
+      adminMessage(admin$('#adminCustomerProfileMessage'), 'Customer profile saved.', true);
+    }
+  } catch (error) {
+    if (adminState.customerProfileId === customerId) {
+      adminMessage(admin$('#adminCustomerProfileMessage'), error.message || 'Customer profile could not be saved.', false);
+    }
+  } finally {
+    button.disabled = false;
+  }
+});
+admin$('#adminCustomerResetButton').addEventListener('click', async () => {
+  const customerId = adminState.customerProfileId;
+  if (!customerId) return;
+  if (!window.confirm('Generate a single-use password reset link that expires in 30 minutes?')) return;
+  const button = admin$('#adminCustomerResetButton');
+  button.disabled = true;
+  admin$('#adminCustomerResetResult').classList.add('hidden');
+  admin$('#adminCustomerResetLink').value = '';
+  adminMessage(admin$('#adminCustomerResetMessage'), 'Generating a one-time reset link...', true);
+  try {
+    const data = await adminApi(`admin/customers/${encodeURIComponent(customerId)}/password-reset`, {
+      method: 'POST',
+      body: '{}',
+    });
+    if (adminState.customerProfileId !== customerId) return;
+    admin$('#adminCustomerResetLink').value = new URL(data.reset_path, window.location.origin).href;
+    admin$('#adminCustomerResetResult').classList.remove('hidden');
+    adminMessage(admin$('#adminCustomerResetMessage'), `Reset link expires in ${data.expires_in_minutes} minutes. It can only be used once.`, true);
+  } catch (error) {
+    adminMessage(admin$('#adminCustomerResetMessage'), error.message || 'A reset link could not be generated.', false);
+  } finally {
+    button.disabled = false;
+  }
+});
+admin$('#adminCustomerResetCopy').addEventListener('click', async () => {
+  const input = admin$('#adminCustomerResetLink');
+  try {
+    await navigator.clipboard.writeText(input.value);
+    adminMessage(admin$('#adminCustomerResetMessage'), 'Reset link copied. Share it securely with the customer.', true);
+  } catch {
+    input.focus();
+    input.select();
+    adminMessage(admin$('#adminCustomerResetMessage'), 'Select and copy the reset link manually.', false);
+  }
+});
 
 admin$('#adminLoginForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1075,6 +1699,7 @@ admin$('#customerInviteForm').addEventListener('submit', async (event) => {
       method: 'POST',
       body: JSON.stringify({
         email: values.get('email'),
+        phone: values.get('phone'),
         name: values.get('name'),
         company: values.get('company'),
         organization_id: values.get('organization_id'),
@@ -1123,7 +1748,17 @@ admin$('#partnerContactForm').addEventListener('submit', async (event) => {
         partner_type: values.get('partner_type'),
         partner_role: values.get('partner_role'),
         email: values.get('email'),
+        phone: values.get('phone'),
         name: values.get('name'),
+        legal_name: values.get('legal_name'),
+        address: values.get('address'),
+        city: values.get('city'),
+        state: values.get('state'),
+        pincode: values.get('pincode'),
+        country: values.get('country'),
+        organization_phone: values.get('organization_phone'),
+        tax_id: values.get('tax_id'),
+        website: values.get('website'),
       }),
     });
     if (result.setup_path) {
@@ -1563,6 +2198,7 @@ admin$('#licenseIssueForm').addEventListener('submit', async (event) => {
   };
   if (body.customer_mode === 'new') {
     body.customer_email = form.get('customer_email');
+    body.customer_phone = form.get('customer_phone');
     body.customer_name = form.get('customer_name');
     body.customer_company = form.get('customer_company');
   } else {
@@ -1689,6 +2325,11 @@ admin$('#adminRegistrationFilters').addEventListener('submit', (event) => {
 
 admin$('#adminRegistrationReset').addEventListener('click', () => {
   admin$('#adminRegistrationFilters').reset();
+  loadLicenseRegistrations({ resetPage: true });
+});
+
+admin$('#adminRegistrationCustomerScopeClear').addEventListener('click', () => {
+  admin$('#adminRegistrationCustomerId').value = '';
   loadLicenseRegistrations({ resetPage: true });
 });
 

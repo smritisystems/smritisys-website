@@ -1,7 +1,9 @@
 {
   "name": "smritisys-public-site",
+  "type": "module",
   "private": true,
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "build:css": "tailwindcss -i ./css/site.css -o ./css/site.generated.css --minify"
   },
   "devDependencies": {

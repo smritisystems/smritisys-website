@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS customer_invites (
   token_hash TEXT NOT NULL UNIQUE,
   email TEXT NOT NULL,
   name TEXT,
+  phone TEXT,
   company TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'accepted', 'revoked')),
@@ -52,12 +53,32 @@ CREATE INDEX IF NOT EXISTS idx_customer_invites_partner_status
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_invites_one_pending_email
   ON customer_invites(lower(email)) WHERE status = 'pending';
 
+CREATE TABLE IF NOT EXISTS customer_password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT NOT NULL UNIQUE,
+  customer_id INTEGER NOT NULL,
+  created_by INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'used', 'revoked')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES people(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_password_resets_customer_status
+  ON customer_password_resets(customer_id, status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_password_resets_one_pending
+  ON customer_password_resets(customer_id) WHERE status = 'pending';
+
 CREATE TABLE IF NOT EXISTS partner_invites (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   token_hash TEXT NOT NULL UNIQUE,
   partner_organization_id INTEGER NOT NULL,
   email TEXT NOT NULL,
   name TEXT,
+  phone TEXT,
   partner_type TEXT NOT NULL CHECK (partner_type IN (
     'channel_partner', 'reseller', 'implementation_partner',
     'technology_partner', 'referral_partner', 'distributor'
@@ -94,6 +115,8 @@ CREATE TABLE IF NOT EXISTS organizations (
   pincode TEXT,
   tax_id TEXT,
   website TEXT,
+  phone TEXT,
+  country TEXT,
   status TEXT DEFAULT 'active',
   created_at TEXT DEFAULT (datetime('now'))
 );
@@ -224,6 +247,7 @@ INSERT OR IGNORE INTO permissions (name, description) VALUES
   ('requirement.create', 'Create custom requirements'),
   ('requirement.manage', 'Manage custom requirements'),
   ('partner.customer.create', 'Register customer organizations for a partner'),
+  ('partner.customer.update_contact', 'Update contact name and phone for assigned customers'),
   ('partner.inventory.view', 'View activation codes allocated to a partner'),
   ('partner.inventory.reveal', 'Reveal activation keys allocated to a partner'),
   ('commercial.view', 'View commercial relationship records'),
@@ -255,7 +279,7 @@ WHERE r.name IN ('partner_admin', 'partner_member') AND p.name IN (
 INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
 WHERE r.name IN ('partner_admin', 'partner_member')
-  AND p.name IN ('partner.customer.create', 'partner.inventory.view');
+  AND p.name IN ('partner.customer.create', 'partner.customer.update_contact', 'partner.inventory.view');
 
 INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r CROSS JOIN permissions p

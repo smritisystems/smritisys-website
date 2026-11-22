@@ -44,7 +44,7 @@ function statusLabel(status) {
   return ({
     ACTIVE: 'Active', SUSPENDED: 'Suspended', PENDING_RENEWAL: 'Pending renewal',
     EXPIRED: 'Expired', CANCELLED: 'Cancelled', DRAFT: 'Draft',
-    active: 'Active', inactive: 'Inactive', open: 'Open', in_progress: 'In progress',
+    active: 'Active', inactive: 'Inactive', open: 'Open', in_progress: 'In progress', closed: 'Closed',
     info: 'Information', maintenance: 'Maintenance', degraded: 'Degraded service',
     outage: 'Service outage', resolved: 'Resolved'
   }[status] || status || 'Unknown');
