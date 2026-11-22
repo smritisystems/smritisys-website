@@ -2926,6 +2926,61 @@ test("license code delivery is authorized, atomic, audited, and independent from
   assert.deepEqual(JSON.parse(audit.new_value).serial_numbers, [firstSerial]);
 });
 
+test("partner allocation history is returned for secure printable notes without activation keys", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-partner-allocation-print";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'"
+  ).get(product.id);
+  const batch = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      count: 1,
+      product_id: product.id,
+      edition_id: edition.id,
+      license_model: "on_premise_subscription",
+      start_date: "2026-11-15",
+      expiry_date: "2027-11-15",
+    },
+  });
+  assert.equal(batch.status, 201);
+
+  const allocation = await callApi(d1, `licenses/batches/${batch.data.batch_id}/issue`, {
+    method: "POST",
+    token: adminToken,
+    body: {
+      serial_numbers: [batch.data.codes[0].serial_number],
+      recipient_name: "Partner Demo Contact",
+      recipient_organization: "Partner Demo",
+      recipient_email: "partner@example.com",
+      delivery_channel: "in_person",
+      delivery_reference: "dispatch-demo-1",
+      partner_organization_id: 103,
+    },
+  });
+  assert.equal(allocation.status, 200);
+
+  const forbidden = await callApi(d1, `licenses/batches/${batch.data.batch_id}/codes`);
+  assert.equal(forbidden.status, 403);
+  const inventory = await callApi(d1, `licenses/batches/${batch.data.batch_id}/codes`, { token: adminToken });
+  assert.equal(inventory.status, 200);
+  assert.equal(inventory.data.allocations.length, 1);
+  assert.equal(inventory.data.allocations[0].partner_name, "Channel Partner Pvt Ltd");
+  assert.equal(inventory.data.allocations[0].partner_type, "reseller");
+  assert.equal(inventory.data.allocations[0].recipient_email, "partner@example.com");
+  assert.equal(inventory.data.allocations[0].delivery_reference, "dispatch-demo-1");
+  assert.deepEqual(inventory.data.allocations[0].serial_numbers, [batch.data.codes[0].serial_number]);
+  assert.equal(inventory.data.codes[0].product_name, "PrathamOne EduOS");
+  assert.equal(inventory.data.codes[0].edition_name, "Coaching Institute Edition");
+  assert.equal(JSON.stringify(inventory.data).includes(batch.data.codes[0].activation_key), false);
+  assert.equal(JSON.stringify(inventory.data).includes("activation_key_hash"), false);
+});
+
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   const d1 = createD1Mock();
 

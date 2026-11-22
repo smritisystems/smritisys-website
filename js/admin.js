@@ -33,6 +33,9 @@ const adminState = {
   followUpTaskRequestId: 0,
   licenseBatchCodes: null,
   licenseCodeBatchId: null,
+  licenseCodeRows: [],
+  licenseCodeAllocations: [],
+  registrations: [],
   customerProfileId: null,
   supportTickets: [],
   supportTicketId: null,
@@ -1190,6 +1193,8 @@ function renderLicenseBatches(batches) {
 
 async function loadLicenseCodeInventory(batchId) {
   adminState.licenseCodeBatchId = batchId;
+  adminState.licenseCodeRows = [];
+  adminState.licenseCodeAllocations = [];
   const state = admin$('#adminLicenseCodesState');
   const list = admin$('#adminLicenseCodesList');
   const issueButton = admin$('#licenseCodeIssueButton');
@@ -1200,6 +1205,8 @@ async function loadLicenseCodeInventory(batchId) {
 
   const result = await adminApi(`licenses/batches/${encodeURIComponent(batchId)}/codes`);
   if (adminState.licenseCodeBatchId !== batchId) return;
+  adminState.licenseCodeRows = result.codes || [];
+  adminState.licenseCodeAllocations = result.allocations || [];
   const eligibleCodes = result.codes.filter((code) =>
     code.status === 'available' && code.delivery_status === 'not_issued');
   state.classList.add('hidden');
@@ -1207,7 +1214,14 @@ async function loadLicenseCodeInventory(batchId) {
   const revealNote = result.key_reveal_configured
     ? 'Available keys can be revealed one at a time after confirming your admin password. Older hash-only keys can be restored if you still have the original key.'
     : 'Protected key reveal is not configured in this environment.';
-  list.innerHTML = `<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. ${adminEscape(revealNote)}</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Assigned partner</th><th>Channel</th><th>Issued at</th><th>Key</th></tr></thead><tbody>${result.codes.map((code) => {
+  const allocationSection = adminState.licenseCodeAllocations.length
+    ? `<section class="admin-allocation-print-list"><h3>Partner allocation documents</h3>${adminState.licenseCodeAllocations.map((allocation, index) => `
+        <div class="admin-allocation-print-row">
+          <div><strong>${adminEscape(allocation.partner_name || 'Partner unavailable')}</strong><small>${adminEscape(allocation.serial_numbers.length)} serial(s) · ${adminEscape(allocation.recorded_at || 'Date unavailable')}${allocation.delivery_reference ? ` · ${adminEscape(allocation.delivery_reference)}` : ''}</small></div>
+          <button class="secondary" type="button" data-partner-allocation-print="${index}">Print allocation note</button>
+        </div>`).join('')}</section>`
+    : '';
+  list.innerHTML = `${allocationSection}<p class="muted">Batch <strong>${adminEscape(batchId)}</strong>. ${adminEscape(revealNote)}</p><table class="admin-table"><thead><tr><th><input id="licenseCodeSelectAll" type="checkbox" aria-label="Select all eligible codes" ${eligibleCodes.length ? '' : 'disabled'} /></th><th>Serial number</th><th>Activation status</th><th>Delivery status</th><th>Recipient</th><th>Assigned partner</th><th>Channel</th><th>Issued at</th><th>Delivery reference</th><th>Key</th></tr></thead><tbody>${result.codes.map((code) => {
     const eligible = code.status === 'available' && code.delivery_status === 'not_issued';
     const recipient = [code.issued_to_name, code.issued_to_organization, code.issued_to_email]
       .filter(Boolean).map(adminEscape).join('<br>');
@@ -1216,7 +1230,7 @@ async function loadLicenseCodeInventory(batchId) {
       : code.status === 'available' && result.key_reveal_configured
         ? `<button class="secondary" type="button" data-license-code-restore-serial="${adminEscape(code.serial_number)}">Restore existing key</button>`
       : '<span class="muted">Unavailable</span>';
-    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.assigned_partner_name || '—')}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td><td>${keyAction}</td></tr>`;
+    return `<tr><td>${eligible ? `<input type="checkbox" name="serial_number" value="${adminEscape(code.serial_number)}" aria-label="Select serial ${adminEscape(code.serial_number)}" />` : '—'}</td><td>${adminEscape(code.serial_number)}</td><td>${adminEscape(code.status)}</td><td>${adminEscape(code.delivery_status)}</td><td>${recipient || '—'}</td><td>${adminEscape(code.assigned_partner_name || '—')}</td><td>${adminEscape(code.delivery_channel || '—')}</td><td>${adminEscape(code.issued_at || '—')}</td><td>${adminEscape(code.delivery_reference || '—')}</td><td>${keyAction}</td></tr>`;
   }).join('')}</tbody></table>`;
 
   const updateIssueButton = () => {
@@ -1341,6 +1355,7 @@ function renderAdminLicenses(data) {
   const list = admin$('#adminLicensesList');
   const pagination = admin$('#adminRegistrationPagination');
   const registrations = data.registrations || [];
+  adminState.registrations = registrations;
   renderRegistrationMetrics(data.metrics || {});
   if (!registrations.length) {
     state.classList.remove('hidden');
@@ -1367,11 +1382,102 @@ function renderAdminLicenses(data) {
         <td class="registration-email"><strong>License email</strong><small>${adminEscape(registration.registered_email_masked || 'Not registered')}</small><strong>Customer contact</strong><small>${adminEscape(registration.contact_email_masked || 'Not available')}</small></td>
         <td><strong>${adminEscape(activationLabel)}</strong><small>${adminEscape(activeCount)} active · ${adminEscape(totalCount)} total</small><small>First activation: ${adminEscape(registration.first_activation_at || '—')}</small></td>
         <td><strong>${adminEscape(registration.last_seen_at || '—')}</strong><small>License created: ${adminEscape(registration.license_created_at || '—')}</small></td>
-        <td class="registration-actions"><button class="secondary" type="button" data-license-details="${id}">Inspect</button>${registration.license_status === 'ACTIVE' ? `<button class="secondary" type="button" data-license-suspend="${id}">Suspend</button>` : ''}${canRenew ? `<label class="inline-date">Renew through <input type="date" data-license-renew-date="${id}" /></label><button class="secondary" type="button" data-license-renew="${id}">Renew</button>` : ''}</td>
+        <td class="registration-actions"><button class="secondary" type="button" data-license-print="${id}">Print summary</button><button class="secondary" type="button" data-license-details="${id}">Inspect</button>${registration.license_status === 'ACTIVE' ? `<button class="secondary" type="button" data-license-suspend="${id}">Suspend</button>` : ''}${canRenew ? `<label class="inline-date">Renew through <input type="date" data-license-renew-date="${id}" /></label><button class="secondary" type="button" data-license-renew="${id}">Renew</button>` : ''}</td>
       </tr><tr class="admin-license-detail-row" data-license-detail-row="${id}" hidden><td colspan="6"><div class="license-details hidden" data-license-detail-panel="${id}"></div></td></tr>`;
     }).join('')}</tbody>
   </table></div>`;
   renderRegistrationPagination(pagination, data);
+}
+
+function printAdminDocument({ title, subtitle, fields, columns = [], rows = [], disclaimer }) {
+  const root = admin$('#adminPrintRoot');
+  if (!root) throw new Error('The print workspace is unavailable.');
+  const details = fields.map(([label, value]) => {
+    const displayValue = value == null || value === '' ? '—' : value;
+    return `<div><dt>${adminEscape(label)}</dt><dd>${adminEscape(displayValue)}</dd></div>`;
+  }).join('');
+  const table = columns.length
+    ? `<table><thead><tr>${columns.map((column) => `<th>${adminEscape(column)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((value) => `<td>${adminEscape(value == null || value === '' ? '—' : value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    : '';
+  root.innerHTML = `<article class="print-document">
+    <header class="print-header"><span class="print-brand">SMRITISYS</span><h1>${adminEscape(title)}</h1><p class="print-subtitle">${adminEscape(subtitle)}</p></header>
+    <dl class="print-details">${details}</dl>${table}
+    <p class="print-disclaimer">${adminEscape(disclaimer)}</p>
+  </article>`;
+  root.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('admin-printing');
+  let cleanupTimer = null;
+  const cleanup = () => {
+    window.removeEventListener('afterprint', cleanup);
+    if (cleanupTimer) window.clearTimeout(cleanupTimer);
+    root.replaceChildren();
+    root.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('admin-printing');
+  };
+  window.addEventListener('afterprint', cleanup, { once: true });
+  cleanupTimer = window.setTimeout(cleanup, 120000);
+  try {
+    window.print();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+function printPartnerAllocationNote(index) {
+  const allocation = adminState.licenseCodeAllocations[index];
+  if (!allocation) throw new Error('The selected allocation record is unavailable.');
+  const codesBySerial = new Map(adminState.licenseCodeRows.map((code) => [code.serial_number, code]));
+  const rows = allocation.serial_numbers.map((serialNumber) => {
+    const code = codesBySerial.get(serialNumber);
+    const productEdition = code
+      ? `${code.product_name || 'Product unavailable'} · ${code.edition_name || 'Edition unavailable'}`
+      : 'Code unavailable in current batch';
+    return [serialNumber, productEdition, code?.status || 'Unavailable'];
+  });
+  printAdminDocument({
+    title: 'Partner Activation Code Allocation & Dispatch Note',
+    subtitle: 'Operational record of activation-code allocation to a sales partner.',
+    fields: [
+      ['Allocation reference', `AL-${allocation.allocation_id}`],
+      ['Recorded at', allocation.recorded_at],
+      ['Prepared by', allocation.recorded_by],
+      ['Partner organization', allocation.partner_name],
+      ['Partner category', allocation.partner_type ? allocation.partner_type.replace(/_/g, ' ') : null],
+      ['Recipient contact', allocation.recipient_name],
+      ['Recipient email', allocation.recipient_email],
+      ['Delivery channel', allocation.delivery_channel ? allocation.delivery_channel.replace(/_/g, ' ') : null],
+      ['Delivery reference', allocation.delivery_reference],
+    ],
+    columns: ['Serial number', 'Product / edition', 'Activation status now'],
+    rows,
+    disclaimer: 'Operational allocation record only. Activation keys are not included. This document contains no prices, payment status, commission, or payout information.',
+  });
+}
+
+function printCustomerLicenseSummary(licenseId) {
+  const registration = adminState.registrations.find((item) => String(item.license_id) === String(licenseId));
+  if (!registration) throw new Error('The selected license summary is unavailable.');
+  printAdminDocument({
+    title: 'Customer License Summary',
+    subtitle: 'Operational summary of a customer-bound product license.',
+    fields: [
+      ['License record', registration.license_id],
+      ['Customer organization', registration.organization_name],
+      ['Product', registration.product?.name],
+      ['Product code', registration.product?.code],
+      ['Edition', registration.edition?.name],
+      ['Edition code', registration.edition?.code],
+      ['Serial number', registration.serial_number],
+      ['License status', registration.license_status],
+      ['Seats', registration.seats],
+      ['Start date', registration.start_date],
+      ['Expiry date', registration.expiry_date || 'Perpetual'],
+      ['Registered email (masked)', registration.registered_email_masked || 'Not registered'],
+      ['License created', registration.license_created_at],
+    ],
+    disclaimer: 'Operational license summary only. It does not include activation keys or payment status.',
+  });
 }
 
 function renderRegistrationPagination(container, data) {
@@ -2306,7 +2412,17 @@ admin$('#adminLicenseBatchesList').addEventListener('click', async (event) => {
 admin$('#adminLicenseCodesList').addEventListener('click', (event) => {
   const revealButton = event.target.closest('[data-license-code-reveal-serial]');
   const restoreButton = event.target.closest('[data-license-code-restore-serial]');
+  const printButton = event.target.closest('[data-partner-allocation-print]');
   if (!adminState.licenseCodeBatchId) return;
+  if (printButton) {
+    try {
+      printPartnerAllocationNote(Number(printButton.dataset.partnerAllocationPrint));
+    } catch (error) {
+      admin$('#adminError').classList.remove('hidden');
+      adminMessage(admin$('#adminError'), error.message || 'The allocation note could not be printed.', false);
+    }
+    return;
+  }
   if (revealButton) openLicenseCodeReveal(revealButton.dataset.licenseCodeRevealSerial);
   if (restoreButton) openLicenseCodeRestore(restoreButton.dataset.licenseCodeRestoreSerial);
 });
@@ -2593,6 +2709,17 @@ admin$('#licensePolicyForm').addEventListener('submit', async (event) => {
 });
 
 admin$('#adminLicensesList').addEventListener('click', async (event) => {
+  const printButton = event.target.closest('[data-license-print]');
+  if (printButton) {
+    try {
+      printCustomerLicenseSummary(printButton.dataset.licensePrint);
+    } catch (error) {
+      admin$('#adminError').classList.remove('hidden');
+      adminMessage(admin$('#adminError'), error.message || 'The license summary could not be printed.', false);
+    }
+    return;
+  }
+
   const detailsButton = event.target.closest('[data-license-details]');
   if (detailsButton) {
     const panel = admin$(`[data-license-detail-panel="${detailsButton.dataset.licenseDetails}"]`);

@@ -132,6 +132,22 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(api, /segments\[4\] === "restore"/);
 });
 
+test("admin prints audited partner allocation notes and key-free customer license summaries", () => {
+  assert.match(html, /id="adminPrintRoot" aria-hidden="true"/);
+  assert.match(html, /@media print/);
+  assert.match(script, /data-partner-allocation-print/);
+  assert.match(script, /data-license-print/);
+  assert.match(script, /Partner Activation Code Allocation & Dispatch Note/);
+  assert.match(script, /Customer License Summary/);
+  assert.match(api, /a\.action = 'LICENSE_CODES_ALLOCATED_TO_PARTNER'/);
+  assert.match(api, /partner_type: details\.partner_type \|\| null/);
+  const printFunctions = script.slice(
+    script.indexOf("function printAdminDocument"),
+    script.indexOf("function renderRegistrationPagination"),
+  );
+  assert.doesNotMatch(printFunctions, /activation_key|password_hash|license_key/);
+});
+
 test("admin workspace requires an explicit session organization context", () => {
   assert.match(html, /id="organizationContextButton"/);
   assert.match(html, /id="organizationContextDialog"/);

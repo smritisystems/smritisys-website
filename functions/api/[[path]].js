@@ -2479,17 +2479,60 @@ async function getLicenseCodeBatchCodes(request, env, batchId) {
             c.issued_to_organization, c.issued_to_email, c.delivery_channel,
             c.delivery_reference, c.issued_at, c.activation_key_ciphertext,
             c.assigned_partner_organization_id, c.partner_assigned_at,
-            assigned_partner.name AS assigned_partner_name
+            assigned_partner.name AS assigned_partner_name,
+            p.slug AS product_code, p.name AS product_name,
+            e.code AS edition_code, e.name AS edition_name
      FROM license_code_inventory c
      LEFT JOIN organizations assigned_partner ON assigned_partner.id = c.assigned_partner_organization_id
+     JOIN products p ON p.id = c.product_id
+     JOIN product_editions e ON e.id = c.edition_id
      WHERE c.batch_id = ?
      ORDER BY c.serial_number LIMIT 500`
   ).bind(batchId).all();
+  const { results: allocationRows } = await env.DB.prepare(
+    `SELECT a.id, a.created_at, a.new_value, p.name AS actor_name
+     FROM audit_logs a
+     LEFT JOIN people p ON p.id = a.actor_person_id
+     WHERE a.resource_type = 'license_code_batch_delivery'
+       AND a.resource_id = ?
+       AND a.action = 'LICENSE_CODES_ALLOCATED_TO_PARTNER'
+     ORDER BY a.created_at DESC, a.id DESC
+     LIMIT 200`
+  ).bind(batchId).all();
+  const allocations = [];
+  for (const row of allocationRows || []) {
+    let details;
+    try {
+      details = JSON.parse(row.new_value || "null");
+    } catch {
+      return json({ ok: false, error: "Partner allocation history contains invalid data" }, 500);
+    }
+    const partnerOrganizationId = Number(details?.partner_organization_id);
+    if (!details || !Array.isArray(details.serial_numbers) || !details.serial_numbers.length ||
+        details.serial_numbers.some((serial) => typeof serial !== "string") ||
+        !Number.isInteger(partnerOrganizationId) || partnerOrganizationId < 1) {
+      return json({ ok: false, error: "Partner allocation history is incomplete" }, 500);
+    }
+    allocations.push({
+      allocation_id: Number(row.id),
+      recorded_at: row.created_at,
+      recorded_by: row.actor_name,
+      partner_organization_id: partnerOrganizationId,
+      partner_name: details.recipient_organization,
+      partner_type: details.partner_type || null,
+      recipient_name: details.recipient_name,
+      recipient_email: details.recipient_email,
+      delivery_channel: details.delivery_channel,
+      delivery_reference: details.delivery_reference,
+      serial_numbers: details.serial_numbers,
+    });
+  }
   const encryption = await loadLicenseCodeEncryptionKey(env);
   return json({
     ok: true,
     batch_id: batchId,
     key_reveal_configured: Boolean(encryption.key),
+    allocations,
     codes: (results || []).map((code) => ({
       serial_number: code.serial_number,
       status: code.status,
@@ -2503,6 +2546,10 @@ async function getLicenseCodeBatchCodes(request, env, batchId) {
       assigned_partner_organization_id: code.assigned_partner_organization_id,
       assigned_partner_name: code.assigned_partner_name,
       partner_assigned_at: code.partner_assigned_at,
+      product_code: code.product_code,
+      product_name: code.product_name,
+      edition_code: code.edition_code,
+      edition_name: code.edition_name,
       activation_key_recoverable: Boolean(code.activation_key_ciphertext && encryption.key),
     })),
   });
@@ -2760,7 +2807,7 @@ async function issueLicenseCodes(request, env, batchId) {
   let assignedPartner = null;
   if (assignedPartnerId) {
     assignedPartner = await env.DB.prepare(
-      `SELECT o.id, o.name
+      `SELECT o.id, o.name, r.relationship_type AS partner_type
        FROM organizations o
        JOIN relationships r ON r.organization_id = o.id AND r.status = 'active'
        WHERE o.id = ? AND o.status = 'active'
@@ -2786,6 +2833,7 @@ async function issueLicenseCodes(request, env, batchId) {
     delivery_channel: deliveryChannel,
     delivery_reference: deliveryReference,
     partner_organization_id: assignedPartnerId,
+    partner_type: assignedPartner?.partner_type || null,
   });
   const results = await env.DB.batch([
     env.DB.prepare(
@@ -3269,7 +3317,7 @@ async function listAdminLicenseRegistrations(request, env) {
   const registrationsCte = `
     WITH registration_rows AS (
       SELECT l.id AS license_id, l.customer_id, l.serial_number, upper(l.status) AS license_status,
-             l.starts_at AS start_date, l.expires_at AS expiry_date,
+             l.starts_at AS start_date, l.expires_at AS expiry_date, l.seats,
              l.registered_email, c.email AS account_email, c.name AS contact_name,
              COALESCE(NULLIF(o.legal_name, ''), o.name) AS organization_name,
              o.legal_name AS organization_legal_name,
@@ -3363,6 +3411,7 @@ async function listAdminLicenseRegistrations(request, env) {
       license_status: record.license_status,
       start_date: record.start_date,
       expiry_date: record.expiry_date,
+      seats: Number(record.seats || 0),
       product: { code: record.product_code, name: record.product_name },
       edition: record.edition_code ? { code: record.edition_code, name: record.edition_name } : null,
       organization_name: record.organization_name,

@@ -156,6 +156,32 @@
     .admin-d1-meter span { display:block; height:100%; border-radius:inherit; background:#3158a5; }
     .admin-d1-meter span.warning { background:#d89b28; }
     .admin-d1-meter span.critical { background:#c84e4e; }
+    .admin-allocation-print-list { margin:0 0 1rem; padding:1rem; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    .admin-allocation-print-list h3 { margin:0 0 .75rem; }
+    .admin-allocation-print-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.7rem 0; border-top:1px solid var(--line); }
+    .admin-allocation-print-row:first-of-type { border-top:0; }
+    .admin-allocation-print-row small { display:block; margin-top:.2rem; color:var(--muted); }
+    #adminPrintRoot { display:none; }
+    @media print {
+      @page { margin:14mm; }
+      body.admin-printing { background:#fff !important; }
+      body.admin-printing > *:not(#adminPrintRoot) { display:none !important; }
+      body.admin-printing #adminPrintRoot { display:block !important; color:#17243f; font:10pt Arial,sans-serif; }
+      #adminPrintRoot .print-document { max-width:none; }
+      #adminPrintRoot .print-header { margin-bottom:1.5rem; border-bottom:2px solid #102668; padding-bottom:.8rem; }
+      #adminPrintRoot .print-brand { color:#102668; font-size:9pt; font-weight:700; letter-spacing:.12em; }
+      #adminPrintRoot h1 { margin:.5rem 0; font-size:20pt; }
+      #adminPrintRoot .print-subtitle,#adminPrintRoot .print-disclaimer { color:#4b5563; line-height:1.5; }
+      #adminPrintRoot .print-details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem 1.5rem; margin:1.2rem 0; }
+      #adminPrintRoot .print-details div { min-width:0; }
+      #adminPrintRoot dt { color:#4b5563; font-size:8pt; }
+      #adminPrintRoot dd { margin:.2rem 0 0; overflow-wrap:anywhere; font-weight:600; }
+      #adminPrintRoot table { width:100%; border-collapse:collapse; margin:1rem 0; }
+      #adminPrintRoot th,#adminPrintRoot td { border:1px solid #cbd5e1; padding:.45rem; text-align:left; overflow-wrap:anywhere; }
+      #adminPrintRoot th { background:#eef2f8 !important; }
+      #adminPrintRoot tr { break-inside:avoid; }
+      #adminPrintRoot .print-disclaimer { margin-top:1.5rem; border-top:1px solid #cbd5e1; padding-top:.7rem; font-size:8pt; }
+    }
     .admin-d1-status { display:inline-block; padding:.2rem .5rem; border-radius:99px; color:#276b55; background:#e5f4ed; font-size:.74rem; font-weight:700; }
     .admin-d1-status.warning { color:#895d13; background:#fff3d4; }
     .admin-d1-status.critical,.admin-d1-status.failed { color:#963b3b; background:#fde8e8; }
@@ -609,6 +635,7 @@
       </form>
     </dialog>
   </section>
+  <div id="adminPrintRoot" aria-hidden="true"></div>
   <script src="js/organization-context.js" defer></script>
   <script src="js/admin.js?v=partner-workflows-v1" defer></script>
 </body>
