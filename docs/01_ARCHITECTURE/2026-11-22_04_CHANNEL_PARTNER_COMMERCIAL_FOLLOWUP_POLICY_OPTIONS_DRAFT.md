@@ -1,6 +1,6 @@
 # Channel Partner, Commercial, and Follow-up Policy Options
 
-**Status:** Business-policy draft with partial approvals recorded below; only the explicitly scoped local workflow foundation is implemented
+**Status:** Business-policy draft with partial approvals recorded below; the approved partner deal and follow-up workflow foundation is deployed
 **Scope:** SMRITISYS control plane only. Retail OS remains the operational and accounting system of record.
 **Safety:** This draft does not authorize production data changes, financial calculations, payouts, outbound messages, or Cloudflare account changes.
 
