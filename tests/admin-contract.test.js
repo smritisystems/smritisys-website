@@ -141,22 +141,36 @@ test("admin workspace requires an explicit session organization context", () => 
 
 test("overview displays authorized live license health, inventory, and recent activity", () => {
   assert.match(html, /id="adminOperationsMetrics"/);
+  assert.match(html, /id="adminOperationalMetrics"/);
+  assert.match(html, /id="adminPartnerCategoryMetrics"/);
+  assert.match(html, /id="adminSupportTicketMetrics"/);
+  assert.match(html, /id="adminReleaseMetrics"/);
+  assert.match(html, /id="adminCustomerOnboardingMetrics"/);
+  assert.match(html, /id="adminDeploymentStatus"/);
   assert.match(html, /id="adminLicenseHealth"/);
   assert.match(html, /id="adminRecentActivity"/);
   assert.match(script, /adminApi\('admin\/overview'\)/);
   assert.match(script, /data\.license_statuses/);
   assert.match(script, /data\.code_inventory/);
+  assert.match(script, /operational\.active_partners_by_category/);
+  assert.match(script, /operational\.license_utilization/);
+  assert.match(script, /operational\.deployment_status/);
   assert.match(api, /requireSuperAdmin\(request, env\)/);
+  assert.match(api, /active_partners_by_category: ADMIN_PARTNER_TYPES\.map/);
+  assert.match(api, /COALESCE\(SUM\(l\.seats\), 0\) AS licensed_seats/);
+  assert.match(api, /support_ticket_statuses:/);
+  assert.match(api, /customer_invitation_statuses:/);
   assert.match(api, /recent_activity: recentActivity\.results/);
 });
 
 test("D1 monitoring reports Cloudflare recovery without claiming manual backups", () => {
   assert.match(html, /id="adminD1Content"/);
   assert.match(html, /id="adminD1Refresh"/);
-  assert.match(html, /Cloudflare manages D1 point-in-time recovery/);
+  assert.match(html, /Time Travel retention depends on the Cloudflare account plan/);
   assert.match(script, /adminApi\('admin\/d1-operations'\)/);
   assert.match(script, /data\.recovery/);
   assert.match(script, /cloudflare_d1_time_travel/);
+  assert.match(script, /recovery\.status === 'plan_dependent'/);
   assert.match(script, /Manual backups and exports are not configured/);
   assert.match(api, /path === "admin\/d1-operations" && request\.method === "GET"/);
   assert.match(api, /d1_storage_snapshots/);
@@ -164,7 +178,8 @@ test("D1 monitoring reports Cloudflare recovery without claiming manual backups"
   assert.match(api, /databases: \["smritisys-db"\]/);
   assert.match(api, /manual_backup_status: "not_configured"/);
   assert.match(api, /provider: "cloudflare_d1_time_travel"/);
-  assert.match(api, /retention_days: 30/);
+  assert.match(api, /status: "plan_dependent",\s+retention_days: null/);
+  assert.doesNotMatch(api, /retention_days:\s*30/);
   assert.match(api, /free_per_database_bytes/);
   assert.match(d1WorkerConfig, /"crons": \["0 2 \* \* \*"\]/);
   assert.match(d1WorkerConfig, /19066da9-8183-42cb-92e3-c64d1ee799de/);

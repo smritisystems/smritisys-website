@@ -21,6 +21,8 @@ const activationKey = document.querySelector('#activationKey');
 const activateButton = document.querySelector('#activateButton');
 const statusMessage = document.querySelector('#status');
 const requestSummary = document.querySelector('#requestSummary');
+const organizationSelection = document.querySelector('#organizationSelection');
+const activationOrganization = document.querySelector('#activationOrganization');
 const downloadResponse = document.querySelector('#downloadResponse');
 
 let challenge = null;
@@ -55,6 +57,8 @@ function validateChallenge(value) {
 requestFile.addEventListener('change', async () => {
   challenge = null;
   requestSummary.style.display = 'none';
+  organizationSelection.hidden = true;
+  activationOrganization.replaceChildren();
   downloadResponse.style.display = 'none';
   if (responseUrl) URL.revokeObjectURL(responseUrl);
   responseUrl = null;
@@ -74,6 +78,14 @@ requestFile.addEventListener('change', async () => {
     setStatus(error instanceof Error ? error.message : 'The request file is invalid.', true);
     requestFile.value = '';
   }
+});
+
+activationOrganization.addEventListener('change', () => {
+  if (!challenge) return;
+  challenge.registration.organization_id = activationOrganization.value
+    ? Number(activationOrganization.value)
+    : null;
+  setStatus("Organization selected. Submit again to continue activation.");
 });
 
 form.addEventListener('submit', async (event) => {
@@ -102,7 +114,23 @@ form.addEventListener('submit', async (event) => {
       }),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'The activation request was rejected.');
+    if (!response.ok) {
+      if (response.status === 409 && Array.isArray(result.organization_options)) {
+        activationOrganization.replaceChildren(new Option('Select an organization', ''));
+        for (const organization of result.organization_options) {
+          if (!isRecord(organization) || !Number.isInteger(Number(organization.id)) ||
+              typeof organization.name !== 'string') continue;
+          const label = organization.legal_name && organization.legal_name !== organization.name
+            ? `${organization.name} — ${organization.legal_name}`
+            : organization.name;
+          activationOrganization.add(new Option(label, String(organization.id)));
+        }
+        organizationSelection.hidden = false;
+        setStatus(result.error || 'Select the organization for this activation.', true);
+        return;
+      }
+      throw new Error(result.error || 'The activation request was rejected.');
+    }
     if (!isRecord(result) || !isRecord(result.artifact) ||
         typeof result.artifact.document_id !== 'string' ||
         typeof result.artifact.payload !== 'string' ||
@@ -114,6 +142,7 @@ form.addEventListener('submit', async (event) => {
     downloadResponse.href = responseUrl;
     downloadResponse.download = `prathamone-license-response-${challenge.serial_number}.json`;
     downloadResponse.style.display = 'inline-block';
+    organizationSelection.hidden = true;
     activationKey.value = '';
     setStatus('Activation succeeded. Download the signed response and import it into the same PrathamOne installation.');
   } catch (error) {

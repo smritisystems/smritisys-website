@@ -412,6 +412,7 @@ CREATE TABLE IF NOT EXISTS product_editions (
 CREATE TABLE IF NOT EXISTS licenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
+  organization_id INTEGER REFERENCES organizations(id),
   product_id INTEGER NOT NULL,
   license_key TEXT UNIQUE NOT NULL,
   serial_number TEXT UNIQUE,
@@ -657,6 +658,7 @@ END;
 CREATE TABLE IF NOT EXISTS amc_contracts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
+  organization_id INTEGER REFERENCES organizations(id),
   contract_number TEXT UNIQUE NOT NULL,
   starts_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
@@ -668,6 +670,7 @@ CREATE TABLE IF NOT EXISTS amc_contracts (
 CREATE TABLE IF NOT EXISTS support_tickets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
+  organization_id INTEGER REFERENCES organizations(id),
   subject TEXT NOT NULL,
   description TEXT NOT NULL,
   priority TEXT DEFAULT 'normal',
@@ -755,6 +758,7 @@ CREATE INDEX IF NOT EXISTS idx_release_assets_release ON release_assets(release_
 CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
+  organization_id INTEGER REFERENCES organizations(id),
   order_number TEXT UNIQUE NOT NULL,
   total_amount REAL NOT NULL DEFAULT 0,
   status TEXT DEFAULT 'pending',
@@ -1066,9 +1070,13 @@ CREATE INDEX IF NOT EXISTS idx_demo_status ON demo_requests(status);
 CREATE INDEX IF NOT EXISTS idx_profiles_customer ON customer_profiles(customer_id);
 CREATE INDEX IF NOT EXISTS idx_addresses_customer ON customer_addresses(customer_id);
 CREATE INDEX IF NOT EXISTS idx_licenses_customer ON licenses(customer_id);
+CREATE INDEX IF NOT EXISTS idx_licenses_org ON licenses(organization_id);
 CREATE INDEX IF NOT EXISTS idx_amc_customer ON amc_contracts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_amc_org ON amc_contracts(organization_id, customer_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_customer ON support_tickets(customer_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_org ON support_tickets(organization_id, customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_org ON orders(organization_id, customer_id);
 
 CREATE TABLE IF NOT EXISTS d1_storage_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

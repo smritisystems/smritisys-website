@@ -110,7 +110,7 @@ async function loadPartnerCustomers() {
     partner$('#partnerCustomerState').classList.add('hidden');
     partner$('#partnerCustomerList').classList.remove('hidden');
     const organizationNames = new Map(data.customers.map((customer) => [String(customer.id), customer.name]));
-    partner$('#partnerCustomerList').innerHTML = `${data.customers.length ? `<h3>Linked customers</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${partnerEscape(customer.name)}</td><td>${partnerEscape(customer.legal_name || 'Not provided')}</td><td><span class="status">${partnerEscape(customer.status)}</span></td></tr>`).join('')}</tbody></table>` : ''}${contacts.length ? `<h3>Assigned customer contacts</h3><p class="muted">Contact details are limited to customers assigned to this partner. Email and password information is not available here.</p><table class="partner-table"><thead><tr><th>Customer organization</th><th>Customer ID</th><th>Contact</th><th>Phone</th><th>Action</th></tr></thead><tbody>${contacts.map((contact) => `<tr><td>${partnerEscape(organizationNames.get(String(contact.organization_id)) || `Organization ${contact.organization_id}`)}</td><td>${partnerEscape(contact.id)}</td><td>${partnerEscape(contact.name || '—')}</td><td>${partnerEscape(contact.phone || '—')}</td><td>${partnerState.permissions.manage_customer_contacts ? `<button class="secondary" type="button" data-partner-customer-contact="${partnerEscape(contact.id)}" data-contact-name="${partnerEscape(contact.name || '')}" data-contact-phone="${partnerEscape(contact.phone || '')}">Edit contact</button>` : '—'}</td></tr>`).join('')}</tbody></table>` : ''}${pending.length ? `<h3>Pending customer setup</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Contact</th><th>Status</th><th>Expires</th></tr></thead><tbody>${pending.map((invite) => `<tr><td>${partnerEscape(invite.company)}</td><td>${partnerEscape(invite.name || invite.email)}</td><td><span class="status">${partnerEscape(invite.status)}</span></td><td>${partnerEscape(invite.expires_at)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+    partner$('#partnerCustomerList').innerHTML = `${data.customers.length ? `<h3>Linked customers</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Legal name</th><th>Status</th></tr></thead><tbody>${data.customers.map((customer) => `<tr><td>${partnerEscape(customer.name)}</td><td>${partnerEscape(customer.legal_name || 'Not provided')}</td><td><span class="status">${partnerEscape(customer.status)}</span></td></tr>`).join('')}</tbody></table>` : ''}${contacts.length ? `<h3>Assigned customer contacts</h3><p class="muted">Contact details are limited to customers assigned to this partner. Email and password information is not available here.</p><table class="partner-table"><thead><tr><th>Customer organization</th><th>Customer ID</th><th>Contact</th><th>Phone</th><th>Action</th></tr></thead><tbody>${contacts.map((contact) => `<tr><td>${partnerEscape(organizationNames.get(String(contact.organization_id)) || `Organization ${contact.organization_id}`)}</td><td>${partnerEscape(contact.id)}</td><td>${partnerEscape(contact.name || '—')}</td><td>${partnerEscape(contact.phone || '—')}</td><td>${partnerState.permissions.manage_customer_contacts ? `<button class="secondary" type="button" data-partner-customer-contact="${partnerEscape(contact.id)}" data-customer-organization-id="${partnerEscape(contact.organization_id)}" data-contact-name="${partnerEscape(contact.name || '')}" data-contact-phone="${partnerEscape(contact.phone || '')}">Edit contact</button>` : '—'}</td></tr>`).join('')}</tbody></table>` : ''}${pending.length ? `<h3>Pending customer setup</h3><table class="partner-table"><thead><tr><th>Organization</th><th>Contact</th><th>Status</th><th>Expires</th></tr></thead><tbody>${pending.map((invite) => `<tr><td>${partnerEscape(invite.company)}</td><td>${partnerEscape(invite.name || invite.email)}</td><td><span class="status">${partnerEscape(invite.status)}</span></td><td>${partnerEscape(invite.expires_at)}</td></tr>`).join('')}</tbody></table>` : ''}`;
     partner$('#partnerCustomerList').querySelectorAll('[data-partner-customer-contact]').forEach((button) => {
       button.addEventListener('click', () => openPartnerCustomerContact(button));
     });
@@ -177,6 +177,7 @@ async function loadPartnerDeals(page = partnerState.dealPage) {
 function openPartnerCustomerContact(button) {
   const form = partner$('#partnerCustomerContactForm');
   form.dataset.customerId = button.dataset.partnerCustomerContact;
+  form.dataset.organizationId = button.dataset.customerOrganizationId;
   partner$('#partnerCustomerContactName').value = button.dataset.contactName;
   partner$('#partnerCustomerContactPhone').value = button.dataset.contactPhone;
   partnerMessage(partner$('#partnerCustomerContactMessage'), '', true);
@@ -195,7 +196,11 @@ partner$('#partnerCustomerContactForm').addEventListener('submit', async (event)
   try {
     await partnerApi(`partner/customers/${encodeURIComponent(customerId)}/contact`, {
       method: 'PATCH',
-      body: JSON.stringify({ name: values.get('name'), phone: values.get('phone') }),
+      body: JSON.stringify({
+        name: values.get('name'),
+        phone: values.get('phone'),
+        organization_id: form.dataset.organizationId,
+      }),
     });
     partner$('#partnerCustomerContactDialog').close();
     await loadPartnerCustomers();

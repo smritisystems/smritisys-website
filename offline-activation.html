@@ -15,6 +15,7 @@
     p { color: #596a81; line-height: 1.6; }
     label { display: block; margin: 18px 0 7px; color: #243650; font-size: .9rem; font-weight: 700; }
     input { width: 100%; padding: 12px; border: 1px solid #cbd6e5; border-radius: 10px; font: inherit; }
+    select { width: 100%; padding: 12px; border: 1px solid #cbd6e5; border-radius: 10px; font: inherit; }
     button { margin-top: 20px; border: 0; border-radius: 10px; background: #087c79; color: #fff; padding: 12px 18px; font: inherit; font-weight: 800; cursor: pointer; }
     button:disabled { cursor: wait; opacity: .6; }
     #status { min-height: 24px; margin-top: 16px; }
@@ -32,6 +33,10 @@
       <label for="requestFile">Offline request file</label>
       <input id="requestFile" type="file" accept="application/json,.json" required />
       <div id="requestSummary"></div>
+      <div id="organizationSelection" hidden>
+        <label for="activationOrganization">Organization for this activation</label>
+        <select id="activationOrganization"></select>
+      </div>
       <label for="activationKey">Activation key</label>
       <input id="activationKey" type="password" autocomplete="off" maxlength="100" required />
       <button id="activateButton" type="submit">Generate signed response</button>

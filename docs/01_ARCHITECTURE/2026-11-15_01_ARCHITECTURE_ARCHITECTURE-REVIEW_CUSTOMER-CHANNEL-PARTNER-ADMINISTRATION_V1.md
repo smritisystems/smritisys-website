@@ -8,10 +8,10 @@ edition: "Coaching Institute Edition"
 version: "1.0.0"
 doc_version: "1.0"
 created_date: "2026-11-15"
-updated_date: "2026-11-15"
+updated_date: "2026-11-22"
 author: "Jawahar R Mallah"
 organization: "AITDL — AI Technology & Development Lab"
-status: "In Review"
+status: "Historical review; superseded in part by later implementation and verification"
 tags: ["admin", "customers", "channel-partners", "organizations", "identity", "RBAC"]
 entities: ["Customer", "Organization", "OrganizationMembership", "PartnerMembership", "PartnerCustomerLink"]
 api_routes:
@@ -26,6 +26,16 @@ related_modules: ["12_RBAC_SECURITY", "13_SYSADMIN_SETTINGS", "16_DATABASE_API"]
 ---
 
 # Customer and Channel Partner Administration Review
+
+> Historical snapshot: the findings below describe the repository and production
+> state on 2026-11-15. Subsequent work deployed explicit session organization
+> context, partner administration, and partner deal-registration foundations.
+> The current read-only production snapshot has 3 organizations, one active
+> channel-partner classification, one active partner-customer assignment, one
+> pending partner invitation, and no active partner memberships. Do not rely on
+> the gap statements below as current. See the [current identity verification](./2026-11-22_02_ARCHITECTURE_SPEC_IDENTITY-ORGANIZATION-RELATIONSHIP_MODEL_V1_1.md),
+> [commercial policy decisions](./2026-11-22_04_CHANNEL_PARTNER_COMMERCIAL_FOLLOWUP_POLICY_OPTIONS_DRAFT.md),
+> and [operational readiness plan](./2026-11-22_05_OPERATIONAL_ANALYTICS_CREDENTIAL_ROTATION_AND_D1_RECOVERY_PLAN.md).
 
 ## Executive summary
 

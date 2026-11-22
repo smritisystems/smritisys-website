@@ -75,7 +75,7 @@ test("support center uses customer-scoped ticket resources", () => {
   assert.match(api, /WHERE id = \? AND customer_id = \?/);
   assert.match(api, /Ticket not found/);
   assert.match(api, /INSERT INTO support_ticket_messages/);
-  assert.match(api, /customer_id, subject, description, priority/);
+  assert.match(api, /customer_id, organization_id, subject, description, priority/);
 });
 
 test("custom requirements use organization-scoped request resources", () => {

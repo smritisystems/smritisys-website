@@ -219,6 +219,14 @@
         <div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div>
         <div class="admin-overview-heading"><div><span class="eyebrow">License operations</span><h3>Health &amp; inventory</h3></div><p class="muted">Live counts from the license authority</p></div>
         <div id="adminOperationsMetrics" class="admin-ops-metrics" aria-live="polite"></div>
+        <div class="admin-overview-heading"><div><span class="eyebrow">Operational analytics</span><h3>Organization-scoped platform metrics</h3></div><p class="muted">Platform-wide aggregates visible to internal administrators only.</p></div>
+        <div id="adminOperationalMetrics" class="admin-ops-metrics" aria-live="polite"></div>
+        <div class="admin-overview-grid">
+          <section class="card" aria-labelledby="adminPartnerCategoriesTitle"><h3 id="adminPartnerCategoriesTitle" class="admin-panel-title">Active partners by category</h3><p class="admin-panel-subtitle">Counts use active organization classifications, not invitations or memberships.</p><div id="adminPartnerCategoryMetrics" class="admin-health-list"></div></section>
+          <section class="card" aria-labelledby="adminSupportStatusesTitle"><h3 id="adminSupportStatusesTitle" class="admin-panel-title">Support tickets</h3><p class="admin-panel-subtitle">Current records grouped by stored status.</p><div id="adminSupportTicketMetrics" class="admin-health-list"></div></section>
+          <section class="card" aria-labelledby="adminReleaseStatusesTitle"><h3 id="adminReleaseStatusesTitle" class="admin-panel-title">Release &amp; deployment status</h3><p class="admin-panel-subtitle">Release records are shown separately from deployment status.</p><div id="adminReleaseMetrics" class="admin-health-list"></div><p id="adminDeploymentStatus" class="admin-empty-inline"></p></section>
+          <section class="card" aria-labelledby="adminOnboardingStatusesTitle"><h3 id="adminOnboardingStatusesTitle" class="admin-panel-title">Customer onboarding</h3><p class="admin-panel-subtitle">Invitation states only; no overall onboarding stage is inferred.</p><div id="adminCustomerOnboardingMetrics" class="admin-health-list"></div></section>
+        </div>
         <div class="admin-overview-heading"><div><span class="eyebrow">Infrastructure</span><h3>D1 capacity monitoring</h3></div><div class="admin-overview-actions"><p class="muted">Daily at 02:00 UTC · Cloudflare-managed recovery</p><button id="adminD1Refresh" class="secondary" type="button">Refresh</button></div></div>
         <div id="adminD1State" class="state-panel">Loading D1 capacity monitoring...</div>
         <div id="adminD1Content" class="hidden">
@@ -231,7 +239,7 @@
           </section>
           <section class="card admin-d1-backups">
             <h4 class="admin-panel-title">Backup and recovery</h4>
-            <p class="admin-panel-subtitle">Cloudflare manages D1 point-in-time recovery. This panel does not list recovery points or perform restores.</p>
+            <p class="admin-panel-subtitle">Time Travel retention depends on the Cloudflare account plan, which has not been verified. This panel does not list recovery points or perform restores.</p>
             <div id="adminD1Backups"></div>
           </section>
         </div>
@@ -448,7 +456,10 @@
                   </div>
                   <p class="muted">No customer sign-in or invitation is created. The customer receives only the serial number and activation key.</p>
                 </div>
-                <div id="licenseExistingOrganizationFields" class="full hidden"><label for="licenseOrganization">Existing organization</label><select id="licenseOrganization" name="organization_id" required disabled></select></div>
+                <div id="licenseExistingOrganizationFields" class="full hidden">
+                  <label for="licenseOrganization">Existing organization</label><select id="licenseOrganization" name="organization_id" required disabled></select>
+                  <label for="licenseCustomerAccountId">Customer account ID (required when this organization has multiple customer accounts)</label><input id="licenseCustomerAccountId" name="customer_id" type="number" min="1" step="1" disabled />
+                </div>
                 <div><label for="licenseProduct">Product</label><select id="licenseProduct" name="product_id" required></select></div>
                 <div><label for="licenseEdition">Edition</label><select id="licenseEdition" name="edition_id" required></select></div>
                 <div><label for="licenseCompanyBinding">Company binding</label><input id="licenseCompanyBinding" name="company_binding" maxlength="200" required autocomplete="off" /></div>

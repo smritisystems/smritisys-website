@@ -188,6 +188,65 @@ async function loadAdminOverview() {
       </article>
     `).join('');
 
+    const operational = data.operational_metrics;
+    const partnerCategories = operational.active_partners_by_category;
+    const activePartners = partnerCategories.reduce((total, category) => total + Number(category.count), 0);
+    const utilization = operational.license_utilization;
+    const licensedSeats = Number(utilization.licensed_seats);
+    const activeActivations = Number(utilization.active_activations);
+    const utilizationPercent = licensedSeats > 0
+      ? `${((activeActivations / licensedSeats) * 100).toFixed(1)}%`
+      : 'Unavailable';
+    const operationalCards = [
+      { label: 'Active customers', value: Number(operational.active_customer_organizations), note: 'Active customer organizations' },
+      { label: 'Active memberships', value: Number(operational.active_organization_memberships), note: 'Organization memberships' },
+      { label: 'Active partners', value: activePartners, note: 'Across approved partner categories' },
+      {
+        label: 'License utilization',
+        value: licensedSeats > 0 ? `${activeActivations}/${licensedSeats}` : 'Unavailable',
+        note: licensedSeats > 0
+          ? `Active installations / licensed seats across ${Number(utilization.active_licenses)} active licenses · ${utilizationPercent}`
+          : 'No active licensed-seat capacity is available',
+      },
+    ];
+    admin$('#adminOperationalMetrics').innerHTML = operationalCards.map((metric) => `
+      <article class="card admin-ops-card">
+        <span class="stat-label">${adminEscape(metric.label)}</span>
+        <strong class="stat-value">${adminEscape(metric.value.toLocaleString())}</strong>
+        <span class="admin-metric-note">${adminEscape(metric.note)}</span>
+      </article>
+    `).join('');
+
+    const partnerLabels = {
+      channel_partner: 'Channel Partner',
+      reseller: 'Reseller',
+      implementation_partner: 'Implementation Partner',
+      technology_partner: 'Technology Partner',
+      referral_partner: 'Referral Partner',
+      distributor: 'Distributor',
+    };
+    admin$('#adminPartnerCategoryMetrics').innerHTML = partnerCategories.map((category) => `
+      <div class="admin-health-row">
+        <span>${adminEscape(partnerLabels[category.category])}</span>
+        <strong>${adminEscape(Number(category.count).toLocaleString())}</strong>
+      </div>
+    `).join('');
+
+    const renderStatusCounts = (rows) => rows.length
+      ? rows.map((row) => `
+        <div class="admin-health-row">
+          <span>${adminEscape(String(row.status).replaceAll('_', ' '))}</span>
+          <strong>${adminEscape(Number(row.count).toLocaleString())}</strong>
+        </div>
+      `).join('')
+      : '<p class="admin-empty-inline">No records are available.</p>';
+    admin$('#adminSupportTicketMetrics').innerHTML = renderStatusCounts(operational.support_ticket_statuses);
+    admin$('#adminReleaseMetrics').innerHTML = renderStatusCounts(operational.release_statuses);
+    admin$('#adminCustomerOnboardingMetrics').innerHTML = renderStatusCounts(operational.customer_invitation_statuses);
+    admin$('#adminDeploymentStatus').textContent = operational.deployment_status.available
+      ? 'Deployment metadata is available.'
+      : 'Deployment status unavailable: no deployment source is connected.';
+
     const statusOrder = ['active', 'draft', 'pending_renewal', 'expired', 'suspended', 'revoked', 'cancelled'];
     const statuses = [...new Set([...statusOrder.filter((status) => status in statusCounts), ...Object.keys(statusCounts)])];
     admin$('#adminLicenseHealth').innerHTML = statuses.length
@@ -384,9 +443,13 @@ async function loadAdminD1Operations() {
     const retentionDays = Number(recovery?.retention_days);
     const recoveryAvailable = recovery?.provider === 'cloudflare_d1_time_travel' &&
       recovery.status === 'available' && Number.isInteger(retentionDays) && retentionDays > 0;
+    const recoveryPlanUnverified = recovery?.provider === 'cloudflare_d1_time_travel' &&
+      recovery.status === 'plan_dependent' && recovery.retention_days === null;
     admin$('#adminD1Backups').innerHTML = recoveryAvailable
       ? `<p>Cloudflare D1 Time Travel provides point-in-time recovery for up to ${adminEscape(retentionDays)} days. This panel does not list recovery points or perform restores.</p><p class="admin-empty-inline">Manual backups and exports are not configured.</p>`
-      : '<p class="admin-empty-inline">Recovery availability could not be verified. This panel does not list recovery points or perform restores.</p>';
+      : recoveryPlanUnverified
+        ? '<p class="admin-empty-inline">Time Travel retention depends on the Cloudflare account plan, which has not been verified. This panel does not list recovery points or perform restores.</p><p class="admin-empty-inline">Manual backups and exports are not configured.</p>'
+        : '<p class="admin-empty-inline">Recovery availability could not be verified. This panel does not list recovery points or perform restores.</p>';
 
     state.classList.add('hidden');
     content.classList.remove('hidden');
@@ -1236,6 +1299,7 @@ function toggleLicenseCustomerMode() {
   }
   const organizationSelect = admin$('#licenseOrganization');
   organizationSelect.disabled = isNewCustomer;
+  admin$('#licenseCustomerAccountId').disabled = isNewCustomer;
 }
 
 async function loadLicensePolicy() {
@@ -2482,6 +2546,7 @@ admin$('#licenseIssueForm').addEventListener('submit', async (event) => {
     body.customer_company = form.get('customer_company');
   } else {
     body.organization_id = form.get('organization_id');
+    body.customer_id = form.get('customer_id') || null;
   }
   const button = admin$('#licenseIssueButton');
   button.disabled = true;

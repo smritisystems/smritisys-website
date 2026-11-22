@@ -45,6 +45,7 @@ function createD1Mock() {
   const m15 = fs.readFileSync(new URL("../migrations/0015_prathamone_product_registration.sql", import.meta.url), "utf8");
   const m28 = fs.readFileSync(new URL("../migrations/0028_customer_profile_management.sql", import.meta.url), "utf8");
   const m30 = fs.readFileSync(new URL("../migrations/0030_partner_workflow_foundations.sql", import.meta.url), "utf8");
+  const m31 = fs.readFileSync(new URL("../migrations/0031_identity_organization_scope.sql", import.meta.url), "utf8");
 
   db.exec(schema);
   db.exec(m2);
@@ -61,6 +62,7 @@ function createD1Mock() {
   db.exec(m15);
   db.exec(m28);
   db.exec(m30);
+  db.exec(m31.slice(m31.indexOf("UPDATE licenses")));
 
   return {
     raw: db,
@@ -149,6 +151,424 @@ async function selectSessionOrganization(env, token, organizationId = null) {
   });
 }
 
+test("customer records are isolated by the explicitly selected organization", async () => {
+  const d1 = createD1Mock();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (102, 'customer', 101, 'customer', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO support_tickets (id, customer_id, organization_id, subject, description)
+     VALUES (201, 101, 102, 'Organization B ticket', 'Second organization ticket')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO orders (id, customer_id, organization_id, order_number, total_amount, status)
+     VALUES (201, 101, 102, 'ORG-B-ORDER-201', 1, 'confirmed')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO amc_contracts (id, customer_id, organization_id, contract_number, starts_at, expires_at, status)
+     VALUES (201, 101, 102, 'ORG-B-AMC-201', '2026-01-01', '2027-01-01', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO licenses (id, customer_id, organization_id, product_id, license_key, starts_at, status)
+     SELECT 201, 101, 102, id, 'ORG-B-LICENSE-201', '2026-01-01', 'ACTIVE'
+     FROM products WHERE slug = 'smriti-retail-os'`,
+  ).run();
+
+  const firstToken = "customer-org-scope-first";
+  const secondToken = "customer-org-scope-second";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'customer', 101, 101, datetime('now', '+1 hour'))`,
+  ).run(firstToken);
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'customer', 101, 102, datetime('now', '+1 hour'))`,
+  ).run(secondToken);
+
+  for (const [token, expectedId] of [[firstToken, 101], [secondToken, 201]]) {
+    const tickets = await callApi(d1, "tickets", { token });
+    assert.equal(tickets.status, 200);
+    assert.deepEqual(tickets.data.tickets.map((ticket) => ticket.id), [expectedId]);
+
+    const commercial = await callApi(d1, "commercial/summary", { token });
+    assert.equal(commercial.status, 200);
+    assert.deepEqual(commercial.data.summary.orders.map((order) => order.id), [expectedId]);
+    assert.deepEqual(commercial.data.summary.amc_contracts.map((contract) => contract.id), [expectedId]);
+
+    const licenses = await callApi(d1, "licenses", { token });
+    assert.equal(licenses.status, 200);
+    assert.deepEqual(licenses.data.licenses.map((license) => license.id), [expectedId]);
+  }
+
+  assert.equal((await callApi(d1, "tickets/201", { token: firstToken })).status, 404);
+  assert.equal((await callApi(d1, "commercial/orders/201", { token: firstToken })).status, 404);
+  const adminToken = "customer-org-scope-admin";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))`,
+  ).run(adminToken);
+  const organizationDetail = await callApi(d1, "admin/organizations/101", { token: adminToken });
+  assert.equal(organizationDetail.status, 200);
+  assert.deepEqual(organizationDetail.data.licenses.map((license) => license.id), [101]);
+});
+
+test("partner data is limited to assigned customers and canonical membership roles", async () => {
+  const d1 = createD1Mock();
+  d1.raw.prepare(
+    `INSERT INTO customers (id, email, password_hash, name, company, status)
+     VALUES (104, 'partner.b@example.com', 'test-hash', 'Partner B', 'Partner B Ltd', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO people (id, email, name, source_type, source_id, status)
+     VALUES (104, 'partner.b@example.com', 'Partner B', 'customer', 104, 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organizations (id, name, legal_name, status)
+     VALUES (104, 'Partner B', 'Partner B Ltd', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO relationships (organization_id, relationship_type, status)
+     VALUES (104, 'reseller', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (104, 'customer', 104, 'partner_admin', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO partner_memberships (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+     VALUES (104, 'customer', 104, 'partner_admin', 'reseller', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO partner_customer_links (partner_organization_id, customer_organization_id, status)
+     VALUES (104, 102, 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO licenses (id, customer_id, organization_id, product_id, license_key, starts_at, status)
+     SELECT 202, 102, 102, id, 'ORG-B-LICENSE-202', '2026-01-01', 'ACTIVE'
+     FROM products WHERE slug = 'smriti-retail-os'`,
+  ).run();
+  d1.raw.prepare(
+    `UPDATE organization_members SET member_role = 'partner_member'
+     WHERE organization_id = 103 AND account_type = 'customer' AND account_id = 103`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT OR IGNORE INTO permissions (name, description)
+     VALUES ('partner.inventory.reveal', 'Reveal allocated activation keys')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+     SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+     WHERE r.name = 'partner_admin' AND p.name = 'partner.inventory.reveal'`,
+  ).run();
+
+  const partnerAToken = "partner-a-canonical-role";
+  const partnerBToken = "partner-b-isolation";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'customer', 103, 103, datetime('now', '+1 hour'))`,
+  ).run(partnerAToken);
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'customer', 104, 104, datetime('now', '+1 hour'))`,
+  ).run(partnerBToken);
+
+  const partnerA = await callApi(d1, "partner/customers", { token: partnerAToken });
+  const partnerB = await callApi(d1, "partner/customers", { token: partnerBToken });
+  assert.equal(partnerA.status, 200);
+  assert.equal(partnerB.status, 200);
+  assert.deepEqual(partnerA.data.customers.map((organization) => organization.id), [101]);
+  assert.deepEqual(partnerB.data.customers.map((organization) => organization.id), [102]);
+
+  const partnerALicenses = await callApi(d1, "partner/licenses", { token: partnerAToken });
+  const partnerBLicenses = await callApi(d1, "partner/licenses", { token: partnerBToken });
+  assert.equal(partnerALicenses.status, 200);
+  assert.equal(partnerBLicenses.status, 200);
+  assert.deepEqual(partnerALicenses.data.licenses.map((license) => license.id), [101]);
+  assert.deepEqual(partnerBLicenses.data.licenses.map((license) => license.id), [202]);
+
+  const partnerProfile = await callApi(d1, "partner/me", { token: partnerAToken });
+  assert.equal(partnerProfile.status, 200);
+  assert.equal(partnerProfile.data.partner.partner_role, "partner_member");
+  assert.equal(partnerProfile.data.permissions.reveal_activation_keys, false);
+  assert.equal((await callApi(d1, "admin/overview", { token: partnerAToken })).status, 403);
+});
+
+test("admin partner onboarding synchronizes the canonical membership role", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "partner-role-onboarding-admin";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))`,
+  ).run(adminToken);
+  d1.raw.prepare(
+    `UPDATE organization_members SET member_role = 'customer'
+     WHERE organization_id = 103 AND account_type = 'customer' AND account_id = 103`,
+  ).run();
+
+  const response = await callApi(d1, "admin/partners/103/members", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      partner_type: "reseller",
+      partner_role: "partner_admin",
+      email: "partner@example.com",
+      phone: "+1 555 0103",
+      name: "Partner Admin",
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(d1.raw.prepare(
+    `SELECT member_role FROM organization_members
+     WHERE organization_id = 103 AND account_type = 'customer' AND account_id = 103`,
+  ).get().member_role, "partner_admin");
+  assert.equal(d1.raw.prepare(
+    `SELECT partner_role FROM partner_memberships
+     WHERE partner_organization_id = 103 AND account_type = 'customer' AND account_id = 103`,
+  ).get().partner_role, "partner_admin");
+});
+
+test("account deactivation invalidates an otherwise active customer session", async () => {
+  const d1 = createD1Mock();
+  const token = "deactivated-customer-session";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'customer', 101, 101, datetime('now', '+1 hour'))`,
+  ).run(token);
+  d1.raw.prepare("UPDATE customers SET status = 'inactive' WHERE id = 101").run();
+
+  assert.equal((await callApi(d1, "me", { token })).status, 401);
+});
+
+test("signed license operations reject ambiguous activation identifiers", async () => {
+  const d1 = createD1Mock();
+  const productId = d1.raw.prepare("SELECT product_id FROM licenses WHERE id = 101").get().product_id;
+  const installationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const activationIdentifier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  d1.raw.prepare(
+    `INSERT INTO licenses
+     (id, customer_id, organization_id, product_id, license_key, starts_at, status)
+     VALUES (202, 101, 101, ?, 'AMBIGUOUS-LICENSE-202', '2026-01-01', 'ACTIVE')`,
+  ).run(productId);
+  d1.raw.prepare(
+    `INSERT INTO license_entitlements (license_id, entitlement_key, value_type, value_text)
+     VALUES (202, 'company.binding', 'text', 'COMP-001')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO license_activations
+     (license_id, installation_id, activation_identifier, status, refresh_public_key)
+     VALUES (101, ?, ?, 'active', 'test-key'), (202, ?, ?, 'active', 'test-key')`,
+  ).run(installationId, activationIdentifier, installationId, activationIdentifier);
+
+  const signedRequest = {
+    product_code: "smriti-retail-os",
+    company_binding: "COMP-001",
+    installation_id: installationId,
+    activation_identifier: activationIdentifier,
+    timestamp: Date.now(),
+    nonce: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    signature: Buffer.alloc(64, 1).toString("base64url"),
+  };
+  const refresh = await callApi(d1, "license/refresh", { method: "POST", body: signedRequest });
+  assert.equal(refresh.status, 409);
+  assert.match(refresh.data.error, /ambiguous/i);
+
+  const management = await callApi(d1, "license/manage", {
+    method: "POST",
+    body: { ...signedRequest, action: "deactivate" },
+  });
+  assert.equal(management.status, 409);
+  assert.match(management.data.error, /ambiguous/i);
+});
+
+test("activation-code claims require an explicit organization for multi-organization accounts", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "ambiguous-activation-admin";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))`,
+  ).run(adminToken);
+  const customerEmail = "multi-org-activation@example.com";
+  d1.raw.prepare(
+    `INSERT INTO customers (id, email, password_hash, name, company, status)
+     VALUES (105, ?, 'test-hash', 'Multi Org Customer', 'Ambiguous Academy', 'active')`,
+  ).run(customerEmail);
+  d1.raw.prepare(
+    `INSERT INTO people (id, email, name, source_type, source_id, status)
+     VALUES (105, ?, 'Multi Org Customer', 'customer', 105, 'active')`,
+  ).run(customerEmail);
+  d1.raw.prepare(
+    `INSERT INTO organizations (id, name, legal_name, status)
+     VALUES (105, 'Ambiguous Academy One', 'Ambiguous Academy', 'active'),
+            (106, 'Ambiguous Academy Two', 'Ambiguous Academy', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO relationships (organization_id, relationship_type, status)
+     VALUES (105, 'customer', 'active'), (106, 'customer', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (105, 'customer', 105, 'customer', 'active'),
+            (106, 'customer', 105, 'customer', 'active')`,
+  ).run();
+
+  const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
+  const edition = d1.raw.prepare(
+    "SELECT id FROM product_editions WHERE product_id = ? AND code = 'coaching-institute'",
+  ).get(product.id);
+  const batch = await callApi(d1, "licenses/batches", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      count: 1,
+      product_id: product.id,
+      edition_id: edition.id,
+      license_model: "on_premise_subscription",
+      start_date: "2026-11-15",
+      expiry_date: "2027-11-15",
+    },
+  });
+  assert.equal(batch.status, 201);
+
+  const signerPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const publicKey = Buffer.from(await crypto.subtle.exportKey("raw", signerPair.publicKey)).toString("base64url");
+  const refreshPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const signer = {
+    async fetch(request) {
+      const requestBody = await request.json();
+      const signature = await crypto.subtle.sign(
+        { name: "Ed25519" },
+        signerPair.privateKey,
+        Buffer.from(requestBody.payload, "base64url"),
+      );
+      return Response.json({
+        key_id: requestBody.key_id,
+        signature: Buffer.from(signature).toString("base64url"),
+      });
+    },
+  };
+  const bindings = {
+    LICENSE_SIGNER: signer,
+    LICENSE_ACTIVE_KEY_ID: "ambiguous-activation-test",
+    LICENSE_SIGNING_PUBLIC_KEYS: JSON.stringify({ "ambiguous-activation-test": publicKey }),
+  };
+  const code = batch.data.codes[0];
+  const registration = {
+    institution_name: "Ambiguous Academy",
+    contact_name: "Multi Org Customer",
+    contact_email: customerEmail,
+    phone: "+91-9876543210",
+  };
+  const activation = {
+    serial_number: code.serial_number,
+    activation_key: code.activation_key,
+    product_code: "prathamone-eduos",
+    company_binding: "MULTI-ORG-105",
+    installation_id: "8a36e7ab-20de-4e31-bf83-87bb4dcd7560",
+    activation_identifier: "4c765a67-9e03-4e9d-9f38-211366dcf7de",
+    refresh_public_key: Buffer.from(await crypto.subtle.exportKey("raw", refreshPair.publicKey)).toString("base64url"),
+    registration,
+  };
+
+  const ambiguous = await callApi(d1, "license/activate", { method: "POST", body: activation, bindings });
+  assert.equal(ambiguous.status, 409);
+  assert.deepEqual(ambiguous.data.organization_options.map((organization) => organization.id), [105, 106]);
+  assert.equal(d1.raw.prepare(
+    "SELECT status FROM license_code_inventory WHERE serial_number = ?",
+  ).get(code.serial_number).status, "available");
+
+  const claimed = await callApi(d1, "license/activate", {
+    method: "POST",
+    body: { ...activation, registration: { ...registration, organization_id: 106 } },
+    bindings,
+  });
+  assert.equal(claimed.status, 201);
+  assert.equal(d1.raw.prepare(
+    "SELECT organization_id FROM licenses WHERE serial_number = ?",
+  ).get(code.serial_number).organization_id, 106);
+});
+
+test("license issuance requires an explicit customer when an organization has multiple accounts", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "license-recipient-admin";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))`,
+  ).run(adminToken);
+  d1.raw.prepare(
+    `INSERT INTO customers (id, email, password_hash, name, company, status)
+     VALUES (105, 'customer.extra@example.com', 'test-hash', 'Extra Customer', 'Organization A Retail Pvt Ltd', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO people (id, email, name, source_type, source_id, status)
+     VALUES (105, 'customer.extra@example.com', 'Extra Customer', 'customer', 105, 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (101, 'customer', 105, 'customer', 'active')`,
+  ).run();
+  const productId = d1.raw.prepare("SELECT product_id FROM licenses WHERE id = 101").get().product_id;
+  const editionId = d1.raw.prepare("SELECT edition_id FROM license_editions WHERE license_id = 101").get().edition_id;
+  const body = {
+    organization_id: 101,
+    product_id: productId,
+    edition_id: editionId,
+    status: "DRAFT",
+    entitlements: [{ key: "company.binding", value_type: "text", value: "ORG-A" }],
+  };
+
+  const ambiguous = await callApi(d1, "licenses", { method: "POST", token: adminToken, body });
+  assert.equal(ambiguous.status, 409);
+  assert.match(ambiguous.data.error, /customer account ID is required/i);
+
+  const issued = await callApi(d1, "licenses", {
+    method: "POST",
+    token: adminToken,
+    body: { ...body, customer_id: 101 },
+  });
+  assert.equal(issued.status, 201);
+  assert.equal(issued.data.license.customer_id, 101);
+  assert.equal(issued.data.license.organization_id, 101);
+});
+
+test("admin role updates change internal roles but preserve external memberships", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "internal-role-update-admin";
+  d1.raw.prepare(
+    `INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at)
+     VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))`,
+  ).run(adminToken);
+  d1.raw.prepare(
+    `INSERT INTO users (id, email, password_hash, name, role, status)
+     VALUES (202, 'user.role-target@example.com', 'test-hash', 'Role Target', 'staff', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO people (id, email, name, source_type, source_id, status)
+     VALUES (202, 'user.role-target@example.com', 'Role Target', 'user', 202, 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO relationships (organization_id, relationship_type, status)
+     VALUES (201, 'internal', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (201, 'user', 202, 'staff', 'active'), (101, 'user', 202, 'staff', 'active')`,
+  ).run();
+
+  const response = await callApi(d1, "admin/users/202", {
+    method: "PATCH",
+    token: adminToken,
+    body: { role: "admin" },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(d1.raw.prepare(
+    "SELECT member_role FROM organization_members WHERE organization_id = 201 AND account_id = 202",
+  ).get().member_role, "admin");
+  assert.equal(d1.raw.prepare(
+    "SELECT member_role FROM organization_members WHERE organization_id = 101 AND account_id = 202",
+  ).get().member_role, "staff");
+});
+
 test("organization context requires explicit session selection and is isolated per session", async () => {
   const d1 = createD1Mock();
   const firstToken = "organization-context-first-session";
@@ -159,6 +579,10 @@ test("organization context requires explicit session selection and is isolated p
   d1.raw.prepare(
     "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+1 hour'))",
   ).run(secondToken);
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (102, 'customer', 101, 'customer', 'active')`,
+  ).run();
 
   const anonymous = await callApi(d1, "organization-context");
   assert.equal(anonymous.status, 401);
@@ -166,13 +590,13 @@ test("organization context requires explicit session selection and is isolated p
   const initial = await callApi(d1, "organization-context", { token: firstToken });
   assert.equal(initial.status, 200);
   assert.equal(initial.data.selected_organization_id, null);
-  assert.deepEqual(initial.data.organizations.map((item) => item.organization_id), [101]);
+  assert.deepEqual(initial.data.organizations.map((item) => item.organization_id), [101, 102]);
   assert.equal((await callApi(d1, "me", { token: firstToken })).status, 401);
 
   const invalidSelection = await callApi(d1, "organization-context", {
     method: "POST",
     token: firstToken,
-    body: { organization_id: 102 },
+    body: { organization_id: 999 },
   });
   assert.equal(invalidSelection.status, 403);
 
@@ -184,10 +608,17 @@ test("organization context requires explicit session selection and is isolated p
   assert.equal(selected.status, 200);
   assert.equal(selected.data.selected_organization_id, 101);
   assert.equal((await callApi(d1, "me", { token: firstToken })).status, 200);
-  assert.equal((await callApi(d1, "organization-context", { token: secondToken })).data.selected_organization_id, null);
+  const secondSelected = await callApi(d1, "organization-context", {
+    method: "POST",
+    token: secondToken,
+    body: { organization_id: 102 },
+  });
+  assert.equal(secondSelected.status, 200);
+  assert.equal(secondSelected.data.selected_organization_id, 102);
+  assert.equal((await callApi(d1, "organization-context", { token: secondToken })).data.selected_organization_id, 102);
   assert.equal(d1.raw.prepare(
     "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'ORGANIZATION_CONTEXT_SELECTED'",
-  ).get().count, 1);
+  ).get().count, 2);
 });
 
 test("D1 capacity monitoring is restricted to super admins and reports platform recovery", async () => {
@@ -213,8 +644,8 @@ test("D1 capacity monitoring is restricted to super admins and reports platform 
   assert.equal(response.data.manual_backup_status, "not_configured");
   assert.deepEqual(response.data.recovery, {
     provider: "cloudflare_d1_time_travel",
-    status: "available",
-    retention_days: 30,
+    status: "plan_dependent",
+    retention_days: null,
   });
   assert.deepEqual(response.data.manual_backups, []);
 });
@@ -1000,7 +1431,9 @@ test("partner onboarding, customer links, and partner setup invitations are scop
     "channel_partner",
   );
   assert.equal(
-    d1.raw.prepare("SELECT partner_type FROM partner_memberships WHERE id = ?").get(partnerAdmin.id).partner_type,
+    d1.raw.prepare(
+      "SELECT partner_type FROM partner_memberships WHERE partner_organization_id = ? AND account_type = ? AND account_id = ?",
+    ).get(partnerId, partnerAdmin.account_type, partnerAdmin.account_id).partner_type,
     "channel_partner",
   );
   const missingPartnerCustomerPhone = await callApi(d1, "partner/customers", {
@@ -1029,7 +1462,7 @@ test("partner onboarding, customer links, and partner setup invitations are scop
   });
   assert.equal(memberAccepted.status, 200);
   const partnerMember = d1.raw.prepare(
-    "SELECT id FROM partner_memberships WHERE partner_organization_id = ? AND account_id = (SELECT id FROM customers WHERE email = 'partner-member@example.test')"
+    "SELECT id FROM organization_members WHERE organization_id = ? AND account_type = 'customer' AND account_id = (SELECT id FROM customers WHERE email = 'partner-member@example.test')"
   ).get(partnerId);
   assert.ok(partnerMember);
   const promoteMember = await callApi(d1, `admin/partners/${partnerId}/members/${partnerMember.id}`, {
@@ -1159,7 +1592,7 @@ test("partner deal registration is tenant-scoped, manually reviewed, and feeds a
     INSERT INTO organizations (id, name, status) VALUES (104, 'Second Partner LLC', 'active');
     INSERT INTO relationships (organization_id, relationship_type, status) VALUES (104, 'reseller', 'active');
     INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
-    VALUES (104, 'customer', 104, 'customer', 'active');
+    VALUES (104, 'customer', 104, 'partner_member', 'active');
     INSERT INTO partner_memberships (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
     VALUES (104, 'customer', 104, 'partner_member', 'reseller', 'active');
   `);
@@ -1487,7 +1920,7 @@ test("direct license issuance registers an activation-only customer and reveals 
   assert.equal(customerRegistrations.status, 200);
   assert.equal(customerRegistrations.data.total, 1);
   assert.equal(customerRegistrations.data.registrations[0].license_id, licenseId);
-  assert.equal(customerRegistrations.data.registrations[0].organization_name, null);
+  assert.equal(customerRegistrations.data.registrations[0].organization_name, "Example Coaching Academy");
   assert.equal(customerRegistrations.data.metrics.total_licenses, 1);
   const otherCustomer = await callApi(
     d1,
@@ -1813,8 +2246,8 @@ test("pre-generated license codes retain hash and encrypted key, claim once, and
     ...activation,
     serial_number: secondCode.serial_number,
     activation_key: secondCode.activation_key,
-    installation_id: "12111111-2222-4333-8444-555555555555",
-    activation_identifier: "12111111-2222-4333-8444-666666666666",
+    installation_id: "22111111-2222-4333-8444-555555555555",
+    activation_identifier: "22111111-2222-4333-8444-666666666666",
   };
   const secondLicense = await callApi(d1, "license/activate", {
     method: "POST",
@@ -1871,6 +2304,9 @@ test("pre-generated license codes retain hash and encrypted key, claim once, and
     bindings,
   });
   assert.equal(deactivated.status, 200);
+  assert.ok(d1.raw.prepare(
+    "SELECT last_self_service_transfer_at FROM licenses WHERE serial_number = ?",
+  ).get(code.serial_number).last_self_service_transfer_at);
   assert.equal(d1.raw.prepare(
     "SELECT status FROM license_activations WHERE license_id = (SELECT id FROM licenses WHERE serial_number = ?) AND activation_identifier = ?"
   ).get(code.serial_number, activation.activation_identifier).status, "revoked");
@@ -1960,6 +2396,14 @@ test("pre-generated license codes retain hash and encrypted key, claim once, and
       bindings: emailBindings,
     });
     assert.equal(emailActivation.status, 201);
+    assert.ok(d1.raw.prepare(
+      "SELECT last_self_service_transfer_at FROM licenses WHERE serial_number = ?",
+    ).get(code.serial_number).last_self_service_transfer_at);
+    assert.equal(d1.raw.prepare(
+      `SELECT license_id FROM license_activations
+       WHERE installation_id = '12111111-2222-4333-8444-555555555555'
+         AND activation_identifier = '12111111-2222-4333-8444-666666666666'`,
+    ).get().license_id, selectedLicense.license_id);
     const replayedEmailActivation = await callApi(d1, "license/activate", {
       method: "POST",
       body: {
@@ -2861,6 +3305,14 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
               'overview-expiring-soon-license-key', 'OVERVIEW-EXPIRING-SOON',
               date('now'), date('now', '+15 days'), 'ACTIVE'`
     ).run();
+    const overviewLicenseId = d1.prepare(
+      "SELECT id FROM licenses WHERE serial_number = 'OVERVIEW-EXPIRING-SOON'"
+    ).first().id;
+    d1.prepare(
+      `INSERT INTO license_activations
+       (license_id, installation_id, activation_identifier, status)
+       VALUES (?, 'overview-test-installation', 'overview-test-activation', 'active')`
+    ).bind(overviewLicenseId).run();
     const overview = await callApi(d1, "admin/overview", { token: adminToken });
     assert.equal(overview.status, 200);
     assert.ok(overview.data.metrics.organizations >= 3);
@@ -2873,6 +3325,27 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
     assert.equal(typeof overview.data.expiring_soon, "number");
     assert.equal(typeof overview.data.code_inventory.available, "number");
     assert.equal(typeof overview.data.code_inventory.pending_delivery, "number");
+    const operational = overview.data.operational_metrics;
+    assert.equal(typeof operational.active_customer_organizations, "number");
+    assert.equal(typeof operational.active_organization_memberships, "number");
+    assert.deepEqual(operational.active_partners_by_category.map((partner) => partner.category), [
+      "channel_partner",
+      "reseller",
+      "implementation_partner",
+      "technology_partner",
+      "referral_partner",
+      "distributor",
+    ]);
+    assert.equal(typeof operational.license_utilization.active_licenses, "number");
+    assert.equal(typeof operational.license_utilization.licensed_seats, "number");
+    assert.equal(typeof operational.license_utilization.active_activations, "number");
+    assert.ok(operational.license_utilization.active_licenses >= 1);
+    assert.ok(operational.license_utilization.licensed_seats >= 1);
+    assert.ok(operational.license_utilization.active_activations >= 1);
+    assert.ok(Array.isArray(operational.support_ticket_statuses));
+    assert.ok(Array.isArray(operational.release_statuses));
+    assert.deepEqual(operational.deployment_status, { available: false });
+    assert.ok(Array.isArray(operational.customer_invitation_statuses));
     assert.ok(Array.isArray(overview.data.recent_activity));
 
     const organizations = await callApi(d1, "admin/organizations", { token: adminToken });

@@ -554,13 +554,9 @@ async function verifyLicenseEmail(request, env, origin) {
       return json({ ok: false, error: "The license email could not be changed" }, 409, origin);
     }
     const changedLicense = await env.DB.prepare(
-      `SELECT l.id, l.status, om.organization_id
+      `SELECT l.id, l.status, l.organization_id
        FROM licenses l
-       LEFT JOIN organization_members om ON om.account_type = 'customer'
-         AND om.account_id = l.customer_id AND om.status = 'active'
-       LEFT JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
-       WHERE l.id = ? AND (o.id IS NOT NULL OR om.id IS NULL)
-       ORDER BY om.id LIMIT 1`
+       WHERE l.id = ?`
     ).bind(challenge.license_id).first();
     const auditPrincipal = {
       person_id: null,
@@ -623,7 +619,16 @@ async function getSessionIdentity(request, env) {
             p.status AS person_status
      FROM sessions s
      JOIN people p ON p.source_type = s.account_type AND p.source_id = s.account_id
-     WHERE s.token = ? AND s.expires_at > datetime('now') AND p.status = 'active'`
+     WHERE s.token = ? AND s.expires_at > datetime('now') AND p.status = 'active'
+       AND (
+         (s.account_type = 'user' AND EXISTS (
+           SELECT 1 FROM users u WHERE u.id = s.account_id AND u.status IN ('active', 'trial')
+         ))
+         OR
+         (s.account_type = 'customer' AND EXISTS (
+           SELECT 1 FROM customers c WHERE c.id = s.account_id AND c.status IN ('active', 'trial')
+         ))
+       )`
   ).bind(token).first();
 }
 
@@ -718,6 +723,15 @@ async function getIdentitySession(request, env) {
      WHERE s.token = ? AND s.expires_at > datetime('now')
        AND s.organization_id IS NOT NULL
        AND p.status = 'active' AND m.status = 'active' AND o.status = 'active'
+       AND (
+         (s.account_type = 'user' AND EXISTS (
+           SELECT 1 FROM users u WHERE u.id = s.account_id AND u.status IN ('active', 'trial')
+         ))
+         OR
+         (s.account_type = 'customer' AND EXISTS (
+           SELECT 1 FROM customers c WHERE c.id = s.account_id AND c.status IN ('active', 'trial')
+         ))
+       )
      LIMIT 1`
   )
     .bind(token)
@@ -747,27 +761,38 @@ async function getPartnerSession(request, env) {
   const principal = await getIdentitySession(request, env);
   if (!principal) return null;
   const membership = await env.DB.prepare(
-    `SELECT pm.partner_organization_id, pm.partner_role, pm.partner_type,
+    `SELECT r.organization_id AS partner_organization_id,
+            r.relationship_type AS partner_type,
             o.name AS partner_name, o.status AS partner_status
-     FROM partner_memberships pm
-     JOIN organizations o ON o.id = pm.partner_organization_id AND o.status = 'active'
-     WHERE pm.account_type = ? AND pm.account_id = ? AND pm.status = 'active'
-       AND pm.partner_organization_id = ?`
-  ).bind(principal.account_type, principal.account_id, principal.organization_id).first();
+     FROM relationships r
+     JOIN organizations o ON o.id = r.organization_id AND o.status = 'active'
+     WHERE r.organization_id = ? AND r.status = 'active'
+       AND r.relationship_type IN (
+         'channel_partner', 'reseller', 'implementation_partner',
+         'technology_partner', 'referral_partner', 'distributor'
+       )`
+  ).bind(principal.organization_id).first();
   if (!membership) return null;
-  return { ...principal, ...membership };
+  return { ...principal, ...membership, partner_role: principal.member_role };
 }
 
 async function hasPartnerPermission(env, principal, permission) {
-  if (!principal) return false;
+  if (!principal || !["partner_admin", "partner_member"].includes(principal.member_role)) return false;
   const row = await env.DB.prepare(
-    `SELECT 1 FROM partner_memberships pm
-     JOIN roles r ON r.name = pm.partner_role
+    `SELECT 1 FROM organization_members m
+     JOIN roles r ON r.name = m.member_role
      JOIN role_permissions rp ON rp.role_id = r.id
      JOIN permissions p ON p.id = rp.permission_id
-     WHERE pm.partner_organization_id = ? AND pm.account_type = ? AND pm.account_id = ?
-       AND pm.status = 'active' AND p.name = ?`
-  ).bind(principal.partner_organization_id, principal.account_type, principal.account_id, permission).first();
+     JOIN relationships rel ON rel.organization_id = m.organization_id
+       AND rel.status = 'active'
+       AND rel.relationship_type IN (
+         'channel_partner', 'reseller', 'implementation_partner',
+         'technology_partner', 'referral_partner', 'distributor'
+       )
+     WHERE m.organization_id = ? AND m.account_type = ? AND m.account_id = ?
+       AND m.member_role IN ('partner_admin', 'partner_member')
+       AND m.status = 'active' AND p.name = ?`
+  ).bind(principal.organization_id, principal.account_type, principal.account_id, permission).first();
   return Boolean(row);
 }
 
@@ -847,16 +872,13 @@ async function getLicenseRecord(env, licenseId) {
             l.starts_at, l.expires_at,
             p.slug AS product_code, p.name AS product_name,
             le.edition_id, pe.code AS edition_code, pe.name AS edition_name,
-            om.organization_id,
+            l.organization_id,
             (SELECT COUNT(*) FROM license_activations la WHERE la.license_id = l.id AND la.status = 'active') AS activation_count
      FROM licenses l
      JOIN products p ON p.id = l.product_id
-     JOIN organization_members om ON om.account_type = 'customer'
-       AND om.account_id = l.customer_id AND om.status = 'active'
-     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
      LEFT JOIN license_editions le ON le.license_id = l.id
      LEFT JOIN product_editions pe ON pe.id = le.edition_id
-     WHERE l.id = ? ORDER BY om.id LIMIT 1`
+     WHERE l.id = ?`
   ).bind(licenseId).first();
 }
 
@@ -865,6 +887,14 @@ async function requireLicenseAccess(request, env, licenseId, permission = "licen
   if (!principal) return { error: json({ ok: false, error: "License permission required" }, 403) };
   const license = await getLicenseRecord(env, licenseId);
   if (!license) return { error: json({ ok: false, error: "License not found" }, 404) };
+  if (!license.organization_id && permission !== "license.view") {
+    return {
+      error: json({
+        ok: false,
+        error: "This license requires an organization association before it can be changed",
+      }, 409),
+    };
+  }
   if (principal.account_type === "customer" && license.organization_id !== principal.organization_id) {
     return { error: json({ ok: false, error: "License not found" }, 404) };
   }
@@ -1114,6 +1144,9 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   const customerEmail = validEmail(registration?.contact_email);
   const institutionName = boundedString(registration?.institution_name, 200);
   const contactName = boundedString(registration?.contact_name, 120);
+  const requestedOrganizationId = registration?.organization_id == null || registration.organization_id === ""
+    ? null
+    : numericId(String(registration.organization_id));
   const optionalString = (value, maxLength) => {
     if (value == null || value === "") return null;
     return boundedString(value, maxLength);
@@ -1126,6 +1159,7 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   const taxId = optionalString(registration?.tax_id, 80);
   const website = optionalString(registration?.website, 200);
   if (!customerEmail || !institutionName || !contactName || !phone ||
+      (registration?.organization_id != null && registration.organization_id !== "" && !requestedOrganizationId) ||
       (registration?.address != null && registration.address !== "" && !address) ||
       (registration?.city != null && registration.city !== "" && !city) ||
       (registration?.state != null && registration.state !== "" && !state) ||
@@ -1150,18 +1184,33 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
     if (await emailAlreadyRegistered(env, customerEmail)) {
       return { error: "This contact email is already registered to another account", status: 409 };
     }
+    if (requestedOrganizationId) {
+      return { error: "A new activation account cannot be linked to an existing organization without an invitation", status: 409 };
+    }
     customer = { id: null };
   }
 
   let existingOrganization = null;
   if (customer.id) {
-    existingOrganization = await env.DB.prepare(
-      `SELECT o.id, o.legal_name
+    const memberships = await env.DB.prepare(
+      `SELECT o.id, o.name, o.legal_name
        FROM organization_members om
        JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
        WHERE om.account_type = 'customer' AND om.account_id = ? AND om.status = 'active'
-       ORDER BY om.id LIMIT 1`
-    ).bind(customer.id).first();
+       ${requestedOrganizationId ? "AND o.id = ?" : ""}
+       ORDER BY o.id`
+    ).bind(...(requestedOrganizationId ? [customer.id, requestedOrganizationId] : [customer.id])).all();
+    if (requestedOrganizationId) {
+      existingOrganization = memberships.results?.[0] || null;
+    } else if (memberships.results?.length === 1) {
+      existingOrganization = memberships.results[0];
+    } else if ((memberships.results || []).length > 1) {
+      return {
+        error: "Select the organization for this license activation",
+        status: 409,
+        organization_options: memberships.results.map(({ id, name, legal_name }) => ({ id, name, legal_name })),
+      };
+    }
     if (!existingOrganization) {
       return { error: "This customer account has no active organization relationship", status: 409 };
     }
@@ -1173,12 +1222,19 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
 
   const generatedLicenseKey = `CLAIM-${makeToken().toUpperCase()}`;
   const newCustomerPasswordHash = customer.id ? null : await hashPassword(makeToken());
-  const organizationAccountId = customer.id ? "?" : "(SELECT id FROM customers WHERE email = ?)";
-  const organizationIdExpression = `(
+  const customerIdExpression = customer.id ? "?" : "(SELECT id FROM customers WHERE email = ?)";
+  const customerIdBinding = customer.id ? customer.id : customerEmail;
+  const organizationIdExpression = existingOrganization
+    ? "?"
+    : `(
     SELECT om.organization_id FROM organization_members om
-    WHERE om.account_type = 'customer' AND om.account_id = ${organizationAccountId} AND om.status = 'active'
-    ORDER BY om.id LIMIT 1
+    JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+    WHERE om.account_type = 'customer' AND om.account_id = ${customerIdExpression}
+      AND om.status = 'active'
+    GROUP BY om.account_id
+    HAVING COUNT(*) = 1
   )`;
+  const organizationIdBindings = existingOrganization ? [existingOrganization.id] : [customerIdBinding];
   const statements = [
     env.DB.prepare(
       `UPDATE license_code_inventory SET status = 'claiming'
@@ -1210,9 +1266,6 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
        )`
     ).bind(contactName, phone, customer.id, code.id));
   }
-  const customerIdExpression = customer.id ? "?" : "(SELECT id FROM customers WHERE email = ?)";
-  const customerIdBinding = customer.id ? customer.id : customerEmail;
-  const orgIdBinding = customer.id ? customer.id : customerEmail;
   if (code.assigned_partner_organization_id) {
     statements.push(env.DB.prepare(
       `INSERT INTO partner_customer_links
@@ -1224,6 +1277,7 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
          AND customer_relationship.relationship_type = 'customer' AND customer_relationship.status = 'active'
        WHERE om.account_type = 'customer' AND om.account_id = ${customerIdExpression}
          AND om.status = 'active'
+         AND om.organization_id = ${organizationIdExpression}
          AND EXISTS (
            SELECT 1 FROM organizations partner
            JOIN relationships partner_relationship ON partner_relationship.organization_id = partner.id
@@ -1239,6 +1293,7 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
     ).bind(
        code.assigned_partner_organization_id,
        customerIdBinding,
+       ...organizationIdBindings,
        code.assigned_partner_organization_id,
        code.id,
        code.assigned_partner_organization_id,
@@ -1255,14 +1310,14 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
          website = COALESCE(NULLIF(website, ''), ?)
      WHERE id = ${organizationIdExpression}
        AND EXISTS (SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming')`
-  ).bind(institutionName, address, city, state, pincode, taxId, website, orgIdBinding, code.id));
+  ).bind(institutionName, address, city, state, pincode, taxId, website, ...organizationIdBindings, code.id));
   statements.push(env.DB.prepare(
     `INSERT INTO licenses
-     (customer_id, product_id, license_key, serial_number, registered_email, seats, starts_at, expires_at, offline_validity_days, status)
-     SELECT ${customerIdExpression}, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'
+     (customer_id, organization_id, product_id, license_key, serial_number, registered_email, seats, starts_at, expires_at, offline_validity_days, status)
+     SELECT ${customerIdExpression}, ${organizationIdExpression}, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'
      WHERE EXISTS (SELECT 1 FROM license_code_inventory WHERE id = ? AND status = 'claiming')`
   ).bind(
-    customerIdBinding, code.product_id, generatedLicenseKey, code.serial_number, customerEmail, code.seats,
+    customerIdBinding, ...organizationIdBindings, code.product_id, generatedLicenseKey, code.serial_number, customerEmail, code.seats,
     code.starts_at, code.expires_at, code.offline_validity_days, code.id,
   ));
   statements.push(env.DB.prepare(
@@ -1281,9 +1336,9 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   }
   statements.push(env.DB.prepare(
     `INSERT INTO license_events (license_id, organization_id, event_type, new_status, metadata_json)
-     SELECT l.id, ${organizationIdExpression}, 'LICENSE_CREATED', l.status, ?
+     SELECT l.id, l.organization_id, 'LICENSE_CREATED', l.status, ?
      FROM licenses l WHERE l.license_key = ?`
-  ).bind(orgIdBinding, JSON.stringify({
+  ).bind(JSON.stringify({
     source: "activation_code_claim",
     batch_id: code.batch_id,
     partner_organization_id: code.assigned_partner_organization_id || null,
@@ -1311,12 +1366,13 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   statements.push(env.DB.prepare(
     `INSERT INTO audit_logs
      (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
-     SELECT NULL, ${organizationIdExpression}, 'LICENSE_CODE_CLAIMED', 'license_code', ?, NULL, ?, NULL
-     WHERE EXISTS (
+     SELECT NULL, l.organization_id, 'LICENSE_CODE_CLAIMED', 'license_code', ?, NULL, ?, NULL
+     FROM licenses l
+     WHERE l.license_key = ? AND EXISTS (
        SELECT 1 FROM license_code_inventory
        WHERE id = ? AND status = 'claimed' AND license_id = (SELECT id FROM licenses WHERE license_key = ?)
      )`
-  ).bind(orgIdBinding, code.serial_number, JSON.stringify({
+  ).bind(code.serial_number, JSON.stringify({
     product_id: code.product_id,
     edition_id: code.edition_id,
     contact_email: customerEmail,
@@ -1325,7 +1381,7 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
     issued_to_name: contactName,
     issued_to_organization: institutionName,
     delivery_channel: "activation",
-  }), code.id, generatedLicenseKey));
+  }), generatedLicenseKey, code.id, generatedLicenseKey));
 
   const results = await env.DB.batch(statements);
   const claimChanges = Number(results?.[0]?.meta?.changes || 0);
@@ -1409,23 +1465,26 @@ async function activateLicense(request, env, origin) {
       activationIdentifier,
       registration,
     });
-    if (claim.error) return json({ ok: false, error: claim.error }, claim.status, origin);
+    if (claim.error) {
+      return json({
+        ok: false,
+        error: claim.error,
+        ...(claim.organization_options ? { organization_options: claim.organization_options } : {}),
+      }, claim.status, origin);
+    }
     license = await env.DB.prepare(
       `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
               l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
               l.registered_email, c.email AS customer_email,
               p.slug AS product_code, p.billing_period,
-              le.edition_id, pe.code AS edition_code, om.organization_id
+              le.edition_id, pe.code AS edition_code, l.organization_id
        FROM licenses l
        JOIN products p ON p.id = l.product_id
-       JOIN organization_members om ON om.account_type = 'customer'
-         AND om.account_id = l.customer_id AND om.status = 'active'
-       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
        LEFT JOIN customers c ON c.id = l.customer_id
        LEFT JOIN license_editions le ON le.license_id = l.id
        LEFT JOIN product_editions pe ON pe.id = le.edition_id
-       WHERE l.id = ? AND p.slug = ?
-       ORDER BY om.id LIMIT 1`
+       WHERE l.id = ? AND p.slug = ?`
     ).bind(claim.license_id, productCode).first();
   } else {
     license = await env.DB.prepare(
@@ -1433,17 +1492,14 @@ async function activateLicense(request, env, origin) {
               l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
               l.registered_email, c.email AS customer_email,
               p.slug AS product_code, p.billing_period,
-            le.edition_id, pe.code AS edition_code, om.organization_id
+            le.edition_id, pe.code AS edition_code, l.organization_id
        FROM licenses l
        JOIN products p ON p.id = l.product_id
-       JOIN organization_members om ON om.account_type = 'customer'
-         AND om.account_id = l.customer_id AND om.status = 'active'
-       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
        LEFT JOIN customers c ON c.id = l.customer_id
        LEFT JOIN license_editions le ON le.license_id = l.id
        LEFT JOIN product_editions pe ON pe.id = le.edition_id
-       WHERE l.license_key = ? AND p.slug = ?
-       ORDER BY om.id LIMIT 1`
+       WHERE l.license_key = ? AND p.slug = ?`
     ).bind(licenseKey, productCode).first();
   }
   if (usesEmailVerification) {
@@ -1452,18 +1508,15 @@ async function activateLicense(request, env, origin) {
               l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
               l.registered_email, c.email AS customer_email,
               p.slug AS product_code, p.billing_period, le.edition_id, pe.code AS edition_code,
-              om.organization_id
+              l.organization_id
        FROM licenses l
        JOIN products p ON p.id = l.product_id
-       JOIN organization_members om ON om.account_type = 'customer'
-         AND om.account_id = l.customer_id AND om.status = 'active'
-       JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+       JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
        LEFT JOIN customers c ON c.id = l.customer_id
        LEFT JOIN license_editions le ON le.license_id = l.id
        LEFT JOIN product_editions pe ON pe.id = le.edition_id
        WHERE l.id = ? AND p.slug = ? AND l.status = 'ACTIVE'
-         AND lower(l.registered_email) = lower(?)
-       ORDER BY om.id LIMIT 1`
+         AND lower(l.registered_email) = lower(?)`
     ).bind(requestedLicenseId, productCode, activationEmail).first();
   }
   if (!license) return json({ ok: false, error: "License not found for this product" }, 404, origin);
@@ -1620,23 +1673,26 @@ async function refreshLicense(request, env, origin) {
     return json({ ok: false, error: "The signed refresh request is invalid or expired" }, 400, origin);
   }
 
-  const license = await env.DB.prepare(
+  const activationMatches = await env.DB.prepare(
     `SELECT l.id, l.customer_id, l.product_id, l.serial_number, l.offline_validity_days,
             l.status, l.starts_at, l.expires_at, l.seats,
             p.slug AS product_code, p.billing_period, le.edition_id, pe.code AS edition_code,
-            om.organization_id, la.status AS activation_status, la.refresh_public_key
+            l.organization_id, la.status AS activation_status, la.refresh_public_key
      FROM licenses l
      JOIN products p ON p.id = l.product_id
-     JOIN organization_members om ON om.account_type = 'customer'
-       AND om.account_id = l.customer_id AND om.status = 'active'
-     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+     JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
      JOIN license_activations la ON la.license_id = l.id
        AND la.installation_id = ? AND la.activation_identifier = ?
+     JOIN license_entitlements e ON e.license_id = l.id
+       AND e.entitlement_key = 'company.binding' AND e.value_text = ?
      LEFT JOIN license_editions le ON le.license_id = l.id
      LEFT JOIN product_editions pe ON pe.id = le.edition_id
-     WHERE p.slug = ?
-     ORDER BY om.id LIMIT 1`
-  ).bind(installationId, activationIdentifier, productCode).first();
+     WHERE p.slug = ? LIMIT 2`
+  ).bind(installationId, activationIdentifier, companyBinding, productCode).all();
+  if ((activationMatches.results || []).length > 1) {
+    return json({ ok: false, error: "License activation details are ambiguous" }, 409, origin);
+  }
+  const license = activationMatches.results?.[0] || null;
   if (!license || license.product_code !== productCode) {
     return json({ ok: false, error: "License activation not found" }, 404, origin);
   }
@@ -1746,22 +1802,23 @@ async function manageLicenseActivation(request, env, origin) {
   ) {
     return json({ ok: false, error: "The signed license management request is invalid or expired" }, 400, origin);
   }
-  const license = await env.DB.prepare(
+  const activationMatches = await env.DB.prepare(
     `SELECT l.id, l.status, l.last_self_service_transfer_at,
-            p.slug AS product_code, om.organization_id,
+            p.slug AS product_code, l.organization_id,
             la.status AS activation_status, la.refresh_public_key
      FROM licenses l
      JOIN products p ON p.id = l.product_id
-     JOIN organization_members om ON om.account_type = 'customer'
-       AND om.account_id = l.customer_id AND om.status = 'active'
-     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+     JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
      JOIN license_activations la ON la.license_id = l.id
        AND la.installation_id = ? AND la.activation_identifier = ?
      JOIN license_entitlements e ON e.license_id = l.id
        AND e.entitlement_key = 'company.binding' AND e.value_text = ?
-     WHERE p.slug = ?
-     ORDER BY om.id LIMIT 1`
-  ).bind(installationId, activationIdentifier, companyBinding, productCode).first();
+     WHERE p.slug = ? LIMIT 2`
+  ).bind(installationId, activationIdentifier, companyBinding, productCode).all();
+  if ((activationMatches.results || []).length > 1) {
+    return json({ ok: false, error: "License activation details are ambiguous" }, 409, origin);
+  }
+  const license = activationMatches.results?.[0] || null;
   if (!license || license.product_code !== productCode) {
     return json({ ok: false, error: "License activation not found" }, 404, origin);
   }
@@ -2066,17 +2123,16 @@ async function handleEditionLicensePolicy(request, env, productId, editionId) {
 async function listLicenses(request, env) {
   const principal = await requirePermission(request, env, "license.view");
   if (!principal) return json({ ok: false, error: "License permission required" }, 403);
-  const filter = principal.account_type === "customer" ? "AND om.organization_id = ?" : "";
+  const filter = principal.account_type === "customer" ? "AND l.organization_id = ?" : "";
   const bindings = principal.account_type === "customer" ? [principal.organization_id] : [];
   const { results } = await env.DB.prepare(
     `SELECT l.id, l.license_key, l.customer_id, l.product_id, l.status, l.starts_at, l.expires_at,
-            om.organization_id, p.slug AS product_code, p.name AS product_name,
+            l.organization_id, p.slug AS product_code, p.name AS product_name,
             le.edition_id, pe.code AS edition_code, pe.name AS edition_name,
             (SELECT COUNT(*) FROM license_activations la WHERE la.license_id = l.id AND la.status = 'active') AS activation_count
      FROM licenses l
      JOIN products p ON p.id = l.product_id
-     JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
-     JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+     LEFT JOIN organizations o ON o.id = l.organization_id
      LEFT JOIN license_editions le ON le.license_id = l.id
      LEFT JOIN product_editions pe ON pe.id = le.edition_id
     WHERE 1 = 1 ${filter} ORDER BY l.id DESC`
@@ -2114,6 +2170,9 @@ async function createLicense(request, env) {
   if (!principal) return json({ ok: false, error: provisionCustomer ? "Super admin access required" : "License creation permission required" }, 403);
 
   const organizationId = provisionCustomer ? null : numericId(body.organization_id);
+  const requestedCustomerId = body.customer_id == null || body.customer_id === ""
+    ? null
+    : numericId(body.customer_id);
   const productId = numericId(body.product_id);
   const editionId = numericId(body.edition_id);
   const status = body.status || "DRAFT";
@@ -2124,7 +2183,9 @@ async function createLicense(request, env) {
   const customerName = suppliedName == null || suppliedName === "" ? null : boundedString(suppliedName, 120);
   const customerCompany = provisionCustomer ? boundedString(body.customer_company, 200) : null;
   const customerPhone = provisionCustomer ? boundedString(body.customer_phone, 40) : null;
-  if ((!provisionCustomer && !organizationId) || !productId || !editionId ||
+  if ((!provisionCustomer && !organizationId) ||
+      (body.customer_id != null && body.customer_id !== "" && !requestedCustomerId) ||
+      (provisionCustomer && requestedCustomerId) || !productId || !editionId ||
       !LICENSE_STATUSES.includes(status) || !["DRAFT", "ACTIVE"].includes(status)) {
     return json({ ok: false, error: "Organization or new customer details, product, edition, and a valid initial status are required" }, 400);
   }
@@ -2146,13 +2207,21 @@ async function createLicense(request, env) {
     }
     customerPasswordHash = await hashPassword(makeToken());
   } else {
-    customer = await env.DB.prepare(
+    const memberships = await env.DB.prepare(
       `SELECT om.account_id FROM organization_members om
        JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
        WHERE om.organization_id = ? AND lower(o.name) != 'smritisys internal'
          AND om.account_type = 'customer' AND om.status = 'active'
-       ORDER BY om.id LIMIT 1`
-    ).bind(organizationId).first();
+       ${requestedCustomerId ? "AND om.account_id = ?" : ""}`
+    ).bind(...(requestedCustomerId ? [organizationId, requestedCustomerId] : [organizationId])).all();
+    if (requestedCustomerId) {
+      customer = memberships.results?.[0] || null;
+      if (!customer) return json({ ok: false, error: "Select a customer account that belongs to this organization" }, 400);
+    } else if (memberships.results?.length === 1) {
+      customer = memberships.results[0];
+    } else if ((memberships.results || []).length > 1) {
+      return json({ ok: false, error: "A customer account ID is required when the organization has multiple customer accounts" }, 409);
+    }
     if (!customer) return json({ ok: false, error: "Organization has no active customer relationship" }, 400);
   }
   const licenseKey = `LIC-${makeToken().toUpperCase()}`;
@@ -2170,10 +2239,12 @@ async function createLicense(request, env) {
   const customerIdExpression = provisionCustomer ? "(SELECT id FROM customers WHERE email = ?)" : "?";
   const organizationIdExpression = provisionCustomer
     ? `(SELECT m.organization_id FROM organization_members m
+       JOIN organizations o ON o.id = m.organization_id AND o.status = 'active'
        WHERE m.account_type = 'customer'
          AND m.account_id = (SELECT id FROM customers WHERE email = ?)
          AND m.status = 'active'
-       ORDER BY m.id LIMIT 1)`
+       GROUP BY m.account_id
+       HAVING COUNT(*) = 1)`
     : "?";
   const auditIp = request.headers.get("CF-Connecting-IP") || null;
   const licenseAuditValue = JSON.stringify({
@@ -2203,11 +2274,12 @@ async function createLicense(request, env) {
     ] : [];
     statements.push(
       env.DB.prepare(
-        `INSERT INTO licenses          (customer_id, product_id, license_key, seats, starts_at, expires_at, offline_validity_days, status)
-         VALUES (${customerIdExpression}, ?, ?, 1, ?, ?, 14, ?)`
+        `INSERT INTO licenses
+         (customer_id, organization_id, product_id, license_key, seats, starts_at, expires_at, offline_validity_days, status)
+         VALUES (${customerIdExpression}, ${organizationIdExpression}, ?, ?, 1, ?, ?, 14, ?)`
       ).bind(...(provisionCustomer
-        ? [customerEmail, productId, licenseKey, startsAt, expiresAt, status]
-        : [customer.account_id, productId, licenseKey, startsAt, expiresAt, status])),
+        ? [customerEmail, customerEmail, productId, licenseKey, startsAt, expiresAt, status]
+        : [customer.account_id, organizationId, productId, licenseKey, startsAt, expiresAt, status])),
       env.DB.prepare(
         `INSERT INTO license_editions (license_id, edition_id)
          SELECT id, ? FROM licenses WHERE license_key = ?`
@@ -2221,32 +2293,33 @@ async function createLicense(request, env) {
     }
     statements.push(env.DB.prepare(
       `INSERT INTO license_events (license_id, organization_id, actor_person_id, event_type, new_status, metadata_json)
-       SELECT id, ${organizationIdExpression}, ?, 'LICENSE_CREATED', status, ? FROM licenses WHERE license_key = ?`
+       SELECT id, organization_id, ?, 'LICENSE_CREATED', status, ? FROM licenses WHERE license_key = ?`
     ).bind(...(provisionCustomer
-      ? [customerEmail, principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId, seats: 1 }), licenseKey]
-      : [organizationId, principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId, seats: 1 }), licenseKey])),
+      ? [principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId, seats: 1 }), licenseKey]
+      : [principal.person_id, JSON.stringify({ product_id: productId, edition_id: editionId, seats: 1 }), licenseKey])),
     env.DB.prepare(
       `INSERT INTO audit_logs
        (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
-       SELECT ?, ${organizationIdExpression}, 'LICENSE_CREATED', 'license',
-              CAST(id AS TEXT), NULL, ?, ? FROM licenses WHERE license_key = ?`
+       SELECT ?, l.organization_id, 'LICENSE_CREATED', 'license',
+              CAST(l.id AS TEXT), NULL, ?, ? FROM licenses l WHERE l.license_key = ?`
     ).bind(...(provisionCustomer
-      ? [principal.person_id, customerEmail, licenseAuditValue, auditIp, licenseKey]
-      : [principal.person_id, organizationId, licenseAuditValue, auditIp, licenseKey])),
+      ? [principal.person_id, licenseAuditValue, auditIp, licenseKey]
+      : [principal.person_id, licenseAuditValue, auditIp, licenseKey])),
     );
     if (provisionCustomer) {
       statements.push(env.DB.prepare(
         `INSERT INTO audit_logs
          (actor_person_id, organization_id, action, resource_type, resource_id, old_value, new_value, request_ip)
-         SELECT ?, om.organization_id, 'CUSTOMER_LICENSE_ACCOUNT_CREATED', 'customer',
+         SELECT ?, l.organization_id, 'CUSTOMER_LICENSE_ACCOUNT_CREATED', 'customer',
                 CAST(c.id AS TEXT), NULL, ?, ?
          FROM customers c
-         JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = c.id AND om.status = 'active'
-         WHERE c.email = ? ORDER BY om.id LIMIT 1`
+         JOIN licenses l ON l.customer_id = c.id AND l.license_key = ?
+         WHERE c.email = ?`
       ).bind(
         principal.person_id,
         JSON.stringify({ email: customerEmail, company: customerCompany, portal_access: false }),
         auditIp,
+        licenseKey,
         customerEmail,
       ));
     }
@@ -2255,7 +2328,7 @@ async function createLicense(request, env) {
     const licenseId = await env.DB.prepare("SELECT id FROM licenses WHERE license_key = ?").bind(licenseKey).first();
     if (!licenseId) throw new Error("The new license record could not be loaded after creation");
     const license = await getLicenseRecord(env, licenseId.id);
-    if (!license) throw new Error("The new license is missing its active organization relationship");
+    if (!license) throw new Error("The new license could not be loaded after creation");
     return json({ ok: true, license: licenseResponse(license, true) }, 201);
   } catch (error) {
     if (String(error).includes("UNIQUE")) {
@@ -3125,9 +3198,17 @@ async function handleAdminUsers(request, env) {
     ).bind(body.name || null, body.status || null, userId),
     env.DB.prepare(
       `UPDATE organization_members
-       SET member_role = COALESCE(?, member_role), status = COALESCE(?, status)
+       SET member_role = CASE
+             WHEN ? IS NOT NULL AND EXISTS (
+               SELECT 1 FROM relationships r
+               WHERE r.organization_id = organization_members.organization_id
+                 AND r.relationship_type = 'internal' AND r.status = 'active'
+             ) THEN ?
+             ELSE member_role
+           END,
+           status = COALESCE(?, status)
        WHERE account_type = 'user' AND account_id = ?`
-    ).bind(body.role || null, body.status || null, userId),
+    ).bind(body.role || null, body.role || null, body.status || null, userId),
   ]);
   await writeAudit(env, request, session, "MEMBER_ROLE_OR_STATUS_CHANGED", "user", userId, target, {
     role: body.role || target.role,
@@ -3207,13 +3288,7 @@ async function listAdminLicenseRegistrations(request, env) {
       FROM licenses l
       JOIN customers c ON c.id = l.customer_id
       JOIN products p ON p.id = l.product_id
-      LEFT JOIN organizations o ON o.id = (
-        SELECT om.organization_id
-        FROM organization_members om
-        JOIN organizations candidate ON candidate.id = om.organization_id AND candidate.status = 'active'
-        WHERE om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
-        ORDER BY om.id LIMIT 1
-      )
+      LEFT JOIN organizations o ON o.id = l.organization_id
       LEFT JOIN license_editions le ON le.license_id = l.id
       LEFT JOIN product_editions pe ON pe.id = le.edition_id
     )
@@ -3334,13 +3409,7 @@ async function getAdminLicenseRegistration(request, env, session, licenseId) {
              WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count
      FROM licenses l
      JOIN customers c ON c.id = l.customer_id
-     LEFT JOIN organizations o ON o.id = (
-       SELECT om.organization_id
-       FROM organization_members om
-       JOIN organizations candidate ON candidate.id = om.organization_id AND candidate.status = 'active'
-       WHERE om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
-       ORDER BY om.id LIMIT 1
-     )
+     LEFT JOIN organizations o ON o.id = l.organization_id
      WHERE l.id = ?`
   ).bind(id).first();
   if (!registration) return json({ ok: false, error: "License registration not found" }, 404);
@@ -3379,8 +3448,8 @@ async function handleAdminControl(request, env, resource) {
       manual_backup_status: "not_configured",
       recovery: {
         provider: "cloudflare_d1_time_travel",
-        status: "available",
-        retention_days: 30,
+        status: "plan_dependent",
+        retention_days: null,
       },
       limits: {
         free_per_database_bytes: 500000000,
@@ -3400,7 +3469,23 @@ async function handleAdminControl(request, env, resource) {
   if (registrationMatch) return getAdminLicenseRegistration(request, env, session, registrationMatch[1]);
 
   if (resource === "overview") {
-    const [users, customers, organizations, products, licenses, codeInventory, recentActivity, licenseStatuses] = await Promise.all([
+    const [
+      users,
+      customers,
+      organizations,
+      products,
+      licenses,
+      codeInventory,
+      recentActivity,
+      licenseStatuses,
+      activeCustomerOrganizations,
+      activeMemberships,
+      partnerCategories,
+      licenseUtilization,
+      supportTicketStatuses,
+      releaseStatuses,
+      customerInvitationStatuses,
+    ] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM users").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM customers").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM organizations").first(),
@@ -3431,6 +3516,53 @@ async function handleAdminControl(request, env, resource) {
                 END) AS expiring_soon
          FROM licenses GROUP BY lower(status)`
       ).all(),
+      env.DB.prepare(
+        `SELECT COUNT(DISTINCT o.id) AS count
+         FROM organizations o
+         JOIN relationships r ON r.organization_id = o.id
+         WHERE o.status = 'active' AND r.status = 'active'
+           AND r.relationship_type = 'customer'`
+      ).first(),
+      env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM organization_members WHERE status = 'active'"
+      ).first(),
+      env.DB.prepare(
+        `SELECT r.relationship_type AS category, COUNT(DISTINCT o.id) AS count
+         FROM organizations o
+         JOIN relationships r ON r.organization_id = o.id
+         WHERE o.status = 'active' AND r.status = 'active'
+           AND r.relationship_type IN (?, ?, ?, ?, ?, ?)
+         GROUP BY r.relationship_type`
+      ).bind(...ADMIN_PARTNER_TYPES).all(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS active_licenses,
+                COALESCE(SUM(l.seats), 0) AS licensed_seats,
+                COALESCE(SUM((
+                  SELECT COUNT(*) FROM license_activations la
+                  WHERE la.license_id = l.id AND la.status = 'active'
+                )), 0) AS active_activations
+         FROM licenses l
+         WHERE l.status = 'ACTIVE'
+           AND (l.starts_at IS NULL OR date(l.starts_at) <= date('now'))
+           AND (l.expires_at IS NULL OR date(l.expires_at) >= date('now'))`
+      ).first(),
+      env.DB.prepare(
+        `SELECT lower(status) AS status, COUNT(*) AS count
+         FROM support_tickets GROUP BY lower(status) ORDER BY lower(status)`
+      ).all(),
+      env.DB.prepare(
+        `SELECT lower(status) AS status, COUNT(*) AS count
+         FROM releases GROUP BY lower(status) ORDER BY lower(status)`
+      ).all(),
+      env.DB.prepare(
+        `SELECT CASE
+                  WHEN status = 'pending' AND expires_at <= datetime('now') THEN 'expired'
+                  ELSE status
+                END AS status,
+                COUNT(*) AS count
+         FROM customer_invites
+         GROUP BY status ORDER BY status`
+      ).all(),
     ]);
     const licenseStatusCounts = Object.fromEntries(
       (licenseStatuses.results || []).map((row) => [row.status, Number(row.count)]),
@@ -3439,6 +3571,14 @@ async function handleAdminControl(request, env, resource) {
       (total, row) => total + Number(row.expiring_soon || 0),
       0,
     );
+    const partnerCategoryCounts = new Map(
+      (partnerCategories.results || []).map((row) => [row.category, Number(row.count)]),
+    );
+    const utilization = {
+      active_licenses: Number(licenseUtilization?.active_licenses || 0),
+      licensed_seats: Number(licenseUtilization?.licensed_seats || 0),
+      active_activations: Number(licenseUtilization?.active_activations || 0),
+    };
     return json({
       ok: true,
       metrics: { users: users.count, customers: customers.count, organizations: organizations.count, products: products.count, licenses: licenses.count },
@@ -3447,6 +3587,28 @@ async function handleAdminControl(request, env, resource) {
       code_inventory: {
         available: Number(codeInventory?.available || 0),
         pending_delivery: Number(codeInventory?.pending_delivery || 0),
+      },
+      operational_metrics: {
+        active_customer_organizations: Number(activeCustomerOrganizations?.count || 0),
+        active_organization_memberships: Number(activeMemberships?.count || 0),
+        active_partners_by_category: ADMIN_PARTNER_TYPES.map((category) => ({
+          category,
+          count: partnerCategoryCounts.get(category) || 0,
+        })),
+        license_utilization: utilization,
+        support_ticket_statuses: (supportTicketStatuses.results || []).map((row) => ({
+          status: row.status,
+          count: Number(row.count),
+        })),
+        release_statuses: (releaseStatuses.results || []).map((row) => ({
+          status: row.status,
+          count: Number(row.count),
+        })),
+        deployment_status: { available: false },
+        customer_invitation_statuses: (customerInvitationStatuses.results || []).map((row) => ({
+          status: row.status,
+          count: Number(row.count),
+        })),
       },
       recent_activity: recentActivity.results || [],
     });
@@ -3507,6 +3669,7 @@ async function handleAdminControl(request, env, resource) {
                 p.name AS product_name, p.slug AS product_code
          FROM organization_members om
          JOIN licenses l ON l.customer_id = om.account_id
+           AND l.organization_id = om.organization_id
          JOIN products p ON p.id = l.product_id
          WHERE om.organization_id = ? AND om.account_type = 'customer'
          ORDER BY l.id DESC`
@@ -3545,12 +3708,12 @@ async function handleAdminCustomers(request, env, customerId = null) {
     const pattern = query ? `%${query.toLowerCase()}%` : "";
     const { results } = await env.DB.prepare(
       `SELECT c.id, c.email, c.name, c.phone, c.company, c.status, c.created_at,
-              (SELECT o.name
+              (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(o.name)
+                           WHEN COUNT(*) > 1 THEN 'Multiple organizations' END
                FROM organization_members om
                JOIN organizations o ON o.id = om.organization_id
                WHERE om.account_type = 'customer' AND om.account_id = c.id
-                 AND om.status = 'active'
-               ORDER BY om.id LIMIT 1) AS organization_name,
+                 AND om.status = 'active' AND o.status = 'active') AS organization_name,
               (SELECT COUNT(*) FROM licenses l WHERE l.customer_id = c.id) AS license_count
        FROM customers c
        WHERE ? = ''
@@ -3559,14 +3722,13 @@ async function handleAdminCustomers(request, env, customerId = null) {
           OR lower(COALESCE(c.name, '')) LIKE ?
           OR lower(COALESCE(c.phone, '')) LIKE ?
           OR lower(COALESCE(c.company, '')) LIKE ?
-          OR lower(COALESCE((
-            SELECT o.name
-            FROM organization_members om
+          OR EXISTS (
+            SELECT 1 FROM organization_members om
             JOIN organizations o ON o.id = om.organization_id
             WHERE om.account_type = 'customer' AND om.account_id = c.id
-              AND om.status = 'active'
-            ORDER BY om.id LIMIT 1
-          ), '')) LIKE ?
+              AND om.status = 'active' AND o.status = 'active'
+              AND lower(o.name) LIKE ?
+          )
        ORDER BY c.id DESC LIMIT 200`
     ).bind(query, query, pattern, pattern, pattern, pattern, pattern).all();
     return json({ ok: true, customers: results || [] }, 200, null, { "Cache-Control": "no-store" });
@@ -3853,13 +4015,16 @@ async function completeCustomerPasswordReset(request, env) {
 
   const tokenHash = await hashCustomerInviteToken(token);
   const reset = await env.DB.prepare(
-    `SELECT r.id, r.customer_id, om.organization_id
+    `SELECT r.id, r.customer_id,
+            (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(om.organization_id) END
+             FROM organization_members om
+             JOIN organizations o ON o.id = om.organization_id AND o.status = 'active'
+             WHERE om.account_type = 'customer' AND om.account_id = r.customer_id
+               AND om.status = 'active') AS organization_id
      FROM customer_password_resets r
      JOIN customers c ON c.id = r.customer_id AND c.status IN ('active', 'trial')
-     LEFT JOIN organization_members om ON om.account_type = 'customer'
-       AND om.account_id = c.id AND om.status = 'active'
      WHERE r.token_hash = ? AND r.status = 'pending' AND r.expires_at > datetime('now')
-     ORDER BY om.id LIMIT 1`
+     LIMIT 1`
   ).bind(tokenHash).first();
   if (!reset) {
     return json({ ok: false, error: "This password reset link is invalid, expired, or already used" }, 410, null, {
@@ -4166,20 +4331,22 @@ async function handleCommercial(request, env, resource, recordId = null) {
   if (resource === "summary") {
     const { results: orders } = await env.DB.prepare(
       `SELECT id, order_number, total_amount, status, created_at
-       FROM orders WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
-    ).bind(session.account_id).all();
+       FROM orders WHERE customer_id = ? AND organization_id = ?
+       ORDER BY created_at DESC, id DESC`
+    ).bind(session.account_id, session.organization_id).all();
     const { results: amcContracts } = await env.DB.prepare(
       `SELECT id, contract_number, starts_at, expires_at, status
-       FROM amc_contracts WHERE customer_id = ? ORDER BY expires_at DESC, id DESC`
-    ).bind(session.account_id).all();
+       FROM amc_contracts WHERE customer_id = ? AND organization_id = ?
+       ORDER BY expires_at DESC, id DESC`
+    ).bind(session.account_id, session.organization_id).all();
     return json({ ok: true, summary: { orders, amc_contracts: amcContracts } });
   }
 
   if (resource === "orders" && recordId) {
     const order = await env.DB.prepare(
       `SELECT id, order_number, total_amount, status, created_at
-       FROM orders WHERE id = ? AND customer_id = ?`
-    ).bind(recordId, session.account_id).first();
+       FROM orders WHERE id = ? AND customer_id = ? AND organization_id = ?`
+    ).bind(recordId, session.account_id, session.organization_id).first();
     if (!order) return json({ ok: false, error: "Order not found" }, 404);
     return json({ ok: true, order });
   }
@@ -4187,8 +4354,9 @@ async function handleCommercial(request, env, resource, recordId = null) {
   if (resource === "orders") {
     const { results } = await env.DB.prepare(
       `SELECT id, order_number, total_amount, status, created_at
-       FROM orders WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
-    ).bind(session.account_id).all();
+       FROM orders WHERE customer_id = ? AND organization_id = ?
+       ORDER BY created_at DESC, id DESC`
+    ).bind(session.account_id, session.organization_id).all();
     return json({ ok: true, orders: results });
   }
 
@@ -4213,18 +4381,20 @@ async function handleTickets(request, env) {
     }
     const priority = allowedPriorities.includes(body.priority) ? body.priority : "normal";
     const result = await env.DB.prepare(
-      `INSERT INTO support_tickets (customer_id, subject, description, priority)
-       VALUES (?, ?, ?, ?)`
-    ).bind(session.account_id, subject, description, priority).run();
+      `INSERT INTO support_tickets (customer_id, organization_id, subject, description, priority)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(session.account_id, session.organization_id, subject, description, priority).run();
     await writeAudit(env, request, session, "SUPPORT_TICKET_CREATED", "support_ticket", result.meta.last_row_id, null, { priority });
     return json({ ok: true, ticket_id: result.meta.last_row_id, message: "Support ticket created" }, 201);
   }
 
   const { results } = await env.DB.prepare(
     `SELECT id, subject, description, priority, status, created_at, updated_at
-     FROM support_tickets WHERE customer_id = ? ORDER BY created_at DESC`
+     FROM support_tickets
+     WHERE customer_id = ? AND organization_id = ?
+     ORDER BY created_at DESC`
   )
-    .bind(session.account_id)
+    .bind(session.account_id, session.organization_id)
     .all();
   return json({ ok: true, tickets: results });
 }
@@ -4237,8 +4407,8 @@ async function handleTicketResource(request, env, ticketId, resource) {
 
   const ticket = await env.DB.prepare(
     `SELECT id, subject, description, priority, status, created_at, updated_at
-     FROM support_tickets WHERE id = ? AND customer_id = ?`
-  ).bind(ticketId, session.account_id).first();
+     FROM support_tickets WHERE id = ? AND customer_id = ? AND organization_id = ?`
+  ).bind(ticketId, session.account_id, session.organization_id).first();
   if (!ticket) return json({ ok: false, error: "Ticket not found" }, 404);
 
   if (resource === "messages" && request.method === "POST") {
@@ -4510,8 +4680,10 @@ async function handleCustomerAnnouncements(request, env) {
        AND (a.product_id IS NULL OR EXISTS (
          SELECT 1 FROM licenses l
          JOIN organization_members om ON om.account_type = 'customer'
-           AND om.account_id = l.customer_id AND om.organization_id = ? AND om.status = 'active'
-         WHERE l.product_id = a.product_id AND l.status NOT IN ('CANCELLED', 'EXPIRED')
+           AND om.account_id = l.customer_id AND om.organization_id = l.organization_id
+           AND om.status = 'active'
+         WHERE l.organization_id = ? AND l.product_id = a.product_id
+           AND l.status NOT IN ('CANCELLED', 'EXPIRED')
        ))
      ORDER BY CASE a.severity
        WHEN 'outage' THEN 1 WHEN 'degraded' THEN 2
@@ -4635,8 +4807,10 @@ async function handleReleases(request, env, releaseId = null) {
     FROM releases r
     JOIN products p ON p.id = r.product_id
     JOIN licenses l ON l.product_id = r.product_id AND l.status <> 'CANCELLED'
+      AND l.organization_id = ?
     JOIN organization_members om ON om.account_type = 'customer'
-      AND om.account_id = l.customer_id AND om.organization_id = ? AND om.status = 'active'
+      AND om.account_id = l.customer_id AND om.organization_id = l.organization_id
+      AND om.status = 'active'
     WHERE r.status = 'published' AND r.published_at IS NOT NULL`;
 
   if (releaseId) {
@@ -4772,7 +4946,8 @@ async function handlePartner(request, env, resource) {
               le.edition_id, pe.code AS edition_code, pe.name AS edition_name
        FROM licenses l
        JOIN products p ON p.id = l.product_id
-       JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
+       JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id
+         AND om.organization_id = l.organization_id AND om.status = 'active'
        JOIN organizations customer_org ON customer_org.id = om.organization_id AND customer_org.status = 'active'
        JOIN partner_customer_links pcl ON pcl.customer_organization_id = om.organization_id
          AND pcl.partner_organization_id = ? AND pcl.status = 'active'
@@ -4791,7 +4966,8 @@ async function handlePartner(request, env, resource) {
        FROM releases r
        JOIN products p ON p.id = r.product_id
        JOIN licenses l ON l.product_id = r.product_id AND l.status <> 'CANCELLED'
-       JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id AND om.status = 'active'
+       JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id
+         AND om.organization_id = l.organization_id AND om.status = 'active'
        JOIN partner_customer_links pcl ON pcl.customer_organization_id = om.organization_id
          AND pcl.partner_organization_id = ? AND pcl.status = 'active'
        WHERE r.status = 'published' AND r.published_at IS NOT NULL
@@ -5323,14 +5499,20 @@ async function updatePartnerCustomerContact(request, env, customerId) {
     return json({ ok: false, error: "A valid customer contact is required" }, 400);
   }
   if (!body || typeof body !== "object" || Array.isArray(body) ||
-      Object.keys(body).some((field) => !["name", "phone"].includes(field))) {
-    return json({ ok: false, error: "Only customer contact name and phone can be updated" }, 400);
+      Object.keys(body).some((field) => !["name", "phone", "organization_id"].includes(field))) {
+    return json({ ok: false, error: "Only customer contact name, phone, and organization can be supplied" }, 400);
   }
   const name = boundedString(body.name, 120);
   const phone = boundedString(body.phone, 40);
-  if (!name || !phone) return json({ ok: false, error: "A valid contact name and phone number are required" }, 400);
+  const requestedOrganizationId = body.organization_id == null || body.organization_id === ""
+    ? null
+    : numericId(body.organization_id);
+  if (!name || !phone ||
+      (body.organization_id != null && body.organization_id !== "" && !requestedOrganizationId)) {
+    return json({ ok: false, error: "A valid contact name, phone number, and optional organization are required" }, 400);
+  }
 
-  const customer = await env.DB.prepare(
+  const customers = await env.DB.prepare(
     `SELECT c.id, c.name, c.phone, om.organization_id
      FROM customers c
      JOIN organization_members om ON om.account_type = 'customer'
@@ -5340,8 +5522,14 @@ async function updatePartnerCustomerContact(request, env, customerId) {
      JOIN partner_customer_links pcl ON pcl.customer_organization_id = om.organization_id
        AND pcl.partner_organization_id = ? AND pcl.status = 'active'
      WHERE c.id = ? AND c.status IN ('active', 'trial')
-     ORDER BY om.id LIMIT 1`
-  ).bind(session.partner_organization_id, customerId).first();
+       ${requestedOrganizationId ? "AND om.organization_id = ?" : ""}`
+  ).bind(...(requestedOrganizationId
+    ? [session.partner_organization_id, customerId, requestedOrganizationId]
+    : [session.partner_organization_id, customerId])).all();
+  if (!requestedOrganizationId && (customers.results || []).length > 1) {
+    return json({ ok: false, error: "Select the assigned customer organization for this contact" }, 409);
+  }
+  const customer = customers.results?.[0] || null;
   if (!customer) return json({ ok: false, error: "Assigned customer contact not found" }, 404);
   const changedFields = [];
   if (customer.name !== name) changedFields.push("name");
@@ -5492,32 +5680,13 @@ function customerIdentityStatements(
   const organizationName = organizationIdExpression
     ? companyName
     : `(${companyName} || ' #' || c.id)`;
-  const matchingOrganizationId = `(SELECT o.id FROM organizations o
-    WHERE (lower(trim(COALESCE(NULLIF(o.legal_name, ''), o.name))) = lower(trim(${companyName}))
-       OR lower(trim(o.name)) = lower(trim(${companyName})))
-      AND lower(trim(o.name)) <> 'smritisys internal'
-      AND (
-        EXISTS (
-          SELECT 1 FROM relationships r
-          WHERE r.organization_id = o.id
-            AND r.relationship_type = 'customer'
-            AND r.status = 'active'
-        )
-        OR NOT EXISTS (
-          SELECT 1 FROM relationships r
-          WHERE r.organization_id = o.id
-        )
-      )
-    ORDER BY o.id LIMIT 1)`;
   const organizationId = organizationIdExpression
-    ? `COALESCE(${organizationIdExpression}, ${matchingOrganizationId})`
-    : `(SELECT o.id FROM organizations o
+    ? `(${organizationIdExpression})`
+    : `(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(o.id) END FROM organizations o
         WHERE lower(trim(o.name)) = lower(trim(${organizationName}))
-          AND o.status = 'active'
-        ORDER BY o.id LIMIT 1)`;
+          AND o.status = 'active')`;
   const organizationExists = organizationIdExpression
-    ? `(lower(trim(COALESCE(NULLIF(o.legal_name, ''), o.name))) = lower(trim(${companyName}))
-        OR lower(trim(o.name)) = lower(trim(${companyName})))`
+    ? `o.id = ${organizationIdExpression}`
     : `lower(trim(o.name)) = lower(trim(${organizationName}))`;
   const bindCustomerId = () => [...customerIdBindings];
   const bindOrganizationId = () => [...organizationIdBindings];
@@ -5587,7 +5756,11 @@ async function ensureIdentityForAccount(env, accountType, accountId, email, name
   )
     .bind(organizationName, organizationName, organizationName)
     .run();
-  const organization = await env.DB.prepare("SELECT id FROM organizations WHERE name = ? LIMIT 1").bind(organizationName).first();
+  const organization = await env.DB.prepare(
+    `SELECT CASE WHEN COUNT(*) = 1 THEN MAX(id) END AS id
+     FROM organizations WHERE name = ? AND status = 'active'`
+  ).bind(organizationName).first();
+  if (!organization?.id) throw new Error("A unique active internal organization is required");
   const memberRole = role || "staff";
   await env.DB.prepare(
     `INSERT OR IGNORE INTO organization_members
@@ -5684,9 +5857,6 @@ async function handleAdminCustomerInvites(request, env, origin) {
        WHERE account_type = 'customer' AND account_id = ? AND status = 'active'`
     ).bind(existingCustomer.id).all();
     const activeOrganizationIds = (memberships.results || []).map((membership) => Number(membership.organization_id));
-    if (activeOrganizationIds.some((id) => id !== Number(organization.id))) {
-      return json({ ok: false, error: "This account is already assigned to another organization" }, 409);
-    }
     if (!existingCustomer.phone) {
       await env.DB.prepare(
         "UPDATE customers SET phone = ? WHERE id = ? AND (phone IS NULL OR trim(phone) = '')"
@@ -5735,11 +5905,18 @@ async function handleAdminCustomerInvites(request, env, origin) {
     if (existingCustomer.status !== "inactive") {
       return json({ ok: false, error: "This customer account cannot be converted through an invitation" }, 409);
     }
-    const priorMembership = await env.DB.prepare(
-      `SELECT organization_id FROM organization_members
-       WHERE account_type = 'customer' AND account_id = ? ORDER BY status = 'active' DESC, id LIMIT 1`
-    ).bind(existingCustomer.id).first();
-    if (priorMembership && (!organization || Number(priorMembership.organization_id) !== Number(organization.id))) {
+    const priorMemberships = await env.DB.prepare(
+      `SELECT organization_id, status FROM organization_members
+       WHERE account_type = 'customer' AND account_id = ?
+       ORDER BY status = 'active' DESC, id`
+    ).bind(existingCustomer.id).all();
+    const allPriorMemberships = priorMemberships.results || [];
+    const activePriorMemberships = allPriorMemberships.filter((membership) => membership.status === "active");
+    const selectableMemberships = activePriorMemberships.length ? activePriorMemberships : allPriorMemberships;
+    if (selectableMemberships.length &&
+        (!organization || !selectableMemberships.some(
+          (membership) => Number(membership.organization_id) === Number(organization.id),
+        ))) {
       return json({ ok: false, error: "Select the organization already associated with this account" }, 409);
     }
     if (!organization) {
@@ -5922,8 +6099,8 @@ async function handleCustomerInviteAcceptance(request, env, origin) {
      "active",
      "active",
      "customer",
-     "(SELECT organization_id FROM customer_invites WHERE id = ?)",
-     [invitation.id],
+     invitation.organization_id ? "(SELECT organization_id FROM customer_invites WHERE id = ?)" : null,
+     invitation.organization_id ? [invitation.id] : [],
     );
     const partnerCustomerLinkStatement = env.DB.prepare(
      `INSERT INTO partner_customer_links
@@ -6024,7 +6201,7 @@ async function handleAdminPartners(request, env, origin) {
       env.DB.prepare(
         `SELECT o.id, o.name, o.legal_name, o.address, o.city, o.state, o.pincode,
                 o.country, o.phone, o.status, r.relationship_type AS partner_type,
-                COUNT(DISTINCT pm.id) AS member_count,
+                COUNT(DISTINCT m.id) AS member_count,
                 COUNT(DISTINCT CASE WHEN pcl.status = 'active' THEN pcl.id END) AS linked_customer_count,
                 (SELECT COUNT(*) FROM partner_invites pi
                  WHERE pi.partner_organization_id = o.id AND pi.status = 'pending'
@@ -6039,17 +6216,25 @@ async function handleAdminPartners(request, env, origin) {
              'channel_partner', 'reseller', 'implementation_partner',
              'technology_partner', 'referral_partner', 'distributor'
            )
-         LEFT JOIN partner_memberships pm ON pm.partner_organization_id = o.id AND pm.status = 'active'
+         LEFT JOIN organization_members m ON m.organization_id = o.id
+           AND m.member_role IN ('partner_admin', 'partner_member') AND m.status = 'active'
          LEFT JOIN partner_customer_links pcl ON pcl.partner_organization_id = o.id
          GROUP BY o.id, r.relationship_type
          ORDER BY o.name, r.relationship_type`
       ).all(),
       env.DB.prepare(
-        `SELECT pm.id, pm.partner_organization_id, pm.account_type, pm.account_id,
-                pm.partner_role, pm.status, p.name, p.email
-         FROM partner_memberships pm
-         JOIN people p ON p.source_type = pm.account_type AND p.source_id = pm.account_id
-         ORDER BY pm.partner_organization_id, pm.status, p.name, p.email`
+        `SELECT m.id, m.organization_id AS partner_organization_id, m.account_type, m.account_id,
+                m.member_role AS partner_role, m.status, r.relationship_type AS partner_type,
+                p.name, p.email
+         FROM organization_members m
+         JOIN relationships r ON r.organization_id = m.organization_id
+           AND r.relationship_type IN (
+             'channel_partner', 'reseller', 'implementation_partner',
+             'technology_partner', 'referral_partner', 'distributor'
+           )
+         JOIN people p ON p.source_type = m.account_type AND p.source_id = m.account_id
+         WHERE m.member_role IN ('partner_admin', 'partner_member')
+         ORDER BY m.organization_id, m.status, p.name, p.email`
       ).all(),
       env.DB.prepare(
         `SELECT pcl.id, pcl.partner_organization_id, partner.name AS partner_name,
@@ -6218,17 +6403,17 @@ async function updateAdminPartnerMember(request, env, partnerOrganizationId, mem
   }
 
   const membership = await env.DB.prepare(
-    `SELECT pm.id, pm.partner_organization_id, pm.account_type, pm.account_id,
-            pm.partner_role, pm.status, p.name, p.email
-     FROM partner_memberships pm
-     JOIN people p ON p.source_type = pm.account_type AND p.source_id = pm.account_id
-     JOIN organizations o ON o.id = pm.partner_organization_id
-     JOIN relationships r ON r.organization_id = o.id
+    `SELECT m.id, m.organization_id AS partner_organization_id, m.account_type, m.account_id,
+            m.member_role AS partner_role, m.status, p.name, p.email
+     FROM organization_members m
+     JOIN people p ON p.source_type = m.account_type AND p.source_id = m.account_id
+     JOIN relationships r ON r.organization_id = m.organization_id
        AND r.relationship_type IN (
          'channel_partner', 'reseller', 'implementation_partner',
          'technology_partner', 'referral_partner', 'distributor'
        )
-     WHERE pm.id = ? AND pm.partner_organization_id = ?
+     WHERE m.id = ? AND m.organization_id = ?
+       AND m.member_role IN ('partner_admin', 'partner_member')
      LIMIT 1`
   ).bind(membershipId, partnerOrganizationId).first();
   if (!membership) return json({ ok: false, error: "Partner member not found" }, 404);
@@ -6243,8 +6428,8 @@ async function updateAdminPartnerMember(request, env, partnerOrganizationId, mem
     (nextStatus !== "active" || nextRole !== "partner_admin");
   if (removingActiveAdmin) {
     const activeAdmins = await env.DB.prepare(
-      `SELECT COUNT(*) AS count FROM partner_memberships
-       WHERE partner_organization_id = ? AND status = 'active' AND partner_role = 'partner_admin'`
+      `SELECT COUNT(*) AS count FROM organization_members
+       WHERE organization_id = ? AND status = 'active' AND member_role = 'partner_admin'`
     ).bind(partnerOrganizationId).first();
     if (Number(activeAdmins?.count || 0) <= 1) {
       return json({ ok: false, error: "Keep at least one active partner administrator" }, 409);
@@ -6255,15 +6440,15 @@ async function updateAdminPartnerMember(request, env, partnerOrganizationId, mem
   const newValue = { partner_role: nextRole, status: nextStatus };
   const results = await env.DB.batch([
     env.DB.prepare(
-      `UPDATE partner_memberships
-       SET partner_role = ?, status = ?
-       WHERE id = ? AND partner_organization_id = ?
-         AND partner_role = ? AND status = ?
+      `UPDATE organization_members
+       SET member_role = ?, status = ?
+       WHERE id = ? AND organization_id = ?
+         AND member_role = ? AND status = ?
          AND (
            (? = 'partner_admin' AND ? = 'active') OR
-           partner_role <> 'partner_admin' OR status <> 'active' OR
-           (SELECT COUNT(*) FROM partner_memberships
-            WHERE partner_organization_id = ? AND partner_role = 'partner_admin' AND status = 'active') > 1
+           member_role <> 'partner_admin' OR status <> 'active' OR
+           (SELECT COUNT(*) FROM organization_members
+            WHERE organization_id = ? AND member_role = 'partner_admin' AND status = 'active') > 1
          )`
     ).bind(
       nextRole, nextStatus, membershipId, partnerOrganizationId,
@@ -6271,13 +6456,21 @@ async function updateAdminPartnerMember(request, env, partnerOrganizationId, mem
       nextRole, nextStatus, partnerOrganizationId,
     ),
     env.DB.prepare(
-      `INSERT INTO organization_members
-       (organization_id, account_type, account_id, member_role, status)
-       SELECT ?, ?, ?, ?, ? WHERE changes() = 1
-       ON CONFLICT(organization_id, account_type, account_id)
-       DO UPDATE SET member_role = excluded.member_role, status = excluded.status`
+      `INSERT INTO partner_memberships
+       (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+       SELECT m.organization_id, m.account_type, m.account_id, m.member_role, r.relationship_type, m.status
+       FROM organization_members m
+       JOIN relationships r ON r.organization_id = m.organization_id
+         AND r.relationship_type IN (
+           'channel_partner', 'reseller', 'implementation_partner',
+           'technology_partner', 'referral_partner', 'distributor'
+         )
+       WHERE m.id = ? AND m.member_role = ? AND m.status = ? AND changes() = 1
+       ON CONFLICT(partner_organization_id, account_type, account_id)
+       DO UPDATE SET partner_role = excluded.partner_role,
+                     partner_type = excluded.partner_type, status = excluded.status`
     ).bind(
-      partnerOrganizationId, membership.account_type, membership.account_id, nextRole, nextStatus,
+      membershipId, nextRole, nextStatus,
     ),
     env.DB.prepare(
       `INSERT INTO audit_logs
@@ -6382,17 +6575,6 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
   if (!existingCustomer && await emailAlreadyRegistered(env, email)) {
     return json({ ok: false, error: "An account already exists for this email" }, 409);
   }
-  if (existingCustomer) {
-    const otherPartner = await env.DB.prepare(
-      `SELECT partner_organization_id FROM partner_memberships
-       WHERE account_type = 'customer' AND account_id = ? AND status = 'active'
-         AND (? IS NULL OR partner_organization_id <> ?) LIMIT 1`
-    ).bind(existingCustomer.id, organizationId, organizationId).first();
-    if (otherPartner) {
-      return json({ ok: false, error: "This account already has access to another partner organization" }, 409);
-    }
-  }
-
   let organization = organizationId
     ? await env.DB.prepare(
       `SELECT id, name, legal_name, status FROM organizations
@@ -6507,7 +6689,7 @@ async function createAdminPartnerContact(request, env, origin, principal, reques
          (organization_id, account_type, account_id, member_role, status)
          VALUES (?, 'customer', ?, ?, 'active')
          ON CONFLICT(organization_id, account_type, account_id)
-         DO UPDATE SET status = excluded.status`
+         DO UPDATE SET member_role = excluded.member_role, status = excluded.status`
       ).bind(organization.id, existingCustomer.id, partnerRole),
       env.DB.prepare(
         `INSERT INTO partner_memberships
