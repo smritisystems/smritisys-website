@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/portal.css" />
+  <link rel="stylesheet" href="css/portal.css?v=session-org-context-v1" />
 </head>
 <body>
   <section id="loginView" class="login-shell">
@@ -54,7 +54,7 @@
     <main>
       <header class="topbar">
         <h1 id="pageTitle">Overview</h1>
-        <div class="user-chip"><span id="userName">Customer</span><span id="userAvatar" class="avatar">C</span></div>
+        <div class="user-chip"><button id="organizationContextButton" class="secondary context-switcher" type="button">Select organization</button><span id="userName">Customer</span><span id="userAvatar" class="avatar">C</span></div>
       </header>
       <div class="content">
         <section class="view active" data-section="overview">
@@ -135,6 +135,18 @@
     </main>
   </section>
 
-  <script src="js/portal.js?v=support-ticket-status-v1" defer></script>
+  <dialog id="organizationContextDialog" class="organization-context-dialog" aria-labelledby="organizationContextTitle">
+    <form id="organizationContextForm">
+      <h2 id="organizationContextTitle">Choose your organization</h2>
+      <p class="muted">Your access is scoped to the organization selected for this session.</p>
+      <label for="organizationContextSelect">Organization</label>
+      <select id="organizationContextSelect" required></select>
+      <p id="organizationContextMessage" class="message" role="status"></p>
+      <button class="primary" type="submit">Continue</button>
+      <button id="organizationContextSignOutButton" class="secondary" type="button">Sign out</button>
+    </form>
+  </dialog>
+  <script src="js/organization-context.js" defer></script>
+  <script src="js/portal.js?v=session-org-context-v1" defer></script>
 </body>
 </html>

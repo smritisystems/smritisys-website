@@ -84,8 +84,10 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 |--------|------|-------------|
 | POST | `/api/demo` | Save demo request |
 | POST | `/api/signup` | Customer signup; staff signup is one-time bootstrap only |
-| POST | `/api/login` | `{ email, password }` → token; account type is detected automatically. Optional `type` remains supported. |
-| GET | `/api/me` | Current user (Bearer token) |
+| POST | `/api/login` | `{ email, password }` → session; account type is detected automatically. Optional `type` remains supported. Organization access is not selected implicitly. |
+| GET | `/api/organization-context` | List active organization memberships and the organization selected for the current session |
+| POST | `/api/organization-context` | Select an active membership organization for the current server session |
+| GET | `/api/me` | Current user and selected organization membership; requires session organization selection |
 | GET | `/api/profile` | Current customer profile (Bearer token) |
 | PUT | `/api/profile` | Update customer profile (Bearer token) |
 | GET | `/api/tickets` | List customer support tickets (Bearer token) |
@@ -127,6 +129,8 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 
 Browser logins receive an `HttpOnly`, `Secure`, `SameSite=Lax` `smritisys_session` cookie and the portal clients send same-origin credentials automatically. The API continues to accept `Authorization: Bearer <token>` for existing non-browser integrations during the migration period. Logout invalidates the server session and clears the browser cookie.
 
+After login, a user must explicitly select an organization. That selection is stored on the individual server session, and organization-scoped API routes deny access until it is set. Changing an organization affects only that session; it does not change the user's memberships or other active sessions. Migration `0029_session_organization_context.sql` adds the nullable session column without backfilling existing sessions, so active users must select a context again after the migration.
+
 `super_admin` is the full-control administrative role. Administrative endpoints must
 call the super-admin guard; ordinary `staff` accounts cannot manage users or demos.
 
@@ -143,11 +147,12 @@ Before deploying the completed control plane:
 
 1. Back up the remote D1 database.
 2. Apply migrations `0002_identity_rbac.sql` through `0013_customer_announcements.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production. Migration `0013` preserves existing announcements while adding product targeting, severity, scheduling, and audit attribution.
-3. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
-4. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
-5. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.
-6. Verify customer, partner, and admin login, tenant isolation, logout invalidation, and the accounting boundary after deployment.
-7. Verify D1-backed throttling for login, signup, demo, and password endpoints, then enable Cloudflare WAF rate limiting, error monitoring, backups, and alerting before inviting production users.
+3. Before deploying the explicit organization-context UI/API, separately review and approve migration `0029_session_organization_context.sql`; it is additive and intentionally does not choose an organization for existing sessions.
+4. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
+5. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
+6. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.
+7. Verify customer, partner, and admin login, explicit organization selection, tenant isolation, logout invalidation, and the accounting boundary after deployment.
+8. Verify D1-backed throttling for login, signup, demo, and password endpoints, then enable Cloudflare WAF rate limiting, error monitoring, backups, and alerting before inviting production users.
 
 ## Phase 2 identity migration
 

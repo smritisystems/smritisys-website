@@ -68,6 +68,8 @@ function showPortal() {
 }
 
 function showLogin(message = '') {
+  const contextDialog = $('#organizationContextDialog');
+  if (contextDialog?.open) contextDialog.close();
   $('#portalView').classList.add('hidden');
   $('#loginView').classList.remove('hidden');
   setMessage($('#loginMessage'), message, false);
@@ -319,6 +321,7 @@ async function loadCustomerWorkspace() {
 
 async function loadPortal() {
   try {
+    if (!(await organizationContext.ensureSelected())) return;
     const identity = await api('me');
     state.accountType = identity.account_type;
     updateIdentity(identity.user);
@@ -334,6 +337,17 @@ async function loadPortal() {
     showLogin(error.status === 401 ? 'Your session has expired. Please sign in again.' : 'Unable to load your workspace.');
   }
 }
+
+const organizationContext = window.createOrganizationContextController({
+  api,
+  buttonId: 'organizationContextButton',
+  dialogId: 'organizationContextDialog',
+  formId: 'organizationContextForm',
+  selectId: 'organizationContextSelect',
+  messageId: 'organizationContextMessage',
+  onSelected: loadPortal,
+  onSignOut: logout,
+});
 
 async function loadView(view) {
   if (view === 'organization') await loadOrganization();

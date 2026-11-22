@@ -7,6 +7,7 @@ const migration = fs.readFileSync(new URL("../migrations/0002_identity_rbac.sql"
 const rateLimitMigration = fs.readFileSync(new URL("../migrations/0012_rate_limits.sql", import.meta.url), "utf8");
 const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 const readme = fs.readFileSync(new URL("../README.md", import.meta.url), "utf8");
+const contextMigration = fs.readFileSync(new URL("../migrations/0029_session_organization_context.sql", import.meta.url), "utf8");
 
 test("staff bootstrap is one-time and environment-gated", () => {
   assert.match(api, /X-Staff-Bootstrap/);
@@ -29,6 +30,27 @@ test("server authorization uses organization membership permissions", () => {
   assert.match(api, /organization_id = \?/);
   assert.match(api, /admin\.system/);
   assert.match(schema, /'support\.create'/);
+});
+
+test("organization authorization uses an explicitly selected session context", () => {
+  const contextUi = fs.readFileSync(new URL("../js/organization-context.js", import.meta.url), "utf8");
+  assert.match(schema, /organization_id INTEGER REFERENCES organizations\(id\)/);
+  assert.match(contextMigration, /ALTER TABLE sessions\s+ADD COLUMN organization_id/);
+  assert.doesNotMatch(contextMigration, /UPDATE sessions SET organization_id/);
+  assert.match(api, /path === "organization-context" && \["GET", "POST"\]/);
+  assert.match(api, /AND s\.organization_id IS NOT NULL/);
+  assert.match(api, /JOIN organization_members m ON m\.organization_id = s\.organization_id/);
+  assert.match(api, /UPDATE sessions SET organization_id = \?/);
+  assert.match(contextUi, /api\('organization-context'\)/);
+  for (const page of ["portal.html", "partner.html", "admin.html"]) {
+    const html = fs.readFileSync(new URL(`../${page}`, import.meta.url), "utf8");
+    const scriptName = page === "portal.html" ? "portal.js" : page === "partner.html" ? "partner.js" : "admin.js";
+    const script = fs.readFileSync(new URL(`../js/${scriptName}`, import.meta.url), "utf8");
+    assert.match(html, /id="organizationContextButton"/);
+    assert.match(html, /id="organizationContextSignOutButton"/);
+    assert.match(html, /js\/organization-context\.js/);
+    assert.match(script, /organizationContext\.ensureSelected\(\)/);
+  }
 });
 
 test("production CORS requires explicit allowed origins", () => {

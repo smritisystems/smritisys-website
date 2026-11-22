@@ -135,13 +135,66 @@ async function callApi(env, path, options = {}) {
   return { status: res.status, ok: res.ok, data, headers: res.headers };
 }
 
-test("D1 capacity monitoring is restricted to super admins and reports backups disabled", async () => {
+async function selectSessionOrganization(env, token, organizationId = null) {
+  const context = await callApi(env, "organization-context", { token });
+  assert.equal(context.status, 200);
+  const selectedId = organizationId ?? context.data.organizations[0]?.organization_id;
+  assert.ok(selectedId);
+  return callApi(env, "organization-context", {
+    method: "POST",
+    token,
+    body: { organization_id: selectedId },
+  });
+}
+
+test("organization context requires explicit session selection and is isolated per session", async () => {
+  const d1 = createD1Mock();
+  const firstToken = "organization-context-first-session";
+  const secondToken = "organization-context-second-session";
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+1 hour'))",
+  ).run(firstToken);
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+1 hour'))",
+  ).run(secondToken);
+
+  const anonymous = await callApi(d1, "organization-context");
+  assert.equal(anonymous.status, 401);
+
+  const initial = await callApi(d1, "organization-context", { token: firstToken });
+  assert.equal(initial.status, 200);
+  assert.equal(initial.data.selected_organization_id, null);
+  assert.deepEqual(initial.data.organizations.map((item) => item.organization_id), [101]);
+  assert.equal((await callApi(d1, "me", { token: firstToken })).status, 401);
+
+  const invalidSelection = await callApi(d1, "organization-context", {
+    method: "POST",
+    token: firstToken,
+    body: { organization_id: 102 },
+  });
+  assert.equal(invalidSelection.status, 403);
+
+  const selected = await callApi(d1, "organization-context", {
+    method: "POST",
+    token: firstToken,
+    body: { organization_id: 101 },
+  });
+  assert.equal(selected.status, 200);
+  assert.equal(selected.data.selected_organization_id, 101);
+  assert.equal((await callApi(d1, "me", { token: firstToken })).status, 200);
+  assert.equal((await callApi(d1, "organization-context", { token: secondToken })).data.selected_organization_id, null);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'ORGANIZATION_CONTEXT_SELECTED'",
+  ).get().count, 1);
+});
+
+test("D1 capacity monitoring is restricted to super admins and reports platform recovery", async () => {
   const d1 = createD1Mock();
   const anonymous = await callApi(d1, "admin/d1-operations");
   assert.equal(anonymous.status, 403);
 
   const token = "d1-operations-test-session";
-  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+1 hour'))")
+  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))")
     .run(token);
   d1.raw.prepare(
     "INSERT INTO d1_storage_snapshots (database_id, database_name, sampled_at, size_bytes) VALUES (?, ?, ?, ?)"
@@ -155,8 +208,13 @@ test("D1 capacity monitoring is restricted to super admins and reports backups d
   assert.deepEqual(response.data.databases, ["smritisys-db"]);
   assert.deepEqual(response.data.snapshots.map((snapshot) => snapshot.database_name), ["smritisys-db"]);
   assert.equal(response.data.snapshots[0].size_bytes, 716800);
-  assert.equal(response.data.backup_status, "disabled");
-  assert.deepEqual(response.data.backups, []);
+  assert.equal(response.data.manual_backup_status, "not_configured");
+  assert.deepEqual(response.data.recovery, {
+    provider: "cloudflare_d1_time_travel",
+    status: "available",
+    retention_days: 30,
+  });
+  assert.deepEqual(response.data.manual_backups, []);
 });
 
 test("organization details require a super admin and omit license keys", async () => {
@@ -165,10 +223,10 @@ test("organization details require a super admin and omit license keys", async (
   assert.equal(anonymous.status, 403);
 
   const token = "organization-details-test-session";
-  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+1 hour'))")
+  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))")
     .run(token);
   const customerToken = "organization-details-customer-session";
-  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+1 hour'))")
+  d1.raw.prepare("INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+1 hour'))")
     .run(customerToken);
   const customer = await callApi(d1, "admin/organizations/101", { token: customerToken });
   assert.equal(customer.status, 403);
@@ -389,6 +447,7 @@ test("staff bootstrap uses Worker-supported PBKDF2 and can log in", async () => 
   });
   assert.equal(login.status, 200);
   assert.equal(login.data.user.role, "super_admin");
+  assert.equal((await selectSessionOrganization(d1, login.data.token)).status, 200);
 
   const newPassword = "Changed-admin-test-passphrase-2026!";
   const passwordChange = await callApi(d1, "admin/password", {
@@ -430,7 +489,7 @@ test("customer setup invitations are one-time and provision the canonical custom
   const d1 = createD1Mock();
   const adminToken = "test-token-super-admin-invites";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
 
   const denied = await callApi(d1, "admin/customer-invites");
@@ -488,6 +547,7 @@ test("customer setup invitations are one-time and provision the canonical custom
     body: { type: "customer", email: "invitee@example.test", password },
   });
   assert.equal(login.status, 200);
+  assert.equal((await selectSessionOrganization(d1, login.data.token)).status, 200);
   const missingPhoneUpdate = await callApi(d1, "profile", {
     method: "PUT",
     token: login.data.token,
@@ -511,7 +571,7 @@ test("customer invitations can be revoked or expire before acceptance", async ()
   const d1 = createD1Mock();
   const adminToken = "test-token-super-admin-invite-revoke";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
 
   const createInvite = async (email) => callApi(d1, "admin/customer-invites", {
@@ -552,10 +612,10 @@ test("admin customer profiles are searchable, editable, and recover access with 
   const d1 = createD1Mock();
   const adminToken = "test-token-admin-customer-profile";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+7 days'))"
   ).bind("customer-profile-old-session").run();
 
   assert.equal((await callApi(d1, "admin/customers")).status, 403);
@@ -705,7 +765,7 @@ test("partners can update only contacts in their active customer assignments", a
   const d1 = createD1Mock();
   const partnerToken = "test-token-partner-customer-contact";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 103, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 103, 103, datetime('now', '+7 days'))"
   ).bind(partnerToken).run();
 
   const contacts = await callApi(d1, "partner/customers", { token: partnerToken });
@@ -741,7 +801,7 @@ test("customer contacts reuse an organization and inactive activation-only accou
   const d1 = createD1Mock();
   const adminToken = "test-token-customer-org-reuse";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   const organizationCount = d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count;
 
@@ -800,7 +860,7 @@ test("partner onboarding, customer links, and partner setup invitations are scop
   const d1 = createD1Mock();
   const adminToken = "test-token-partner-administration";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
 
   const denied = await callApi(d1, "admin/partners");
@@ -905,6 +965,7 @@ test("partner onboarding, customer links, and partner setup invitations are scop
     body: { type: "customer", email: "partner-admin@example.test", password },
   });
   assert.equal(login.status, 200);
+  assert.equal((await selectSessionOrganization(d1, login.data.token, partnerId)).status, 200);
   const customerLicenseAccess = await callApi(d1, "licenses", { token: login.data.token });
   assert.equal(customerLicenseAccess.status, 403);
   const customerOrganizationAccess = await callApi(d1, "organization", { token: login.data.token });
@@ -1070,7 +1131,7 @@ test("direct license issuance registers an activation-only customer and reveals 
   const d1 = createD1Mock();
   const adminToken = "test-token-direct-license";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
 
   const productId = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get().id;
@@ -1361,7 +1422,7 @@ test("pre-generated license codes retain hash and encrypted key, claim once, and
   const d1 = createD1Mock();
   const adminToken = "test-token-license-code-batch";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
   const edition = d1.raw.prepare(
@@ -1795,7 +1856,7 @@ test("single-code reveal requires password confirmation, audits safely, and reje
     .digest("hex");
   d1.prepare("UPDATE users SET password_hash = ? WHERE id = 201").bind(passwordHash).run();
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
   const edition = d1.raw.prepare(
@@ -1973,7 +2034,7 @@ test("license code batch generation fails closed when protected storage is not c
   const d1 = createD1Mock();
   const adminToken = "test-token-license-code-no-encryption";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
   const edition = d1.raw.prepare(
@@ -2002,7 +2063,7 @@ test("license code batches allow 200 new-format codes and safely revoke unused b
   const d1 = createD1Mock();
   const adminToken = "test-token-license-code-revoke";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
   const edition = d1.raw.prepare(
@@ -2089,7 +2150,7 @@ test("license code delivery is authorized, atomic, audited, and independent from
   const d1 = createD1Mock();
   const adminToken = "test-token-license-code-delivery";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
   const product = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get();
   const edition = d1.raw.prepare(
@@ -2193,11 +2254,11 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   // Create session for Customer A directly to ensure clean testing
   const token = "test-token-customer-a-123456";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+7 days'))"
   ).bind(token).run();
   const adminToken = "test-token-super-admin-announcements";
   d1.prepare(
-    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))"
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
   ).bind(adminToken).run();
 
   let sessionToken = token;
@@ -2507,7 +2568,7 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
 
   await t.test("16. Customer without a qualifying license sees no releases", async () => {
     const customerBToken = "test-token-customer-b-123456";
-    d1.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 102, datetime('now', '+7 days'))").bind(customerBToken).run();
+    d1.prepare("INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 102, 102, datetime('now', '+7 days'))").bind(customerBToken).run();
     const res = await callApi(d1, "releases", { token: customerBToken });
     assert.equal(res.status, 200);
     assert.equal(res.data.releases.length, 0);
@@ -2515,7 +2576,7 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
 
   await t.test("17. Partner workspace is scoped to linked customer organizations", async () => {
     const partnerToken = "test-token-partner-123456";
-    d1.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 103, datetime('now', '+7 days'))").bind(partnerToken).run();
+    d1.prepare("INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 103, 103, datetime('now', '+7 days'))").bind(partnerToken).run();
     const profile = await callApi(d1, "partner/me", { token: partnerToken });
     assert.equal(profile.status, 200);
     assert.equal(profile.data.partner.partner_type, "reseller");
@@ -2559,7 +2620,7 @@ test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
 
   await t.test("21. Super admin control plane is internal-only", async () => {
     const adminToken = "test-token-admin-123456";
-    d1.prepare("INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'user', 201, datetime('now', '+7 days'))").bind(adminToken).run();
+    d1.prepare("INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))").bind(adminToken).run();
     d1.prepare(
       `INSERT INTO licenses (customer_id, product_id, license_key, serial_number, starts_at, expires_at, status)
        SELECT (SELECT id FROM customers LIMIT 1), (SELECT id FROM products LIMIT 1),

@@ -613,21 +613,112 @@ async function getCustomerSession(request, env) {
   return principal;
 }
 
+async function getSessionIdentity(request, env) {
+  const token = requestSessionToken(request);
+  if (!token) return null;
+
+  return await env.DB.prepare(
+    `SELECT s.id AS session_id, s.token, s.account_type, s.account_id,
+            s.organization_id, p.id AS person_id, p.email, p.name,
+            p.status AS person_status
+     FROM sessions s
+     JOIN people p ON p.source_type = s.account_type AND p.source_id = s.account_id
+     WHERE s.token = ? AND s.expires_at > datetime('now') AND p.status = 'active'`
+  ).bind(token).first();
+}
+
+async function handleOrganizationContext(request, env) {
+  const session = await getSessionIdentity(request, env);
+  if (!session) return json({ ok: false, error: "Valid login required" }, 401);
+
+  const memberships = await env.DB.prepare(
+    `SELECT m.id AS membership_id, m.organization_id, o.name AS organization_name,
+            m.member_role
+     FROM organization_members m
+     JOIN organizations o ON o.id = m.organization_id
+     WHERE m.account_type = ? AND m.account_id = ?
+       AND m.status = 'active' AND o.status = 'active'
+     ORDER BY o.name COLLATE NOCASE, o.id`
+  ).bind(session.account_type, session.account_id).all();
+  const availableMemberships = memberships.results || [];
+  const selectedMembership = availableMemberships.find(
+    (membership) => Number(membership.organization_id) === Number(session.organization_id),
+  ) || null;
+
+  if (request.method === "GET") {
+    return json({
+      ok: true,
+      selected_organization_id: selectedMembership?.organization_id || null,
+      organizations: availableMemberships,
+    }, 200, null, { "Cache-Control": "no-store" });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid organization selection is required" }, 400);
+  }
+  const organizationId = numericId(body?.organization_id);
+  if (!organizationId) {
+    return json({ ok: false, error: "A valid organization id is required" }, 400);
+  }
+  const membership = availableMemberships.find(
+    (item) => Number(item.organization_id) === organizationId,
+  );
+  if (!membership) {
+    return json({ ok: false, error: "You do not have active access to that organization" }, 403);
+  }
+  if (Number(session.organization_id) === organizationId) {
+    return json({
+      ok: true,
+      selected_organization_id: organizationId,
+      changed: false,
+    }, 200, null, { "Cache-Control": "no-store" });
+  }
+
+  const result = await env.DB.prepare(
+    `UPDATE sessions SET organization_id = ?
+     WHERE id = ? AND token = ? AND expires_at > datetime('now')`
+  ).bind(organizationId, session.session_id, session.token).run();
+  if (result.meta.changes !== 1) {
+    return json({ ok: false, error: "The login session expired; sign in again" }, 401);
+  }
+
+  await writeAudit(
+    env,
+    request,
+    { person_id: session.person_id, organization_id: organizationId },
+    "ORGANIZATION_CONTEXT_SELECTED",
+    "organization_membership",
+    String(membership.membership_id),
+    session.organization_id ? { organization_id: session.organization_id } : null,
+    { organization_id: organizationId },
+  );
+  return json({
+    ok: true,
+    selected_organization_id: organizationId,
+    changed: true,
+  }, 200, null, { "Cache-Control": "no-store" });
+}
+
 async function getIdentitySession(request, env) {
   const token = requestSessionToken(request);
   if (!token) return null;
 
   return await env.DB.prepare(
     `SELECT s.account_type, s.account_id, p.id AS person_id, p.email, p.name,
-            p.status AS person_status, m.organization_id, m.member_role,
+            p.status AS person_status, s.organization_id, m.member_role,
             m.status AS membership_status, o.status AS organization_status
      FROM sessions s
      JOIN people p ON p.source_type = s.account_type AND p.source_id = s.account_id
-     JOIN organization_members m ON m.account_type = s.account_type AND m.account_id = s.account_id
+     JOIN organization_members m ON m.organization_id = s.organization_id
+       AND m.account_type = s.account_type AND m.account_id = s.account_id
      JOIN organizations o ON o.id = m.organization_id
      WHERE s.token = ? AND s.expires_at > datetime('now')
+       AND s.organization_id IS NOT NULL
        AND p.status = 'active' AND m.status = 'active' AND o.status = 'active'
-     ORDER BY m.id LIMIT 1`
+     LIMIT 1`
   )
     .bind(token)
     .first();
@@ -661,8 +752,8 @@ async function getPartnerSession(request, env) {
      FROM partner_memberships pm
      JOIN organizations o ON o.id = pm.partner_organization_id AND o.status = 'active'
      WHERE pm.account_type = ? AND pm.account_id = ? AND pm.status = 'active'
-     ORDER BY pm.id LIMIT 1`
-  ).bind(principal.account_type, principal.account_id).first();
+       AND pm.partner_organization_id = ?`
+  ).bind(principal.account_type, principal.account_id, principal.organization_id).first();
   if (!membership) return null;
   return { ...principal, ...membership };
 }
@@ -3285,7 +3376,12 @@ async function handleAdminControl(request, env, resource) {
     return json({
       ok: true,
       databases: ["smritisys-db"],
-      backup_status: "disabled",
+      manual_backup_status: "not_configured",
+      recovery: {
+        provider: "cloudflare_d1_time_travel",
+        status: "available",
+        retention_days: 30,
+      },
       limits: {
         free_per_database_bytes: 500000000,
         paid_per_database_bytes: 10000000000,
@@ -3295,7 +3391,7 @@ async function handleAdminControl(request, env, resource) {
         paid_databases_per_account: 1000000,
       },
       snapshots: snapshots.results || [],
-      backups: [],
+      manual_backups: [],
     });
   }
 
@@ -6467,6 +6563,9 @@ export async function onRequest(context) {
     if (path === "signup" && request.method === "POST") return await handleSignup(request, env);
     if (path === "login" && request.method === "POST") return await handleLogin(request, env);
     if (path === "logout" && request.method === "POST") return await handleLogout(request, env);
+    if (path === "organization-context" && ["GET", "POST"].includes(request.method)) {
+      return await handleOrganizationContext(request, env);
+    }
     if (path === "me" && request.method === "GET") return await handleMe(request, env);
     if (path === "password" && request.method === "POST") return await handlePasswordChange(request, env);
     if (path === "admin/password" && request.method === "POST") return await handleAdminPasswordChange(request, env);

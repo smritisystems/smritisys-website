@@ -996,6 +996,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   token TEXT UNIQUE NOT NULL,
   account_type TEXT NOT NULL,         -- user | customer
   account_id INTEGER NOT NULL,
+  organization_id INTEGER REFERENCES organizations(id),
   expires_at TEXT NOT NULL,
   created_at TEXT DEFAULT (datetime('now'))
 );

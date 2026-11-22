@@ -113,7 +113,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=admin-support-tickets-v1/);
+  assert.match(html, /js\/admin\.js\?v=session-org-context-v1/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);
@@ -127,6 +127,13 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(api, /segments\[4\] === "restore"/);
 });
 
+test("admin workspace requires an explicit session organization context", () => {
+  assert.match(html, /id="organizationContextButton"/);
+  assert.match(html, /id="organizationContextDialog"/);
+  assert.match(script, /organizationContext\.ensureSelected\(\)/);
+  assert.match(script, /onSelected: loadAdminWorkspace/);
+});
+
 test("overview displays authorized live license health, inventory, and recent activity", () => {
   assert.match(html, /id="adminOperationsMetrics"/);
   assert.match(html, /id="adminLicenseHealth"/);
@@ -138,17 +145,21 @@ test("overview displays authorized live license health, inventory, and recent ac
   assert.match(api, /recent_activity: recentActivity\.results/);
 });
 
-test("D1 monitoring is super-admin read-only and the sampler needs no R2 backup service", () => {
+test("D1 monitoring reports Cloudflare recovery without claiming manual backups", () => {
   assert.match(html, /id="adminD1Content"/);
   assert.match(html, /id="adminD1Refresh"/);
-  assert.match(html, /Automated backups are disabled/);
+  assert.match(html, /Cloudflare manages D1 point-in-time recovery/);
   assert.match(script, /adminApi\('admin\/d1-operations'\)/);
-  assert.match(script, /data\.backup_status === 'disabled'/);
+  assert.match(script, /data\.recovery/);
+  assert.match(script, /cloudflare_d1_time_travel/);
+  assert.match(script, /Manual backups and exports are not configured/);
   assert.match(api, /path === "admin\/d1-operations" && request\.method === "GET"/);
   assert.match(api, /d1_storage_snapshots/);
   assert.match(api, /WHERE database_name = 'smritisys-db'/);
   assert.match(api, /databases: \["smritisys-db"\]/);
-  assert.match(api, /backup_status: "disabled"/);
+  assert.match(api, /manual_backup_status: "not_configured"/);
+  assert.match(api, /provider: "cloudflare_d1_time_travel"/);
+  assert.match(api, /retention_days: 30/);
   assert.match(api, /free_per_database_bytes/);
   assert.match(d1WorkerConfig, /"crons": \["0 2 \* \* \*"\]/);
   assert.match(d1WorkerConfig, /19066da9-8183-42cb-92e3-c64d1ee799de/);

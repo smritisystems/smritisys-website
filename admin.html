@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/portal.css" />
+  <link rel="stylesheet" href="css/portal.css?v=session-org-context-v1" />
   <style>
     .admin-shell { min-height:100vh; display:grid; grid-template-columns:245px 1fr; background:var(--paper); }
     .admin-aside { background:#17231f; color:#d9ebe7; padding:1.5rem 1rem; display:flex; flex-direction:column; }
@@ -133,6 +133,9 @@
     .admin-key-reveal input { width:100%; }
     .admin-key-reveal code { display:block; padding:1rem; border-radius:8px; background:#f2f6f6; font-size:1.1rem; overflow-wrap:anywhere; user-select:all; }
     .admin-key-reveal-actions { display:flex; justify-content:flex-end; gap:.6rem; }
+    .context-switcher { max-width:min(32vw,20rem); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .organization-context-form h2 { margin:0; }
+    .organization-context-form .message { margin:0; }
     .registration-detail-grid h4 { margin:0 0 .65rem; }
     .registration-detail-grid dl { display:grid; grid-template-columns:minmax(100px,.8fr) minmax(0,1.2fr); gap:.45rem .7rem; margin:0; font-size:.82rem; }
     .registration-detail-grid dt { color:var(--muted); }
@@ -199,7 +202,7 @@
   </section>
   <section id="adminPortalView" class="admin-shell hidden">
     <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="support">Support tickets</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button><button data-admin-view="security">Security</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
-    <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><span class="admin-topbar-label">Internal control plane</span><div class="user-chip"><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
+    <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><span class="admin-topbar-label">Internal control plane</span><div class="user-chip"><button id="organizationContextButton" class="secondary context-switcher" type="button">Select organization</button><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
       <section class="admin-view active" data-admin-section="overview">
         <div class="admin-overview-hero">
           <div><span class="eyebrow">Operations dashboard</span><h2>Good to see you, <span id="adminWelcomeName">Administrator</span></h2><p>License health, activation inventory, and recent control-plane activity at a glance.</p></div>
@@ -212,7 +215,7 @@
         <div id="adminMetrics" class="admin-metrics"><div class="card"><span class="stat-label">Loading</span><strong class="stat-value">—</strong></div></div>
         <div class="admin-overview-heading"><div><span class="eyebrow">License operations</span><h3>Health &amp; inventory</h3></div><p class="muted">Live counts from the license authority</p></div>
         <div id="adminOperationsMetrics" class="admin-ops-metrics" aria-live="polite"></div>
-        <div class="admin-overview-heading"><div><span class="eyebrow">Infrastructure</span><h3>D1 capacity monitoring</h3></div><div class="admin-overview-actions"><p class="muted">Daily at 02:00 UTC · backups are not configured</p><button id="adminD1Refresh" class="secondary" type="button">Refresh</button></div></div>
+        <div class="admin-overview-heading"><div><span class="eyebrow">Infrastructure</span><h3>D1 capacity monitoring</h3></div><div class="admin-overview-actions"><p class="muted">Daily at 02:00 UTC · Cloudflare-managed recovery</p><button id="adminD1Refresh" class="secondary" type="button">Refresh</button></div></div>
         <div id="adminD1State" class="state-panel">Loading D1 capacity monitoring...</div>
         <div id="adminD1Content" class="hidden">
           <div id="adminD1Summary" class="admin-ops-metrics" aria-live="polite"></div>
@@ -223,8 +226,8 @@
             <div id="adminD1History"></div>
           </section>
           <section class="card admin-d1-backups">
-            <h4 class="admin-panel-title">Backup status</h4>
-            <p class="admin-panel-subtitle">Automated backups are disabled. This workspace monitors storage only and does not provide backups or restore.</p>
+            <h4 class="admin-panel-title">Backup and recovery</h4>
+            <p class="admin-panel-subtitle">Cloudflare manages D1 point-in-time recovery. This panel does not list recovery points or perform restores.</p>
             <div id="adminD1Backups"></div>
           </section>
         </div>
@@ -544,7 +547,20 @@
         </div>
       </form>
     </dialog>
+    <dialog id="organizationContextDialog" class="admin-key-reveal" aria-labelledby="organizationContextTitle">
+      <form id="organizationContextForm" class="organization-context-form">
+        <h2 id="organizationContextTitle">Choose your organization</h2>
+        <p class="muted">Your access is scoped to the organization selected for this session.</p>
+        <label for="organizationContextSelect">Organization
+          <select id="organizationContextSelect" required></select>
+        </label>
+        <p id="organizationContextMessage" class="message" role="status"></p>
+        <button class="primary" type="submit">Continue</button>
+        <button id="organizationContextSignOutButton" class="secondary" type="button">Sign out</button>
+      </form>
+    </dialog>
   </section>
-  <script src="js/admin.js?v=admin-support-tickets-v1" defer></script>
+  <script src="js/organization-context.js" defer></script>
+  <script src="js/admin.js?v=session-org-context-v1" defer></script>
 </body>
 </html>

@@ -44,6 +44,8 @@ function partnerMessage(element, text, ok) {
 }
 
 function showPartnerLogin(message = '') {
+  const contextDialog = partner$('#organizationContextDialog');
+  if (contextDialog?.open) contextDialog.close();
   const contactDialog = partner$('#partnerCustomerContactDialog');
   if (contactDialog?.open) contactDialog.close();
   partner$('#partnerCustomerContactForm').reset();
@@ -196,6 +198,7 @@ async function loadPartnerReleases() {
 async function loadPartnerWorkspace() {
   partner$('#partnerError').classList.add('hidden');
   try {
+    if (!(await organizationContext.ensureSelected())) return;
     await loadPartnerProfile();
     await Promise.all([
       loadPartnerCustomers(),
@@ -211,6 +214,23 @@ async function loadPartnerWorkspace() {
       showPartnerLogin('Partner access is unavailable for this account.');
     }
   }
+}
+
+const organizationContext = window.createOrganizationContextController({
+  api: partnerApi,
+  buttonId: 'organizationContextButton',
+  dialogId: 'organizationContextDialog',
+  formId: 'organizationContextForm',
+  selectId: 'organizationContextSelect',
+  messageId: 'organizationContextMessage',
+  onSelected: loadPartnerWorkspace,
+  onSignOut: logoutPartner,
+});
+
+async function logoutPartner() {
+  try { await partnerApi('logout', { method: 'POST' }); } catch {}
+  partnerState.token = null;
+  showPartnerLogin();
 }
 
 function navigatePartner(view) {
@@ -359,10 +379,6 @@ partner$('#partnerLoginForm').addEventListener('submit', async (event) => {
   }
 });
 
-partner$('#partnerLogout').addEventListener('click', async () => {
-  try { await partnerApi('logout', { method: 'POST' }); } catch {}
-  partnerState.token = null;
-  showPartnerLogin();
-});
+partner$('#partnerLogout').addEventListener('click', logoutPartner);
 
 showPartnerLogin();

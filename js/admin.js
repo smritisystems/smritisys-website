@@ -82,6 +82,8 @@ function clearAdminCustomerResetLink() {
 }
 
 function showAdminLogin(message = '') {
+  const contextDialog = admin$('#organizationContextDialog');
+  if (contextDialog?.open) contextDialog.close();
   const revealDialog = admin$('#licenseCodeRevealDialog');
   if (revealDialog?.open) revealDialog.close();
   adminState.supportTickets = [];
@@ -355,9 +357,13 @@ async function loadAdminD1Operations() {
       ? `<table class="admin-table"><thead><tr><th>Database</th><th>Sampled</th><th>Size</th></tr></thead><tbody>${historyRows}</tbody></table>`
       : '<p class="admin-empty-inline">No storage samples are available yet.</p>';
 
-    admin$('#adminD1Backups').innerHTML = data.backup_status === 'disabled'
-      ? '<p class="admin-empty-inline">Automated backups are disabled. No backups or restore points are being created.</p>'
-      : '<p class="admin-empty-inline">Backup status is unavailable.</p>';
+    const recovery = data.recovery;
+    const retentionDays = Number(recovery?.retention_days);
+    const recoveryAvailable = recovery?.provider === 'cloudflare_d1_time_travel' &&
+      recovery.status === 'available' && Number.isInteger(retentionDays) && retentionDays > 0;
+    admin$('#adminD1Backups').innerHTML = recoveryAvailable
+      ? `<p>Cloudflare D1 Time Travel provides point-in-time recovery for up to ${adminEscape(retentionDays)} days. This panel does not list recovery points or perform restores.</p><p class="admin-empty-inline">Manual backups and exports are not configured.</p>`
+      : '<p class="admin-empty-inline">Recovery availability could not be verified. This panel does not list recovery points or perform restores.</p>';
 
     state.classList.add('hidden');
     content.classList.remove('hidden');
@@ -1403,6 +1409,7 @@ function resetAnnouncementForm() {
 
 async function loadAdminWorkspace() {
   try {
+    if (!(await organizationContext.ensureSelected())) return;
     const identity = await adminApi('me');
     if (identity.account_type !== 'user' || identity.user?.role !== 'super_admin') throw Object.assign(new Error('Super admin access required'), { status: 403 });
     const displayName = identity.user.name || identity.user.email;
@@ -1413,6 +1420,23 @@ async function loadAdminWorkspace() {
     adminState.token = null;
     showAdminLogin(error.status === 403 ? 'Super admin access required.' : 'Your session has expired.');
   }
+}
+
+const organizationContext = window.createOrganizationContextController({
+  api: adminApi,
+  buttonId: 'organizationContextButton',
+  dialogId: 'organizationContextDialog',
+  formId: 'organizationContextForm',
+  selectId: 'organizationContextSelect',
+  messageId: 'organizationContextMessage',
+  onSelected: loadAdminWorkspace,
+  onSignOut: logoutAdmin,
+});
+
+async function logoutAdmin() {
+  try { await adminApi('logout', { method: 'POST' }); } catch {}
+  adminState.token = null;
+  showAdminLogin();
 }
 
 function navigateAdmin(view, productTab = null) {
@@ -1823,11 +1847,7 @@ admin$('#customerInviteCopy').addEventListener('click', async () => {
   }
 });
 
-admin$('#adminLogout').addEventListener('click', async () => {
-  try { await adminApi('logout', { method: 'POST' }); } catch {}
-  adminState.token = null;
-  showAdminLogin();
-});
+admin$('#adminLogout').addEventListener('click', logoutAdmin);
 
 admin$('#adminPasswordForm').addEventListener('submit', async (event) => {
   event.preventDefault();
