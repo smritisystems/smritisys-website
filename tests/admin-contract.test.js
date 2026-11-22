@@ -22,6 +22,7 @@ import test from "node:test";
 const html = fs.readFileSync(new URL("../admin.html", import.meta.url), "utf8");
 const script = fs.readFileSync(new URL("../js/admin.js", import.meta.url), "utf8");
 const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.url), "utf8");
+const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 const d1Worker = fs.readFileSync(new URL("../d1-ops/src/index.js", import.meta.url), "utf8");
 const d1WorkerConfig = fs.readFileSync(new URL("../d1-ops/wrangler.jsonc", import.meta.url), "utf8");
 
@@ -29,6 +30,8 @@ const d1WorkerConfig = fs.readFileSync(new URL("../d1-ops/wrangler.jsonc", impor
   assert.match(html, /adminLoginForm/);
   assert.match(html, /data-admin-view="users"/);
   assert.match(html, /data-admin-view="organizations"/);
+  assert.match(html, /data-admin-view="partner-deals"/);
+  assert.match(html, /data-admin-view="follow-ups"/);
   assert.match(html, /data-admin-view="support"/);
   assert.match(html, /data-admin-view="audit"/);
   assert.match(html, /data-admin-view="announcements"/);
@@ -38,6 +41,8 @@ const d1WorkerConfig = fs.readFileSync(new URL("../d1-ops/wrangler.jsonc", impor
   assert.match(script, /adminApi\('admin\/announcements'\)/);
   assert.match(script, /adminApi\('admin\/overview'\)/);
   assert.match(script, /adminApi\('admin\/organizations'\)/);
+  assert.match(script, /adminApi\(`admin\/partner-deals\?/);
+  assert.match(script, /adminApi\(`admin\/follow-ups\?/);
   assert.match(script, /adminApi\('admin\/audit'\)/);
 });
 
@@ -113,7 +118,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=session-org-context-v1/);
+  assert.match(html, /js\/admin\.js\?v=partner-workflows-v1/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);
@@ -183,4 +188,23 @@ test("admin partner workspace supports lifecycle, classification, and member gov
   assert.match(api, /async function updateAdminPartner\(/);
   assert.match(api, /async function updateAdminPartnerMember\(/);
   assert.match(api, /Keep at least one active partner administrator/);
+});
+
+test("admin deal review and follow-up queue are internal-only and do not enforce unapproved policies", () => {
+  assert.match(html, /id="adminPartnerDealFilters"/);
+  assert.match(html, /id="adminFollowUpTaskForm"/);
+  assert.match(html, /id="adminFollowUpTaskDueDate" name="due_date" type="date"/);
+  assert.match(html, /id="adminFollowUpsList"/);
+  assert.match(script, /adminApi\('admin\/follow-up-tasks'/);
+  assert.match(api, /async function handleAdminFollowUpTasks/);
+  assert.match(api, /ADMIN_FOLLOW_UP_TASK_UPDATED/);
+  assert.match(api, /ADMIN_FOLLOW_UP_TASK_CREATED/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS follow_up_tasks/);
+  assert.match(html, /no messages are sent/);
+  assert.match(html, /Review submissions manually/);
+  assert.match(api, /async function handleAdminPartnerDeals/);
+  assert.match(api, /async function handleAdminFollowUps/);
+  assert.match(api, /DEAL_STATUS_TRANSITIONS/);
+  assert.match(api, /possible_duplicate/);
+  assert.match(api, /manual_review_no_sla_or_outbound_messages/);
 });

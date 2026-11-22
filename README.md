@@ -103,10 +103,17 @@ Cloudflare Pages will automatically build and deploy. No manual deploy command.
 | PATCH | `/api/admin/announcements/:id` | Edit an announcement or transition its status (super admin only) |
 | GET | `/api/partner/me` | Read the authenticated partner relationship (Bearer token) |
 | GET | `/api/partner/customers` | List linked customer organizations (partner membership required) |
+| GET/POST | `/api/partner/deals` | List or submit deal registrations scoped to the selected partner organization |
+| PATCH | `/api/partner/deals/:id` | Respond to an information request on the partner's own registration |
 | GET | `/api/partner/licenses` | Read licenses for linked customer organizations (partner license permission required) |
 | GET | `/api/partner/releases` | Read releases for linked customer products (partner release permission required) |
 | GET | `/api/admin/overview` | Internal super-admin metrics |
 | GET | `/api/admin/organizations` | Internal organization inventory (super admin only) |
+| GET | `/api/admin/partner-deals` | Review partner deal registrations (super admin only) |
+| PATCH | `/api/admin/partner-deals/:id` | Update review status and notes (super admin only) |
+| GET | `/api/admin/follow-ups` | Read the internal support/deal/invitation follow-up queue (super admin only) |
+| GET/POST | `/api/admin/follow-up-tasks` | List or create manually managed internal tasks (super admin only) |
+| PATCH | `/api/admin/follow-up-tasks/:id` | Update task status, owner, due date, or notes (super admin only) |
 | GET | `/api/admin/audit` | Internal audit activity (super admin only) |
 | GET | `/api/products` | List products (Bearer token) |
 | POST | `/api/products` | Create a product (license permission required) |
@@ -131,6 +138,8 @@ Browser logins receive an `HttpOnly`, `Secure`, `SameSite=Lax` `smritisys_sessio
 
 After login, a user must explicitly select an organization. That selection is stored on the individual server session, and organization-scoped API routes deny access until it is set. Changing an organization affects only that session; it does not change the user's memberships or other active sessions. Migration `0029_session_organization_context.sql` adds the nullable session column without backfilling existing sessions, so active users must select a context again after the migration.
 
+Partner deal registrations are an internal-review workflow only. Partners can submit and view their own registrations and respond to requests for information; super admins can review them, and possible duplicate name/email matches are review hints rather than automatic decisions. Approval does not create deal protection, pricing, commissions, a customer organization, or a customer link. The follow-up workspace includes a paginated, read-only view of open support tickets, submitted/in-review deals, and unexpired invitations, plus manually managed tasks with optional owners and due dates. It does not enforce SLAs or send outbound messages. Migration `0030_partner_workflow_foundations.sql` was applied to production on 2026-11-22. No partner data was seeded.
+
 `super_admin` is the full-control administrative role. Administrative endpoints must
 call the super-admin guard; ordinary `staff` accounts cannot manage users or demos.
 
@@ -147,7 +156,7 @@ Before deploying the completed control plane:
 
 1. Back up the remote D1 database.
 2. Apply migrations `0002_identity_rbac.sql` through `0013_customer_announcements.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production. Migration `0013` preserves existing announcements while adding product targeting, severity, scheduling, and audit attribution.
-3. Before deploying the explicit organization-context UI/API, separately review and approve migration `0029_session_organization_context.sql`; it is additive and intentionally does not choose an organization for existing sessions.
+3. Migrations `0029_session_organization_context.sql` and `0030_partner_workflow_foundations.sql` have been applied to production; do not reapply them.
 4. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
 5. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
 6. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.

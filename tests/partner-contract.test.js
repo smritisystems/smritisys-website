@@ -10,9 +10,13 @@ const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8"
 test("partner portal is an authenticated workspace, not a placeholder", () => {
   assert.match(html, /partnerLoginForm/);
   assert.match(html, /data-partner-view="customers"/);
+  assert.match(html, /data-partner-view="deals"/);
+  assert.match(html, /id="partnerDealForm"/);
+  assert.match(html, /Submission does not promise deal protection/);
   assert.match(html, /data-partner-view="licenses"/);
   assert.match(html, /data-partner-view="releases"/);
   assert.match(script, /partnerApi\('partner\/me'\)/);
+  assert.match(script, /partnerApi\('partner\/deals'/);
   assert.doesNotMatch(html, /Register customer|View commissions|View licenses/);
 });
 
@@ -28,6 +32,8 @@ test("partner APIs reuse session identity and partner membership scope", () => {
 test("partner relationship tables and RBAC roles exist", () => {
   assert.match(schema, /CREATE TABLE IF NOT EXISTS partner_memberships/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS partner_customer_links/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS deal_registrations/);
+  assert.match(schema, /partner\.deals\.submit/);
   assert.match(schema, /'partner_admin'/);
   assert.match(schema, /'partner_member'/);
 });

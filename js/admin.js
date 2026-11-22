@@ -25,6 +25,12 @@ const adminState = {
   organizations: [],
   organizationDetailRequestId: 0,
   partners: [],
+  partnerDealPage: 1,
+  followUpPage: 1,
+  followUpTaskPage: 1,
+  partnerDealRequestId: 0,
+  followUpRequestId: 0,
+  followUpTaskRequestId: 0,
   licenseBatchCodes: null,
   licenseCodeBatchId: null,
   customerProfileId: null,
@@ -92,9 +98,26 @@ function showAdminLogin(message = '') {
   adminState.supportTotal = 0;
   adminState.supportListRequestId += 1;
   adminState.supportDetailRequestId += 1;
+  adminState.partnerDealPage = 1;
+  adminState.followUpPage = 1;
+  adminState.followUpTaskPage = 1;
+  adminState.partnerDealRequestId += 1;
+  adminState.followUpRequestId += 1;
+  adminState.followUpTaskRequestId += 1;
   admin$('#adminSupportList').textContent = '';
   admin$('#adminSupportDetail').textContent = '';
   admin$('#adminSupportPagination').classList.add('hidden');
+  admin$('#adminPartnerDealsList').textContent = '';
+  admin$('#adminFollowUpsList').textContent = '';
+  admin$('#adminFollowUpTasksList').textContent = '';
+  admin$('#adminPartnerDealsPagination').classList.add('hidden');
+  admin$('#adminFollowUpsPagination').classList.add('hidden');
+  admin$('#adminFollowUpTasksPagination').classList.add('hidden');
+  admin$('#adminFollowUpTaskForm').reset();
+  admin$('#adminFollowUpTaskMessage').textContent = '';
+  admin$('#adminFollowUpTaskAssignee').innerHTML = '<option value="">Unassigned</option>';
+  admin$('#adminPartnerDealSearch').value = '';
+  admin$('#adminPartnerDealStatus').value = '';
   clearCustomerInviteLink();
   clearAdminCustomerResetLink();
   adminState.customerProfileId = null;
@@ -822,6 +845,196 @@ async function loadAdminPartners() {
   }
 }
 
+async function loadAdminPartnerDeals(page = adminState.partnerDealPage) {
+  const requestId = ++adminState.partnerDealRequestId;
+  const state = admin$('#adminPartnerDealsState');
+  const list = admin$('#adminPartnerDealsList');
+  const pagination = admin$('#adminPartnerDealsPagination');
+  state.className = 'state-panel';
+  state.textContent = 'Loading deal registrations...';
+  list.textContent = '';
+  pagination.classList.add('hidden');
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: '50',
+    q: admin$('#adminPartnerDealSearch').value.trim(),
+    status: admin$('#adminPartnerDealStatus').value,
+  });
+  try {
+    const data = await adminApi(`admin/partner-deals?${params}`);
+    if (requestId !== adminState.partnerDealRequestId) return;
+    adminState.partnerDealPage = data.page;
+    if (!data.deals.length) {
+      state.textContent = 'No deal registrations match these filters.';
+      return;
+    }
+    state.classList.add('hidden');
+    const labels = {
+      submitted: 'Submitted',
+      under_review: 'Under review',
+      needs_information: 'Needs information',
+      approved: 'Approved',
+      rejected: 'Rejected',
+    };
+    const transitions = {
+      submitted: ['submitted', 'under_review', 'needs_information', 'approved', 'rejected'],
+      under_review: ['under_review', 'needs_information', 'approved', 'rejected'],
+      needs_information: ['needs_information', 'under_review', 'approved', 'rejected'],
+      approved: ['approved'],
+      rejected: ['rejected'],
+    };
+    list.innerHTML = data.deals.map((deal) => `<article class="card admin-partner-deal" data-admin-partner-deal="${adminEscape(deal.id)}"><div class="section-head compact"><div><span class="eyebrow">Registration #${adminEscape(deal.id)} · ${adminEscape(deal.partner_name)}</span><h3>${adminEscape(deal.prospect_organization_name)}</h3></div><span class="status">${adminEscape(labels[deal.status] || deal.status)}</span></div>${deal.possible_duplicate ? '<p class="state-panel">Possible duplicate submission — review manually; this is only a warning.</p>' : ''}<div class="admin-organization-detail-grid"><div><strong>Submitted</strong><p>${adminEscape(deal.created_at)}</p></div><div><strong>Contact</strong><p>${adminEscape(deal.contact_name || 'Not provided')} · ${adminEscape(deal.contact_email || deal.contact_phone || 'No contact details')}</p></div><div><strong>Website</strong><p>${adminEscape(deal.website || 'Not provided')}</p></div></div><p><strong>Opportunity summary</strong><br>${adminEscape(deal.summary)}</p>${deal.partner_response ? `<p><strong>Partner response</strong><br>${adminEscape(deal.partner_response)}</p>` : ''}<div class="form-grid"><div><label for="adminDealStatus${adminEscape(deal.id)}">Review status</label><select id="adminDealStatus${adminEscape(deal.id)}" data-deal-status>${(transitions[deal.status] || [deal.status]).map((status) => `<option value="${adminEscape(status)}" ${status === deal.status ? 'selected' : ''}>${adminEscape(labels[status] || status)}</option>`).join('')}</select></div><div class="full"><label for="adminDealDecision${adminEscape(deal.id)}">Partner-facing decision summary</label><textarea id="adminDealDecision${adminEscape(deal.id)}" data-deal-decision maxlength="1000" rows="2">${adminEscape(deal.decision_summary || '')}</textarea></div><div class="full"><label for="adminDealNote${adminEscape(deal.id)}">Internal note (not shown to the partner)</label><textarea id="adminDealNote${adminEscape(deal.id)}" data-deal-note maxlength="4000" rows="2">${adminEscape(deal.internal_note || '')}</textarea></div></div><div class="form-actions"><button class="primary" data-deal-save type="button">Save review</button><span class="message" data-deal-message role="status"></span></div></article>`).join('');
+    list.querySelectorAll('[data-deal-save]').forEach((button) => button.addEventListener('click', async () => {
+      const card = button.closest('[data-admin-partner-deal]');
+      const id = card.dataset.adminPartnerDeal;
+      const status = card.querySelector('[data-deal-status]').value;
+      button.disabled = true;
+      adminMessage(card.querySelector('[data-deal-message]'), 'Saving review...', true);
+      try {
+        await adminApi(`admin/partner-deals/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status,
+            decision_summary: card.querySelector('[data-deal-decision]').value,
+            internal_note: card.querySelector('[data-deal-note]').value,
+          }),
+        });
+        adminMessage(card.querySelector('[data-deal-message]'), 'Review saved.', true);
+        await Promise.all([loadAdminPartnerDeals(adminState.partnerDealPage), loadAdminFollowUps()]);
+      } catch (error) {
+        adminMessage(card.querySelector('[data-deal-message]'), error.message || 'The review could not be saved.', false);
+      } finally {
+        button.disabled = false;
+      }
+    }));
+    const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+    if (pages > 1) {
+      pagination.classList.remove('hidden');
+      admin$('#adminPartnerDealsPaginationStatus').textContent = `Page ${data.page} of ${pages} · ${data.total} total`;
+      admin$('#adminPartnerDealsPrevious').disabled = data.page <= 1;
+      admin$('#adminPartnerDealsNext').disabled = data.page >= pages;
+    }
+  } catch (error) {
+    if (requestId !== adminState.partnerDealRequestId) return;
+    state.className = 'state-panel error-state';
+    state.textContent = `Partner deal registrations are unavailable: ${error.message}`;
+  }
+}
+
+async function loadAdminFollowUpTasks(page = adminState.followUpTaskPage) {
+  const requestId = ++adminState.followUpTaskRequestId;
+  const state = admin$('#adminFollowUpTasksState');
+  const list = admin$('#adminFollowUpTasksList');
+  const pagination = admin$('#adminFollowUpTasksPagination');
+  state.className = 'state-panel';
+  state.textContent = 'Loading follow-up tasks...';
+  list.textContent = '';
+  pagination.classList.add('hidden');
+  try {
+    const data = await adminApi(`admin/follow-up-tasks?page=${encodeURIComponent(page)}&page_size=50`);
+    if (requestId !== adminState.followUpTaskRequestId) return;
+    adminState.followUpTaskPage = data.page;
+    const assigneeSelect = admin$('#adminFollowUpTaskAssignee');
+    const selectedAssignee = assigneeSelect.value;
+    assigneeSelect.innerHTML = `<option value="">Unassigned</option>${data.assignees.map((user) => `<option value="${adminEscape(user.id)}">${adminEscape(user.name || user.email)} · ${adminEscape(user.role.replace(/_/g, ' '))}</option>`).join('')}`;
+    if (selectedAssignee && data.assignees.some((user) => String(user.id) === selectedAssignee)) {
+      assigneeSelect.value = selectedAssignee;
+    }
+    if (!data.tasks.length) {
+      state.textContent = 'No follow-up tasks yet.';
+      return;
+    }
+    state.classList.add('hidden');
+    const statusLabels = {
+      open: 'Open',
+      in_progress: 'In progress',
+      completed: 'Completed',
+      cancelled: 'Cancelled',
+    };
+    list.innerHTML = data.tasks.map((task) => {
+      const activeAssignee = data.assignees.some((user) => Number(task.assigned_to_user_id) === Number(user.id));
+      const currentAssignee = task.assigned_to_user_id == null
+        ? ''
+        : `<option value="${adminEscape(task.assigned_to_user_id)}" selected disabled>${adminEscape(task.assigned_to_name || task.assigned_to_email || `User ${task.assigned_to_user_id}`)} (inactive)</option>`;
+      return `<article class="card admin-follow-up-task" data-follow-up-task="${adminEscape(task.id)}"><div class="section-head compact"><div><span class="eyebrow">Task #${adminEscape(task.id)} · Created ${adminEscape(task.created_at)}</span><h3>${adminEscape(task.title)}</h3></div></div><div class="form-grid"><div><label for="followUpTaskStatus${adminEscape(task.id)}">Status</label><select id="followUpTaskStatus${adminEscape(task.id)}" data-task-status>${Object.entries(statusLabels).map(([status, label]) => `<option value="${status}" ${status === task.status ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div><label for="followUpTaskOwner${adminEscape(task.id)}">Owner</label><select id="followUpTaskOwner${adminEscape(task.id)}" data-task-owner><option value="" ${task.assigned_to_user_id == null ? 'selected' : ''}>Unassigned</option>${task.assigned_to_user_id != null && !activeAssignee ? currentAssignee : ''}${data.assignees.map((user) => `<option value="${adminEscape(user.id)}" ${Number(task.assigned_to_user_id) === Number(user.id) ? 'selected' : ''}>${adminEscape(user.name || user.email)}</option>`).join('')}</select></div><div><label for="followUpTaskDue${adminEscape(task.id)}">Due date</label><input id="followUpTaskDue${adminEscape(task.id)}" data-task-due type="date" value="${adminEscape(task.due_date || '')}" /></div><div class="full"><label for="followUpTaskDescription${adminEscape(task.id)}">Notes</label><textarea id="followUpTaskDescription${adminEscape(task.id)}" data-task-description maxlength="2000" rows="2">${adminEscape(task.description || '')}</textarea></div></div><div class="form-actions"><button class="secondary" data-task-save type="button">Save task</button><span class="message" data-task-message role="status"></span></div></article>`;
+    }).join('');
+    list.querySelectorAll('[data-task-save]').forEach((button) => button.addEventListener('click', async () => {
+      const card = button.closest('[data-follow-up-task]');
+      const id = card.dataset.followUpTask;
+      button.disabled = true;
+      adminMessage(card.querySelector('[data-task-message]'), 'Saving task...', true);
+      try {
+        await adminApi(`admin/follow-up-tasks/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status: card.querySelector('[data-task-status]').value,
+            assigned_to_user_id: card.querySelector('[data-task-owner]').value || null,
+            due_date: card.querySelector('[data-task-due]').value || null,
+            description: card.querySelector('[data-task-description]').value,
+          }),
+        });
+        adminMessage(card.querySelector('[data-task-message]'), 'Task saved.', true);
+        await loadAdminFollowUpTasks(adminState.followUpTaskPage);
+      } catch (error) {
+        adminMessage(card.querySelector('[data-task-message]'), error.message || 'The task could not be saved.', false);
+      } finally {
+        button.disabled = false;
+      }
+    }));
+    const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+    if (pages > 1) {
+      pagination.classList.remove('hidden');
+      admin$('#adminFollowUpTasksPaginationStatus').textContent = `Page ${data.page} of ${pages} · ${data.total} total`;
+      admin$('#adminFollowUpTasksPrevious').disabled = data.page <= 1;
+      admin$('#adminFollowUpTasksNext').disabled = data.page >= pages;
+    }
+  } catch (error) {
+    if (requestId !== adminState.followUpTaskRequestId) return;
+    state.className = 'state-panel error-state';
+    state.textContent = `Follow-up tasks are unavailable: ${error.message}`;
+  }
+}
+
+async function loadAdminFollowUps(page = adminState.followUpPage) {
+  const requestId = ++adminState.followUpRequestId;
+  const state = admin$('#adminFollowUpsState');
+  const list = admin$('#adminFollowUpsList');
+  const pagination = admin$('#adminFollowUpsPagination');
+  state.className = 'state-panel';
+  state.textContent = 'Loading follow-ups...';
+  list.classList.add('hidden');
+  pagination.classList.add('hidden');
+  try {
+    const data = await adminApi(`admin/follow-ups?page=${encodeURIComponent(page)}&page_size=50`);
+    if (requestId !== adminState.followUpRequestId) return;
+    adminState.followUpPage = data.page;
+    if (!data.items.length) {
+      state.textContent = 'No open follow-ups or pending onboarding invitations.';
+      return;
+    }
+    state.classList.add('hidden');
+    list.classList.remove('hidden');
+    const types = {
+      support_ticket: 'Support ticket',
+      deal_registration: 'Partner deal',
+      customer_invite: 'Customer invitation',
+      partner_invite: 'Partner invitation',
+    };
+    list.innerHTML = `<p class="muted">${adminEscape(data.total)} items · internal queue only · no automated messages</p><div class="admin-partner-table-wrap"><table class="admin-table"><thead><tr><th>Type</th><th>Item</th><th>Organization</th><th>Status</th><th>Created</th><th>Invitation expiry</th></tr></thead><tbody>${data.items.map((item) => `<tr><td>${adminEscape(types[item.type] || item.type)}</td><td>${adminEscape(item.title)} <small>#${adminEscape(item.id)}</small></td><td>${adminEscape(item.organization || 'Not provided')}</td><td><span class="status">${adminEscape(item.status.replace(/_/g, ' '))}</span></td><td>${adminEscape(item.created_at)}</td><td>${adminEscape(item.expires_at || '—')}</td></tr>`).join('')}</tbody></table></div>`;
+    const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+    if (pages > 1) {
+      pagination.classList.remove('hidden');
+      admin$('#adminFollowUpsPaginationStatus').textContent = `Page ${data.page} of ${pages} · ${data.total} total`;
+      admin$('#adminFollowUpsPrevious').disabled = data.page <= 1;
+      admin$('#adminFollowUpsNext').disabled = data.page >= pages;
+    }
+  } catch (error) {
+    if (requestId !== adminState.followUpRequestId) return;
+    state.className = 'state-panel error-state';
+    state.textContent = `The follow-up queue is unavailable: ${error.message}`;
+  }
+}
+
 async function loadAdminPartnerInvites() {
   try {
     const data = await adminApi('admin/partner-invites');
@@ -1455,6 +1668,11 @@ function navigateAdmin(view, productTab = null) {
     loadAdminCustomerInvites();
     loadAdminCustomers();
   }
+  if (view === 'partner-deals') loadAdminPartnerDeals(1);
+  if (view === 'follow-ups') {
+    loadAdminFollowUpTasks(1);
+    loadAdminFollowUps(1);
+  }
   if (view === 'products') {
     loadAdminProducts();
     if (productTab) selectAdminProductTab(productTab);
@@ -1494,6 +1712,47 @@ admin$$('.admin-refresh').forEach((button) => button.addEventListener('click', (
   if (button.dataset.refresh === 'customer-profiles') loadAdminCustomers();
   else navigateAdmin(button.dataset.refresh);
 }));
+admin$('#adminPartnerDealFilters').addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadAdminPartnerDeals(1);
+});
+admin$('#adminPartnerDealsRefresh').addEventListener('click', () => loadAdminPartnerDeals());
+admin$('#adminPartnerDealsPrevious').addEventListener('click', () => loadAdminPartnerDeals(adminState.partnerDealPage - 1));
+admin$('#adminPartnerDealsNext').addEventListener('click', () => loadAdminPartnerDeals(adminState.partnerDealPage + 1));
+admin$('#adminFollowUpsRefresh').addEventListener('click', () => {
+  loadAdminFollowUpTasks();
+  loadAdminFollowUps();
+});
+admin$('#adminFollowUpsPrevious').addEventListener('click', () => loadAdminFollowUps(adminState.followUpPage - 1));
+admin$('#adminFollowUpsNext').addEventListener('click', () => loadAdminFollowUps(adminState.followUpPage + 1));
+admin$('#adminFollowUpTasksPrevious').addEventListener('click', () => loadAdminFollowUpTasks(adminState.followUpTaskPage - 1));
+admin$('#adminFollowUpTasksNext').addEventListener('click', () => loadAdminFollowUpTasks(adminState.followUpTaskPage + 1));
+admin$('#adminFollowUpTaskForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
+  const button = admin$('#adminFollowUpTaskCreate');
+  button.disabled = true;
+  adminMessage(admin$('#adminFollowUpTaskMessage'), 'Creating follow-up task...', true);
+  try {
+    await adminApi('admin/follow-up-tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: form.get('title'),
+        description: form.get('description'),
+        assigned_to_user_id: form.get('assigned_to_user_id') || null,
+        due_date: form.get('due_date') || null,
+      }),
+    });
+    formElement.reset();
+    adminMessage(admin$('#adminFollowUpTaskMessage'), 'Follow-up task created.', true);
+    await loadAdminFollowUpTasks(1);
+  } catch (error) {
+    adminMessage(admin$('#adminFollowUpTaskMessage'), error.message || 'The follow-up task could not be created.', false);
+  } finally {
+    button.disabled = false;
+  }
+});
 admin$('#adminOverviewRefresh').addEventListener('click', loadAdminOverview);
 admin$('#adminD1Refresh').addEventListener('click', loadAdminD1Operations);
 admin$('#adminOrganizationFilters').addEventListener('submit', (event) => event.preventDefault());

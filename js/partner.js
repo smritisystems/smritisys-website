@@ -15,7 +15,7 @@
  *
  * @description Manages partner customer onboarding and assigned activation inventory.
  */
-const partnerState = { token: null, permissions: {} };
+const partnerState = { token: null, permissions: {}, dealPage: 1, dealRequestId: 0 };
 const partner$ = (selector) => document.querySelector(selector);
 const partner$$ = (selector) => [...document.querySelectorAll(selector)];
 let partnerRevealTimer = null;
@@ -53,6 +53,14 @@ function showPartnerLogin(message = '') {
   partner$('#partnerCustomerList').textContent = '';
   partner$('#partnerCustomerState').textContent = 'Sign in to view assigned customers.';
   partner$('#partnerCustomerState').className = 'state-panel';
+  partner$('#partnerDealList').textContent = '';
+  partner$('#partnerDealState').textContent = 'Sign in to view deal registrations.';
+  partner$('#partnerDealState').className = 'state-panel';
+  partner$('#partnerDealPagination').classList.add('hidden');
+  partner$('#partnerDealForm').reset();
+  partner$('#partnerDealMessage').textContent = '';
+  partnerState.dealPage = 1;
+  partnerState.dealRequestId += 1;
   clearPartnerCustomerInviteLink();
   partnerState.permissions = {};
   partner$('#partnerPortalView').classList.add('hidden');
@@ -108,6 +116,61 @@ async function loadPartnerCustomers() {
     });
   } catch (error) {
     renderPartnerState('partnerCustomerState', 'partnerCustomerList', error.status === 403 ? 'You are not authorized to view linked customers.' : 'Linked customers are unavailable.', true);
+  }
+}
+
+async function loadPartnerDeals(page = partnerState.dealPage) {
+  const requestId = ++partnerState.dealRequestId;
+  const state = partner$('#partnerDealState');
+  const list = partner$('#partnerDealList');
+  const pagination = partner$('#partnerDealPagination');
+  state.className = 'state-panel';
+  state.textContent = 'Loading deal registrations...';
+  list.classList.add('hidden');
+  pagination.classList.add('hidden');
+  try {
+    const data = await partnerApi(`partner/deals?page=${encodeURIComponent(page)}&page_size=20`);
+    if (requestId !== partnerState.dealRequestId) return;
+    partnerState.dealPage = data.page;
+    if (!data.deals.length) {
+      state.textContent = 'No deal registrations submitted yet.';
+      return;
+    }
+    state.classList.add('hidden');
+    list.classList.remove('hidden');
+    list.innerHTML = `<div class="partner-table-wrap"><table class="partner-table"><thead><tr><th>Prospect</th><th>Contact</th><th>Status</th><th>Summary</th><th>Decision</th><th>Your response</th><th>Updated</th></tr></thead><tbody>${data.deals.map((deal) => `<tr><td><strong>${partnerEscape(deal.prospect_organization_name)}</strong>${deal.website ? `<br><a href="${partnerEscape(deal.website)}" target="_blank" rel="noopener noreferrer">${partnerEscape(deal.website)}</a>` : ''}</td><td>${partnerEscape(deal.contact_name || '—')}<br>${partnerEscape(deal.contact_email || deal.contact_phone || '—')}</td><td><span class="status">${partnerEscape(deal.status.replace(/_/g, ' '))}</span></td><td>${partnerEscape(deal.summary)}</td><td>${partnerEscape(deal.decision_summary || '—')}</td><td>${partnerEscape(deal.partner_response || '—')}</td><td>${partnerEscape(deal.updated_at)}</td></tr>${deal.status === 'needs_information' ? `<tr><td colspan="7"><div data-deal-response-form="${partnerEscape(deal.id)}"><label for="partnerDealResponse${partnerEscape(deal.id)}">Your response to the review request</label><textarea id="partnerDealResponse${partnerEscape(deal.id)}" data-deal-response maxlength="2000" rows="2">${partnerEscape(deal.partner_response || '')}</textarea><button class="secondary" type="button" data-deal-resubmit="${partnerEscape(deal.id)}">Send response for review</button><span class="message" data-deal-response-message role="status"></span></div></td></tr>` : ''}`).join('')}</tbody></table></div>`;
+    list.querySelectorAll('[data-deal-resubmit]').forEach((button) => button.addEventListener('click', async () => {
+      const id = button.dataset.dealResubmit;
+      const response = list.querySelector(`[data-deal-response-form="${id}"] [data-deal-response]`).value;
+      const message = list.querySelector(`[data-deal-response-form="${id}"] [data-deal-response-message]`);
+      button.disabled = true;
+      partnerMessage(message, 'Sending response for review...', true);
+      try {
+        await partnerApi(`partner/deals/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ partner_response: response }),
+        });
+        partnerMessage(message, 'Response submitted.', true);
+        await loadPartnerDeals(partnerState.dealPage);
+      } catch (error) {
+        partnerMessage(message, error.message || 'The response could not be submitted.', false);
+      } finally {
+        button.disabled = false;
+      }
+    }));
+    const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+    if (pages > 1) {
+      pagination.classList.remove('hidden');
+      partner$('#partnerDealPage').textContent = `Page ${data.page} of ${pages} · ${data.total} total`;
+      partner$('#partnerDealPrevious').disabled = data.page <= 1;
+      partner$('#partnerDealNext').disabled = data.page >= pages;
+    }
+  } catch (error) {
+    if (requestId !== partnerState.dealRequestId) return;
+    state.className = 'state-panel error-state';
+    state.textContent = error.status === 403
+      ? 'Deal registration is not enabled for this partner account.'
+      : `Deal registrations are unavailable: ${error.message}`;
   }
 }
 
@@ -241,6 +304,7 @@ function navigatePartner(view) {
   partner$$('.partner-view').forEach((section) => section.classList.toggle('active', section.dataset.partnerSection === view));
   partner$('#partnerPageTitle').textContent = button.textContent;
   if (view === 'customers') loadPartnerCustomers();
+  if (view === 'deals') loadPartnerDeals(1);
   if (view === 'inventory') loadPartnerInventory();
   if (view === 'licenses') loadPartnerLicenses();
   if (view === 'releases') loadPartnerReleases();
@@ -250,10 +314,43 @@ function navigatePartner(view) {
 partner$$('.partner-nav button').forEach((button) => button.addEventListener('click', () => navigatePartner(button.dataset.partnerView)));
 partner$$('.partner-refresh').forEach((button) => button.addEventListener('click', () => {
   if (button.dataset.refresh === 'customers') loadPartnerCustomers();
+  if (button.dataset.refresh === 'deals') loadPartnerDeals(1);
   if (button.dataset.refresh === 'inventory') loadPartnerInventory();
   if (button.dataset.refresh === 'licenses') loadPartnerLicenses();
   if (button.dataset.refresh === 'releases') loadPartnerReleases();
 }));
+
+partner$('#partnerDealForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = new FormData(form);
+  const button = partner$('#partnerDealSubmit');
+  button.disabled = true;
+  partnerMessage(partner$('#partnerDealMessage'), 'Submitting deal for internal review...', true);
+  try {
+    const result = await partnerApi('partner/deals', {
+      method: 'POST',
+      body: JSON.stringify({
+        prospect_organization_name: values.get('prospect_organization_name'),
+        website: values.get('website'),
+        contact_name: values.get('contact_name'),
+        contact_email: values.get('contact_email'),
+        contact_phone: values.get('contact_phone'),
+        summary: values.get('summary'),
+      }),
+    });
+    form.reset();
+    partnerMessage(partner$('#partnerDealMessage'), `Deal registration #${result.deal_id} submitted for review.`, true);
+    await loadPartnerDeals(1);
+  } catch (error) {
+    partnerMessage(partner$('#partnerDealMessage'), error.message || 'The deal registration could not be submitted.', false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+partner$('#partnerDealPrevious').addEventListener('click', () => loadPartnerDeals(partnerState.dealPage - 1));
+partner$('#partnerDealNext').addEventListener('click', () => loadPartnerDeals(partnerState.dealPage + 1));
 
 function clearPartnerCustomerInviteLink() {
   partner$('#partnerCustomerInviteLink').value = '';

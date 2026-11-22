@@ -44,6 +44,7 @@ function createD1Mock() {
   const m14 = fs.readFileSync(new URL("../migrations/0014_signed_license_artifacts.sql", import.meta.url), "utf8");
   const m15 = fs.readFileSync(new URL("../migrations/0015_prathamone_product_registration.sql", import.meta.url), "utf8");
   const m28 = fs.readFileSync(new URL("../migrations/0028_customer_profile_management.sql", import.meta.url), "utf8");
+  const m30 = fs.readFileSync(new URL("../migrations/0030_partner_workflow_foundations.sql", import.meta.url), "utf8");
 
   db.exec(schema);
   db.exec(m2);
@@ -59,6 +60,7 @@ function createD1Mock() {
   db.exec(m14);
   db.exec(m15);
   db.exec(m28);
+  db.exec(m30);
 
   return {
     raw: db,
@@ -1125,6 +1127,238 @@ test("partner onboarding, customer links, and partner setup invitations are scop
     d1.raw.prepare("SELECT COUNT(*) AS count FROM partner_customer_links WHERE partner_organization_id = ? AND status = 'active'").get(partnerId).count,
     1,
   );
+});
+
+test("partner deal registration is tenant-scoped, manually reviewed, and feeds an internal-only follow-up queue", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "test-token-deal-admin";
+  const partnerToken = "test-token-deal-partner";
+  const secondPartnerToken = "test-token-deal-second-partner";
+  const customerToken = "test-token-deal-customer";
+  const unselectedToken = "test-token-deal-unselected";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+7 days'))"
+  ).bind(adminToken).run();
+  d1.raw.prepare(
+    "INSERT INTO users (id, email, password_hash, name, role, status) VALUES (202, 'task-owner@example.test', 'hash', 'Task Owner', 'staff', 'active')"
+  ).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 103, 103, datetime('now', '+7 days'))"
+  ).bind(partnerToken).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+7 days'))"
+  ).bind(customerToken).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 103, datetime('now', '+7 days'))"
+  ).bind(unselectedToken).run();
+  d1.raw.exec(`
+    INSERT INTO customers (id, email, password_hash, name, company, status)
+    VALUES (104, 'second-partner@example.test', 'hash', 'Second Partner', 'Second Partner LLC', 'active');
+    INSERT INTO people (id, email, name, source_type, source_id, status)
+    VALUES (104, 'second-partner@example.test', 'Second Partner', 'customer', 104, 'active');
+    INSERT INTO organizations (id, name, status) VALUES (104, 'Second Partner LLC', 'active');
+    INSERT INTO relationships (organization_id, relationship_type, status) VALUES (104, 'reseller', 'active');
+    INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+    VALUES (104, 'customer', 104, 'customer', 'active');
+    INSERT INTO partner_memberships (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+    VALUES (104, 'customer', 104, 'partner_member', 'reseller', 'active');
+  `);
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 104, 104, datetime('now', '+7 days'))"
+  ).bind(secondPartnerToken).run();
+
+  const unauthorized = await callApi(d1, "partner/deals", {
+    method: "POST",
+    token: customerToken,
+    body: { prospect_organization_name: "Prospect Academy", summary: "A valid opportunity summary." },
+  });
+  assert.equal(unauthorized.status, 403);
+  assert.equal((await callApi(d1, "partner/deals", { token: unselectedToken })).status, 403);
+  const forgedOrganization = await callApi(d1, "partner/deals", {
+    method: "POST",
+    token: partnerToken,
+    body: {
+      partner_organization_id: 104,
+      prospect_organization_name: "Prospect Academy",
+      summary: "A valid opportunity summary.",
+    },
+  });
+  assert.equal(forgedOrganization.status, 400);
+
+  const commissionCountBefore = d1.raw.prepare("SELECT COUNT(*) AS count FROM partner_commissions").get().count;
+  const organizationCountBeforeDeals = d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count;
+  const customerCountBeforeDeals = d1.raw.prepare("SELECT COUNT(*) AS count FROM customers").get().count;
+  const firstDeal = await callApi(d1, "partner/deals", {
+    method: "POST",
+    token: partnerToken,
+    body: {
+      prospect_organization_name: "Prospect Academy",
+      contact_email: "owner@prospect.test",
+      website: "https://prospect.test",
+      summary: "Prospect requested a product demonstration.",
+    },
+  });
+  assert.equal(firstDeal.status, 201);
+  assert.equal(
+    d1.raw.prepare("SELECT partner_organization_id FROM deal_registrations WHERE id = ?").get(firstDeal.data.deal_id).partner_organization_id,
+    103,
+  );
+  const secondDeal = await callApi(d1, "partner/deals", {
+    method: "POST",
+    token: secondPartnerToken,
+    body: {
+      prospect_organization_name: "Prospect Academy",
+      contact_email: "sales@prospect.test",
+      summary: "Prospect requested a separate partner discussion.",
+    },
+  });
+  assert.equal(secondDeal.status, 201);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM partner_commissions").get().count, commissionCountBefore);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM organizations").get().count, organizationCountBeforeDeals);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM customers").get().count, customerCountBeforeDeals);
+  const partnerDeals = await callApi(d1, "partner/deals", { token: partnerToken });
+  assert.equal(partnerDeals.status, 200);
+  assert.deepEqual(partnerDeals.data.deals.map((deal) => deal.id), [firstDeal.data.deal_id]);
+  const secondPartnerDeals = await callApi(d1, "partner/deals", { token: secondPartnerToken });
+  assert.deepEqual(secondPartnerDeals.data.deals.map((deal) => deal.id), [secondDeal.data.deal_id]);
+
+  const adminDeals = await callApi(d1, "admin/partner-deals", { token: adminToken });
+  assert.equal(adminDeals.status, 200);
+  assert.equal(adminDeals.data.total, 2);
+  assert.ok(adminDeals.data.deals.every((deal) => deal.possible_duplicate === 1));
+  assert.equal(
+    (await callApi(d1, "admin/partner-deals", { token: partnerToken })).status,
+    403,
+  );
+
+  const missingDecision = await callApi(d1, `admin/partner-deals/${firstDeal.data.deal_id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "needs_information" },
+  });
+  assert.equal(missingDecision.status, 400);
+  const reviewed = await callApi(d1, `admin/partner-deals/${firstDeal.data.deal_id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: {
+      status: "needs_information",
+      decision_summary: "Please add the requested deployment timeline.",
+      internal_note: "Discussed at channel review.",
+    },
+  });
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewed.data.status, "needs_information");
+  const terminalTransition = await callApi(d1, `admin/partner-deals/${firstDeal.data.deal_id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "submitted", decision_summary: "Please add the requested deployment timeline." },
+  });
+  assert.equal(terminalTransition.status, 409);
+
+  const partnerVisibleDeals = await callApi(d1, "partner/deals", { token: partnerToken });
+  assert.equal(partnerVisibleDeals.data.deals[0].decision_summary, "Please add the requested deployment timeline.");
+  assert.equal(Object.prototype.hasOwnProperty.call(partnerVisibleDeals.data.deals[0], "internal_note"), false);
+  const crossPartnerResponse = await callApi(d1, `partner/deals/${firstDeal.data.deal_id}`, {
+    method: "PATCH",
+    token: secondPartnerToken,
+    body: { partner_response: "This response must not cross partner scope." },
+  });
+  assert.equal(crossPartnerResponse.status, 404);
+  const shortResponse = await callApi(d1, `partner/deals/${firstDeal.data.deal_id}`, {
+    method: "PATCH",
+    token: partnerToken,
+    body: { partner_response: "Short" },
+  });
+  assert.equal(shortResponse.status, 400);
+  d1.raw.prepare(
+    "INSERT INTO support_tickets (customer_id, subject, description) VALUES (101, 'Follow-up queue test', 'Open ticket for pagination verification')"
+  ).run();
+  const deniedQueue = await callApi(d1, "admin/follow-ups", { token: partnerToken });
+  assert.equal(deniedQueue.status, 403);
+  const messagesBeforeQueue = d1.raw.prepare("SELECT COUNT(*) AS count FROM support_ticket_messages").get().count;
+  const queue = await callApi(d1, "admin/follow-ups", { token: adminToken });
+  assert.equal(queue.status, 200);
+  assert.equal(queue.data.policy, "manual_review_no_sla_or_outbound_messages");
+  assert.ok(queue.data.total >= 2);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM support_ticket_messages").get().count, messagesBeforeQueue);
+  assert.ok(queue.data.items.some((item) => item.type === "deal_registration" && item.id === secondDeal.data.deal_id));
+  assert.equal(queue.data.items.some((item) => item.type === "deal_registration" && item.id === firstDeal.data.deal_id), false);
+  const queueSecondPage = await callApi(d1, "admin/follow-ups?page=2&page_size=1", { token: adminToken });
+  assert.equal(queueSecondPage.status, 200);
+  assert.equal(queueSecondPage.data.page, 2);
+  assert.equal(queueSecondPage.data.items.length, 1);
+  const deniedTaskCreate = await callApi(d1, "admin/follow-up-tasks", {
+    method: "POST",
+    token: partnerToken,
+    body: { title: "Unauthorized task" },
+  });
+  assert.equal(deniedTaskCreate.status, 403);
+  const invalidTaskDate = await callApi(d1, "admin/follow-up-tasks", {
+    method: "POST",
+    token: adminToken,
+    body: { title: "Invalid due date", due_date: "2026-02-31" },
+  });
+  assert.equal(invalidTaskDate.status, 400);
+  const invalidTaskOwner = await callApi(d1, "admin/follow-up-tasks", {
+    method: "POST",
+    token: adminToken,
+    body: { title: "Invalid task owner", assigned_to_user_id: 999 },
+  });
+  assert.equal(invalidTaskOwner.status, 400);
+  const createdTask = await callApi(d1, "admin/follow-up-tasks", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      title: "Review prospect follow-up",
+      description: "Contact the channel team after the internal review.",
+      assigned_to_user_id: 202,
+      due_date: "2026-12-15",
+    },
+  });
+  assert.equal(createdTask.status, 201);
+  const listedTasks = await callApi(d1, "admin/follow-up-tasks", { token: adminToken });
+  assert.equal(listedTasks.status, 200);
+  assert.equal(listedTasks.data.tasks[0].assigned_to_name, "Task Owner");
+  assert.ok(listedTasks.data.assignees.some((user) => user.id === 202));
+  d1.raw.prepare("UPDATE users SET status = 'inactive' WHERE id = 202").run();
+  const updatedTask = await callApi(d1, `admin/follow-up-tasks/${createdTask.data.task_id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "in_progress" },
+  });
+  assert.equal(updatedTask.status, 200);
+  assert.equal(
+    d1.raw.prepare("SELECT assigned_to_user_id FROM follow_up_tasks WHERE id = ?").get(createdTask.data.task_id).assigned_to_user_id,
+    202,
+  );
+  const unassignedTask = await callApi(d1, `admin/follow-up-tasks/${createdTask.data.task_id}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "completed", assigned_to_user_id: null, due_date: null },
+  });
+  assert.equal(unassignedTask.status, 200);
+  const taskRecord = d1.raw.prepare(
+    "SELECT status, assigned_to_user_id, due_date FROM follow_up_tasks WHERE id = ?"
+  ).get(createdTask.data.task_id);
+  assert.equal(taskRecord.status, "completed");
+  assert.equal(taskRecord.assigned_to_user_id, null);
+  assert.equal(taskRecord.due_date, null);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM audit_logs WHERE action LIKE 'ADMIN_FOLLOW_UP_TASK_%'").get().count, 3);
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM support_ticket_messages").get().count, messagesBeforeQueue);
+  const partnerResponse = await callApi(d1, `partner/deals/${firstDeal.data.deal_id}`, {
+    method: "PATCH",
+    token: partnerToken,
+    body: { partner_response: "The requested deployment timeline is six weeks." },
+  });
+  assert.equal(partnerResponse.status, 200);
+  assert.equal(partnerResponse.data.status, "submitted");
+  assert.equal(
+    d1.raw.prepare("SELECT partner_response, status FROM deal_registrations WHERE id = ?").get(firstDeal.data.deal_id).partner_response,
+    "The requested deployment timeline is six weeks.",
+  );
+  assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'PARTNER_DEAL_RESPONSE_SUBMITTED'").get());
+  assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'PARTNER_DEAL_SUBMITTED'").get());
+  assert.ok(d1.raw.prepare("SELECT 1 FROM audit_logs WHERE action = 'ADMIN_PARTNER_DEAL_REVIEWED'").get());
 });
 
 test("direct license issuance registers an activation-only customer and reveals the key once", async () => {

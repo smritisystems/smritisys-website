@@ -4803,6 +4803,509 @@ async function handlePartner(request, env, resource) {
   return json({ ok: false, error: "Unsupported partner operation" }, 405);
 }
 
+const DEAL_REGISTRATION_STATUSES = ["submitted", "under_review", "needs_information", "approved", "rejected"];
+const DEAL_STATUS_TRANSITIONS = {
+  submitted: ["under_review", "needs_information", "approved", "rejected"],
+  under_review: ["needs_information", "approved", "rejected"],
+  needs_information: ["under_review", "approved", "rejected"],
+  approved: [],
+  rejected: [],
+};
+
+async function handlePartnerDeals(request, env) {
+  const session = await getPartnerSession(request, env);
+  if (!session || !(await hasPartnerPermission(env, session, "partner.deals.submit"))) {
+    return json({ ok: false, error: "Partner deal registration access required" }, 403);
+  }
+  if (request.method === "GET") {
+    const url = new URL(request.url);
+    const pageValue = url.searchParams.get("page") || "1";
+    const pageSizeValue = url.searchParams.get("page_size") || "20";
+    if (!/^\d+$/.test(pageValue) || !Number.isSafeInteger(Number(pageValue)) || Number(pageValue) < 1) {
+      return json({ ok: false, error: "A valid page number is required" }, 400);
+    }
+    if (!/^\d+$/.test(pageSizeValue) || !Number.isSafeInteger(Number(pageSizeValue)) ||
+        Number(pageSizeValue) < 1 || Number(pageSizeValue) > 100) {
+      return json({ ok: false, error: "Page size must be between 1 and 100" }, 400);
+    }
+    const count = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM deal_registrations WHERE partner_organization_id = ?"
+    ).bind(session.partner_organization_id).first();
+    const total = Number(count?.total || 0);
+    const pageSize = Number(pageSizeValue);
+    const page = Math.min(Number(pageValue), Math.max(1, Math.ceil(total / pageSize)));
+    const { results } = await env.DB.prepare(
+      `SELECT id, prospect_organization_name, website, contact_name, contact_email,
+              contact_phone, summary, partner_response, status, decision_summary, created_at, updated_at
+       FROM deal_registrations
+       WHERE partner_organization_id = ?
+       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+    ).bind(session.partner_organization_id, pageSize, (page - 1) * pageSize).all();
+    return json({ ok: true, deals: results || [], total, page, page_size: pageSize },
+      200, null, { "Cache-Control": "no-store" });
+  }
+  if (request.method !== "POST") return json({ ok: false, error: "Unsupported deal registration operation" }, 405);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid deal registration is required" }, 400);
+  }
+  const allowedFields = ["prospect_organization_name", "website", "contact_name", "contact_email", "contact_phone", "summary"];
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some((field) => !allowedFields.includes(field))) {
+    return json({ ok: false, error: "Only prospect and contact details can be submitted" }, 400);
+  }
+  const prospectName = boundedString(body.prospect_organization_name, 200);
+  const summary = boundedString(body.summary, 4000);
+  const website = body.website == null || body.website === "" ? null : boundedString(body.website, 255);
+  const contactName = body.contact_name == null || body.contact_name === "" ? null : boundedString(body.contact_name, 120);
+  const contactEmail = body.contact_email == null || body.contact_email === "" ? null : validEmail(body.contact_email);
+  const contactPhone = body.contact_phone == null || body.contact_phone === "" ? null : boundedString(body.contact_phone, 40);
+  if (!prospectName || !summary || summary.length < 10 ||
+      (body.website != null && body.website !== "" && !website) ||
+      (body.contact_name != null && body.contact_name !== "" && !contactName) ||
+      (body.contact_email != null && body.contact_email !== "" && !contactEmail) ||
+      (body.contact_phone != null && body.contact_phone !== "" && !contactPhone)) {
+    return json({ ok: false, error: "Provide a prospect name and a 10-4,000 character summary; optional contact details must be valid" }, 400);
+  }
+  if (website) {
+    try {
+      const parsedWebsite = new URL(website);
+      if (!["http:", "https:"].includes(parsedWebsite.protocol)) throw new Error("Unsupported protocol");
+    } catch {
+      return json({ ok: false, error: "Website must be a valid HTTP or HTTPS URL" }, 400);
+    }
+  }
+
+  const result = await env.DB.prepare(
+    `INSERT INTO deal_registrations
+       (partner_organization_id, submitted_by_person_id, prospect_organization_name,
+        website, contact_name, contact_email, contact_phone, summary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    session.partner_organization_id, session.person_id, prospectName,
+    website, contactName, contactEmail, contactPhone, summary,
+  ).run();
+  await writeAudit(env, request, session, "PARTNER_DEAL_SUBMITTED", "deal_registration", result.meta.last_row_id,
+    null, { status: "submitted", prospect_organization_name: prospectName });
+  return json({ ok: true, deal_id: result.meta.last_row_id, status: "submitted" }, 201,
+    null, { "Cache-Control": "no-store" });
+}
+
+async function handlePartnerDealResponse(request, env, dealId) {
+  const session = await getPartnerSession(request, env);
+  if (!session || !(await hasPartnerPermission(env, session, "partner.deals.submit"))) {
+    return json({ ok: false, error: "Partner deal registration access required" }, 403);
+  }
+  if (request.method !== "PATCH") return json({ ok: false, error: "Unsupported deal registration operation" }, 405);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid deal response is required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).length !== 1 || !Object.prototype.hasOwnProperty.call(body, "partner_response")) {
+    return json({ ok: false, error: "Only a partner response can be submitted" }, 400);
+  }
+  const response = boundedString(body.partner_response, 2000);
+  if (!response || response.length < 10) {
+    return json({ ok: false, error: "Provide a response of 10 to 2,000 characters" }, 400);
+  }
+  const deal = await env.DB.prepare(
+    `SELECT id, status, partner_response FROM deal_registrations
+     WHERE id = ? AND partner_organization_id = ?`
+  ).bind(dealId, session.partner_organization_id).first();
+  if (!deal) return json({ ok: false, error: "Deal registration not found" }, 404);
+  if (deal.status !== "needs_information") {
+    return json({ ok: false, error: "This registration is not awaiting partner information" }, 409);
+  }
+  const update = await env.DB.prepare(
+    `UPDATE deal_registrations
+     SET partner_response = ?, status = 'submitted', reviewed_by_person_id = NULL, updated_at = datetime('now')
+     WHERE id = ? AND partner_organization_id = ? AND status = 'needs_information'`
+  ).bind(response, deal.id, session.partner_organization_id).run();
+  if (update.meta.changes !== 1) {
+    return json({ ok: false, error: "Deal registration changed; refresh and try again" }, 409);
+  }
+  await writeAudit(env, request, session, "PARTNER_DEAL_RESPONSE_SUBMITTED", "deal_registration", deal.id,
+    { status: deal.status, partner_response: deal.partner_response },
+    { status: "submitted", partner_response: response });
+  return json({ ok: true, status: "submitted" }, 200, null, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminPartnerDeals(request, env, dealId = null) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  const noStoreHeaders = { "Cache-Control": "no-store" };
+
+  if (dealId === null) {
+    if (request.method !== "GET") return json({ ok: false, error: "Unsupported deal review operation" }, 405);
+    const url = new URL(request.url);
+    const status = (url.searchParams.get("status") || "").trim();
+    const search = (url.searchParams.get("q") || "").trim();
+    const pageValue = url.searchParams.get("page") || "1";
+    const pageSizeValue = url.searchParams.get("page_size") || "50";
+    if (status && !DEAL_REGISTRATION_STATUSES.includes(status)) {
+      return json({ ok: false, error: "A valid deal registration status is required" }, 400);
+    }
+    if (search.length > 100) return json({ ok: false, error: "Search must be 100 characters or fewer" }, 400);
+    if (!/^\d+$/.test(pageValue) || !Number.isSafeInteger(Number(pageValue)) || Number(pageValue) < 1) {
+      return json({ ok: false, error: "A valid page number is required" }, 400);
+    }
+    if (!/^\d+$/.test(pageSizeValue) || !Number.isSafeInteger(Number(pageSizeValue)) ||
+        Number(pageSizeValue) < 1 || Number(pageSizeValue) > 100) {
+      return json({ ok: false, error: "Page size must be between 1 and 100" }, 400);
+    }
+    const clauses = [];
+    const values = [];
+    if (status) {
+      clauses.push("d.status = ?");
+      values.push(status);
+    }
+    if (search) {
+      const pattern = `%${search}%`;
+      clauses.push("(CAST(d.id AS TEXT) LIKE ? OR d.prospect_organization_name LIKE ? OR d.contact_email LIKE ? OR o.name LIKE ?)");
+      values.push(pattern, pattern, pattern, pattern);
+    }
+    const from = `FROM deal_registrations d
+      JOIN organizations o ON o.id = d.partner_organization_id`;
+    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+    const count = await env.DB.prepare(`SELECT COUNT(*) AS total ${from}${where}`).bind(...values).first();
+    const total = Number(count?.total || 0);
+    const pageSize = Number(pageSizeValue);
+    const page = Math.min(Number(pageValue), Math.max(1, Math.ceil(total / pageSize)));
+    const { results } = await env.DB.prepare(
+      `SELECT d.id, d.partner_organization_id, o.name AS partner_name,
+              d.submitted_by_person_id, d.prospect_organization_name, d.website,
+              d.contact_name, d.contact_email, d.contact_phone, d.summary, d.partner_response,
+              d.status, d.decision_summary, d.internal_note, d.created_at, d.updated_at,
+              EXISTS (
+                SELECT 1 FROM deal_registrations other
+                WHERE other.id <> d.id AND other.status <> 'rejected'
+                  AND (
+                    lower(other.prospect_organization_name) = lower(d.prospect_organization_name)
+                    OR (d.contact_email IS NOT NULL AND other.contact_email IS NOT NULL
+                      AND lower(other.contact_email) = lower(d.contact_email))
+                  )
+              ) AS possible_duplicate
+       ${from}${where}
+       ORDER BY d.created_at DESC, d.id DESC LIMIT ? OFFSET ?`
+    ).bind(...values, pageSize, (page - 1) * pageSize).all();
+    return json({ ok: true, deals: results || [], total, page, page_size: pageSize },
+      200, null, noStoreHeaders);
+  }
+
+  if (request.method !== "PATCH") return json({ ok: false, error: "Unsupported deal review operation" }, 405);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid deal review update is required" }, 400);
+  }
+  const allowedFields = ["status", "decision_summary", "internal_note"];
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).length === 0 || Object.keys(body).some((field) => !allowedFields.includes(field))) {
+    return json({ ok: false, error: "Provide a valid status, decision summary, or internal note" }, 400);
+  }
+  const deal = await env.DB.prepare(
+    "SELECT id, partner_organization_id, status, decision_summary, internal_note FROM deal_registrations WHERE id = ?"
+  ).bind(dealId).first();
+  if (!deal) return json({ ok: false, error: "Deal registration not found" }, 404);
+
+  const nextStatus = Object.prototype.hasOwnProperty.call(body, "status") ? body.status : deal.status;
+  if (!DEAL_REGISTRATION_STATUSES.includes(nextStatus) ||
+      (nextStatus !== deal.status && !DEAL_STATUS_TRANSITIONS[deal.status]?.includes(nextStatus))) {
+    return json({ ok: false, error: "This deal registration status transition is not allowed" }, 409);
+  }
+  const decisionSummary = Object.prototype.hasOwnProperty.call(body, "decision_summary")
+    ? (body.decision_summary === "" || body.decision_summary === null ? null : boundedString(body.decision_summary, 1000))
+    : deal.decision_summary;
+  const internalNote = Object.prototype.hasOwnProperty.call(body, "internal_note")
+    ? (body.internal_note === "" || body.internal_note === null ? null : boundedString(body.internal_note, 4000))
+    : deal.internal_note;
+  if ((Object.prototype.hasOwnProperty.call(body, "decision_summary") &&
+        body.decision_summary != null && body.decision_summary !== "" && decisionSummary === null) ||
+      (Object.prototype.hasOwnProperty.call(body, "internal_note") &&
+        body.internal_note != null && body.internal_note !== "" && internalNote === null)) {
+    return json({ ok: false, error: "Review notes exceed the allowed length or are invalid" }, 400);
+  }
+  if (nextStatus === "needs_information" && !decisionSummary) {
+    return json({ ok: false, error: "Provide a partner-facing summary when requesting more information" }, 400);
+  }
+  if (nextStatus === "rejected" && !decisionSummary) {
+    return json({ ok: false, error: "Provide a partner-facing summary when rejecting a registration" }, 400);
+  }
+  if (nextStatus === deal.status && decisionSummary === deal.decision_summary && internalNote === deal.internal_note) {
+    return json({ ok: true, changed: false, status: deal.status }, 200, null, noStoreHeaders);
+  }
+
+  const update = await env.DB.prepare(
+    `UPDATE deal_registrations
+     SET status = ?, decision_summary = ?, internal_note = ?, reviewed_by_person_id = ?,
+         updated_at = datetime('now')
+     WHERE id = ? AND status = ?`
+  ).bind(nextStatus, decisionSummary, internalNote, principal.person_id, deal.id, deal.status).run();
+  if (update.meta.changes !== 1) {
+    return json({ ok: false, error: "Deal registration changed; refresh and try again" }, 409);
+  }
+  await writeAudit(env, request, principal, "ADMIN_PARTNER_DEAL_REVIEWED", "deal_registration", deal.id,
+    { status: deal.status, decision_summary: deal.decision_summary, internal_note: deal.internal_note },
+    { status: nextStatus, decision_summary: decisionSummary, internal_note: internalNote });
+  return json({ ok: true, changed: true, status: nextStatus }, 200, null, noStoreHeaders);
+}
+
+async function handleAdminFollowUps(request, env) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  if (request.method !== "GET") return json({ ok: false, error: "The follow-up queue is read-only" }, 405);
+  const noStoreHeaders = { "Cache-Control": "no-store" };
+  const url = new URL(request.url);
+  const pageValue = url.searchParams.get("page") || "1";
+  const pageSizeValue = url.searchParams.get("page_size") || "50";
+  if (!/^\d+$/.test(pageValue) || !Number.isSafeInteger(Number(pageValue)) || Number(pageValue) < 1) {
+    return json({ ok: false, error: "A valid page number is required" }, 400);
+  }
+  if (!/^\d+$/.test(pageSizeValue) || !Number.isSafeInteger(Number(pageSizeValue)) ||
+      Number(pageSizeValue) < 1 || Number(pageSizeValue) > 100) {
+    return json({ ok: false, error: "Page size must be between 1 and 100" }, 400);
+  }
+  const queueQuery = `SELECT 'support_ticket' AS type, t.id, t.subject AS title, t.status,
+                             COALESCE(NULLIF(c.company, ''), c.name) AS organization,
+                             t.created_at, t.updated_at, NULL AS expires_at
+                      FROM support_tickets t JOIN customers c ON c.id = t.customer_id
+                      WHERE t.status IN ('open', 'in_progress')
+                      UNION ALL
+                      SELECT 'deal_registration', d.id, d.prospect_organization_name, d.status,
+                             o.name, d.created_at, d.updated_at, NULL
+                      FROM deal_registrations d JOIN organizations o ON o.id = d.partner_organization_id
+                      WHERE d.status IN ('submitted', 'under_review')
+                      UNION ALL
+                      SELECT 'customer_invite', ci.id, ci.company, 'pending', ci.company,
+                             ci.created_at, ci.created_at, ci.expires_at
+                      FROM customer_invites ci
+                      WHERE ci.status = 'pending' AND ci.expires_at > datetime('now')
+                      UNION ALL
+                      SELECT 'partner_invite', pi.id, pi.email, 'pending', o.name,
+                             pi.created_at, pi.created_at, pi.expires_at
+                      FROM partner_invites pi JOIN organizations o ON o.id = pi.partner_organization_id
+                      WHERE pi.status = 'pending' AND pi.expires_at > datetime('now')`;
+  const count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM (${queueQuery})`).first();
+  const total = Number(count?.total || 0);
+  const pageSize = Number(pageSizeValue);
+  const page = Math.min(Number(pageValue), Math.max(1, Math.ceil(total / pageSize)));
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM (${queueQuery})
+     ORDER BY created_at ASC, type ASC, id ASC LIMIT ? OFFSET ?`
+  ).bind(pageSize, (page - 1) * pageSize).all();
+  return json({
+    ok: true,
+    items: results || [],
+    total,
+    page,
+    page_size: pageSize,
+    policy: "manual_review_no_sla_or_outbound_messages",
+  }, 200, null, noStoreHeaders);
+}
+
+const FOLLOW_UP_TASK_STATUSES = ["open", "in_progress", "completed", "cancelled"];
+
+function validFollowUpDueDate(value) {
+  if (value == null || value === "") return true;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+async function validateFollowUpAssignee(env, value) {
+  if (value == null || value === "") return { id: null, valid: true };
+  const id = numericId(value);
+  if (!id) return { id: null, valid: false };
+  const user = await env.DB.prepare(
+    "SELECT id FROM users WHERE id = ? AND status = 'active' AND role IN ('staff', 'admin', 'super_admin')"
+  ).bind(id).first();
+  return { id: user ? id : null, valid: Boolean(user) };
+}
+
+async function handleAdminFollowUpTasks(request, env, taskId = null) {
+  const principal = await requireSuperAdmin(request, env);
+  if (!principal) return json({ ok: false, error: "Super admin access required" }, 403);
+  const noStoreHeaders = { "Cache-Control": "no-store" };
+
+  if (taskId === null) {
+    if (request.method === "GET") {
+      const url = new URL(request.url);
+      const status = (url.searchParams.get("status") || "").trim();
+      const search = (url.searchParams.get("q") || "").trim();
+      const assigneeValue = (url.searchParams.get("assigned_to_user_id") || "").trim();
+      const pageValue = url.searchParams.get("page") || "1";
+      const pageSizeValue = url.searchParams.get("page_size") || "50";
+      if (status && !FOLLOW_UP_TASK_STATUSES.includes(status)) {
+        return json({ ok: false, error: "A valid follow-up task status is required" }, 400);
+      }
+      if (search.length > 100) return json({ ok: false, error: "Search must be 100 characters or fewer" }, 400);
+      if (assigneeValue && assigneeValue !== "unassigned" && !numericId(assigneeValue)) {
+        return json({ ok: false, error: "A valid assignee id is required" }, 400);
+      }
+      if (!/^\d+$/.test(pageValue) || !Number.isSafeInteger(Number(pageValue)) || Number(pageValue) < 1) {
+        return json({ ok: false, error: "A valid page number is required" }, 400);
+      }
+      if (!/^\d+$/.test(pageSizeValue) || !Number.isSafeInteger(Number(pageSizeValue)) ||
+          Number(pageSizeValue) < 1 || Number(pageSizeValue) > 100) {
+        return json({ ok: false, error: "Page size must be between 1 and 100" }, 400);
+      }
+      const clauses = [];
+      const values = [];
+      if (status) {
+        clauses.push("t.status = ?");
+        values.push(status);
+      }
+      if (assigneeValue === "unassigned") {
+        clauses.push("t.assigned_to_user_id IS NULL");
+      } else if (assigneeValue) {
+        clauses.push("t.assigned_to_user_id = ?");
+        values.push(Number(assigneeValue));
+      }
+      if (search) {
+        const pattern = `%${search}%`;
+        clauses.push("(CAST(t.id AS TEXT) LIKE ? OR t.title LIKE ? OR t.description LIKE ?)");
+        values.push(pattern, pattern, pattern);
+      }
+      const from = `FROM follow_up_tasks t
+        LEFT JOIN users u ON u.id = t.assigned_to_user_id`;
+      const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+      const count = await env.DB.prepare(`SELECT COUNT(*) AS total ${from}${where}`).bind(...values).first();
+      const total = Number(count?.total || 0);
+      const pageSize = Number(pageSizeValue);
+      const page = Math.min(Number(pageValue), Math.max(1, Math.ceil(total / pageSize)));
+      const [{ results: tasks }, { results: assignees }] = await Promise.all([
+        env.DB.prepare(
+          `SELECT t.id, t.title, t.description, t.assigned_to_user_id, t.due_date, t.status,
+                  t.created_by_person_id, t.created_at, t.updated_at,
+                  u.name AS assigned_to_name, u.email AS assigned_to_email,
+                  u.status AS assigned_to_status
+           ${from}${where}
+           ORDER BY CASE WHEN t.status IN ('completed', 'cancelled') THEN 1 ELSE 0 END,
+                    t.due_date IS NULL, t.due_date, t.created_at DESC, t.id DESC
+           LIMIT ? OFFSET ?`
+        ).bind(...values, pageSize, (page - 1) * pageSize).all(),
+        env.DB.prepare(
+          `SELECT id, name, email, role FROM users
+           WHERE status = 'active' AND role IN ('staff', 'admin', 'super_admin')
+           ORDER BY name, email`
+        ).all(),
+      ]);
+      return json({ ok: true, tasks: tasks || [], assignees: assignees || [], total, page, page_size: pageSize },
+        200, null, noStoreHeaders);
+    }
+
+    if (request.method !== "POST") return json({ ok: false, error: "Unsupported follow-up task operation" }, 405);
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: "A valid follow-up task is required" }, 400);
+    }
+    const allowedFields = ["title", "description", "assigned_to_user_id", "due_date"];
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).some((field) => !allowedFields.includes(field))) {
+      return json({ ok: false, error: "Only task details, owner, and due date can be provided" }, 400);
+    }
+    const title = boundedString(body.title, 200);
+    const description = body.description == null || body.description === ""
+      ? null
+      : boundedString(body.description, 2000);
+    const dueDate = body.due_date == null || body.due_date === "" ? null : body.due_date;
+    const assignee = await validateFollowUpAssignee(env, body.assigned_to_user_id);
+    if (!title || (body.description != null && body.description !== "" && !description) ||
+        !validFollowUpDueDate(dueDate) || !assignee.valid) {
+      return json({ ok: false, error: "Provide a title, valid optional description, active internal owner, and due date" }, 400);
+    }
+    const result = await env.DB.prepare(
+      `INSERT INTO follow_up_tasks
+       (title, description, assigned_to_user_id, due_date, created_by_person_id)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(title, description, assignee.id, dueDate, principal.person_id).run();
+    await writeAudit(env, request, principal, "ADMIN_FOLLOW_UP_TASK_CREATED", "follow_up_task", result.meta.last_row_id,
+      null, { title, assigned_to_user_id: assignee.id, due_date: dueDate, status: "open" });
+    return json({ ok: true, task_id: result.meta.last_row_id, status: "open" }, 201, null, noStoreHeaders);
+  }
+
+  if (request.method !== "PATCH") return json({ ok: false, error: "Unsupported follow-up task operation" }, 405);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid follow-up task update is required" }, 400);
+  }
+  const allowedFields = ["title", "description", "assigned_to_user_id", "due_date", "status"];
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).length === 0 || Object.keys(body).some((field) => !allowedFields.includes(field))) {
+    return json({ ok: false, error: "Provide valid follow-up task fields" }, 400);
+  }
+  const task = await env.DB.prepare(
+    `SELECT id, title, description, assigned_to_user_id, due_date, status, updated_at
+     FROM follow_up_tasks WHERE id = ?`
+  ).bind(taskId).first();
+  if (!task) return json({ ok: false, error: "Follow-up task not found" }, 404);
+  const title = Object.prototype.hasOwnProperty.call(body, "title")
+    ? boundedString(body.title, 200)
+    : task.title;
+  const description = Object.prototype.hasOwnProperty.call(body, "description")
+    ? (body.description == null || body.description === "" ? null : boundedString(body.description, 2000))
+    : task.description;
+  const dueDate = Object.prototype.hasOwnProperty.call(body, "due_date")
+    ? (body.due_date == null || body.due_date === "" ? null : body.due_date)
+    : task.due_date;
+  const status = Object.prototype.hasOwnProperty.call(body, "status") ? body.status : task.status;
+  const hasAssigneeField = Object.prototype.hasOwnProperty.call(body, "assigned_to_user_id");
+  const requestedAssigneeId = body.assigned_to_user_id == null || body.assigned_to_user_id === ""
+    ? null
+    : numericId(body.assigned_to_user_id);
+  const assignee = !hasAssigneeField || (
+    (body.assigned_to_user_id == null || body.assigned_to_user_id === "" || requestedAssigneeId !== null) &&
+    requestedAssigneeId === task.assigned_to_user_id
+  )
+    ? { id: task.assigned_to_user_id, valid: true }
+    : await validateFollowUpAssignee(env, body.assigned_to_user_id);
+  if (!title || (Object.prototype.hasOwnProperty.call(body, "description") &&
+        body.description != null && body.description !== "" && !description) ||
+      !validFollowUpDueDate(dueDate) || !assignee.valid ||
+      !FOLLOW_UP_TASK_STATUSES.includes(status)) {
+    return json({ ok: false, error: "Provide valid task details, an active internal owner, and a valid status and due date" }, 400);
+  }
+  if (title === task.title && description === task.description &&
+      assignee.id === task.assigned_to_user_id && dueDate === task.due_date && status === task.status) {
+    return json({ ok: true, changed: false, status }, 200, null, noStoreHeaders);
+  }
+  const update = await env.DB.prepare(
+    `UPDATE follow_up_tasks
+     SET title = ?, description = ?, assigned_to_user_id = ?, due_date = ?, status = ?,
+         updated_at = datetime('now')
+     WHERE id = ? AND updated_at = ? AND title = ? AND description IS ?
+       AND assigned_to_user_id IS ? AND due_date IS ? AND status = ?`
+  ).bind(
+    title, description, assignee.id, dueDate, status,
+    task.id, task.updated_at, task.title, task.description,
+    task.assigned_to_user_id, task.due_date, task.status,
+  ).run();
+  if (update.meta.changes !== 1) {
+    return json({ ok: false, error: "Follow-up task changed; refresh and try again" }, 409);
+  }
+  await writeAudit(env, request, principal, "ADMIN_FOLLOW_UP_TASK_UPDATED", "follow_up_task", task.id,
+    {
+      title: task.title,
+      description: task.description,
+      assigned_to_user_id: task.assigned_to_user_id,
+      due_date: task.due_date,
+      status: task.status,
+    },
+    { title, description, assigned_to_user_id: assignee.id, due_date: dueDate, status });
+  return json({ ok: true, changed: true, status }, 200, null, noStoreHeaders);
+}
+
 async function updatePartnerCustomerContact(request, env, customerId) {
   const session = await getPartnerSession(request, env);
   if (!session || !(await hasPartnerPermission(env, session, "partner.view"))) {
@@ -6681,6 +7184,15 @@ export async function onRequest(context) {
         request, env, partnerCodeReveal[1], partnerCodeReveal[2], partnerSession,
       );
     }
+    if (path === "partner/deals") {
+      return await handlePartnerDeals(request, env);
+    }
+    const partnerDealResponseMatch = path.match(/^partner\/deals\/(\d+)$/);
+    if (partnerDealResponseMatch && request.method === "PATCH") {
+      const dealId = numericId(partnerDealResponseMatch[1]);
+      if (!dealId) return json({ ok: false, error: "A valid deal registration id is required" }, 400);
+      return await handlePartnerDealResponse(request, env, dealId);
+    }
     if (path === "partner/customers" && request.method === "POST") {
       return await handlePartner(request, env, "customers");
     }
@@ -6728,6 +7240,27 @@ export async function onRequest(context) {
     if (path === "demos" && request.method === "GET") return await handleListDemos(request, env);
     if (path === "admin/support-tickets" && request.method === "GET") {
       return await handleAdminSupportTickets(request, env);
+    }
+    if (path === "admin/partner-deals") {
+      return await handleAdminPartnerDeals(request, env);
+    }
+    const adminPartnerDealMatch = path.match(/^admin\/partner-deals\/(\d+)$/);
+    if (adminPartnerDealMatch) {
+      const dealId = numericId(adminPartnerDealMatch[1]);
+      if (!dealId) return json({ ok: false, error: "A valid deal registration id is required" }, 400);
+      return await handleAdminPartnerDeals(request, env, dealId);
+    }
+    if (path === "admin/follow-ups") {
+      return await handleAdminFollowUps(request, env);
+    }
+    if (path === "admin/follow-up-tasks") {
+      return await handleAdminFollowUpTasks(request, env);
+    }
+    const adminFollowUpTaskMatch = path.match(/^admin\/follow-up-tasks\/(\d+)$/);
+    if (adminFollowUpTaskMatch) {
+      const taskId = numericId(adminFollowUpTaskMatch[1]);
+      if (!taskId) return json({ ok: false, error: "A valid follow-up task id is required" }, 400);
+      return await handleAdminFollowUpTasks(request, env, taskId);
     }
     const adminSupportTicketMatch = path.match(/^admin\/support-tickets\/([^/]+)(?:\/(messages|status))?$/);
     if (adminSupportTicketMatch && ["GET", "POST", "PATCH"].includes(request.method)) {

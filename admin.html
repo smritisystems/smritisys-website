@@ -10,13 +10,17 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/portal.css?v=session-org-context-v1" />
   <style>
+    :root { --ink:#17243f; --muted:#66718a; --line:#dbe2f0; --paper:#f5f7fc; --turquoise:#102668; --mint:#e7edfb; }
+    .login-art { background:#102668; }
+    .login-art:after { border-color:#9aafe8; box-shadow:0 0 0 4rem #102668,0 0 0 4.1rem #9aafe8; }
+    .login-art p { color:#dae4ff; }
     .admin-shell { min-height:100vh; display:grid; grid-template-columns:245px 1fr; background:var(--paper); }
-    .admin-aside { background:#17231f; color:#d9ebe7; padding:1.5rem 1rem; display:flex; flex-direction:column; }
+    .admin-aside { background:#102668; color:#d9e3ff; padding:1.5rem 1rem; display:flex; flex-direction:column; }
     .admin-aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
     .admin-nav { display:grid; gap:.25rem; }
-    .admin-nav button { text-align:left; border:0; color:#a8c3bc; background:transparent; padding:.75rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .admin-nav button { text-align:left; border:0; color:#c6d1ee; background:transparent; padding:.75rem; border-radius:4px; font:inherit; cursor:pointer; }
     .admin-nav button:hover,.admin-nav button.active { color:#fff; background:#ffffff14; }
-    .admin-logout { margin-top:auto; border:1px solid #a8c3bc44; color:#cfe5df; background:transparent; padding:.7rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .admin-logout { margin-top:auto; border:1px solid #c6d1ee55; color:#d9e3ff; background:transparent; padding:.7rem; border-radius:4px; font:inherit; cursor:pointer; }
     .admin-main { min-width:0; }
     .admin-content { max-width:1440px; padding:clamp(1.2rem,4vw,3rem); }
     .admin-metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:1rem; }
@@ -37,16 +41,16 @@
     .admin-organization-details th,.admin-organization-details td { padding:.65rem .5rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
     .admin-organization-details th { color:var(--muted); font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; }
     .admin-organization-details .table-scroll { overflow-x:auto; }
-    .admin-shell { grid-template-columns:258px minmax(0,1fr); background:#f4f7f8; }
-    .admin-aside { position:sticky; top:0; height:100vh; padding:1.5rem 1.1rem; background:linear-gradient(180deg,#172b32 0%,#132228 100%); }
+    .admin-shell { grid-template-columns:258px minmax(0,1fr); background:var(--paper); }
+    .admin-aside { position:sticky; top:0; height:100vh; padding:1.5rem 1.1rem; background:linear-gradient(180deg,#102668 0%,#0b1948 100%); }
     .admin-aside .brand { font-size:1.05rem; letter-spacing:.08em; }
     .admin-nav { gap:.4rem; }
     .admin-nav button { border-radius:8px; padding:.8rem .9rem; transition:background .16s ease,color .16s ease; }
-    .admin-nav button.active { color:#fff; background:#0f766e; box-shadow:inset 3px 0 #7de4d2; }
-    .admin-nav button:focus-visible,.admin-product-tab:focus-visible { outline:3px solid #65d8c8; outline-offset:2px; }
+    .admin-nav button.active { color:#fff; background:#29468c; box-shadow:inset 3px 0 #b7c5f1; }
+    .admin-nav button:focus-visible,.admin-product-tab:focus-visible { outline:3px solid #93a6e5; outline-offset:2px; }
     .admin-logout { border-radius:8px; }
     .admin-content { max-width:1680px; padding:clamp(1.25rem,3vw,2.7rem); }
-    .admin-main > .topbar { position:sticky; top:0; z-index:5; min-height:72px; background:#fff; box-shadow:0 1px 5px #17231f08; }
+    .admin-main > .topbar { position:sticky; top:0; z-index:5; min-height:72px; background:#fff; box-shadow:0 1px 5px #10266812; }
     .admin-topbar-label { color:var(--muted); font-size:.8rem; margin-left:auto; margin-right:1rem; }
     .admin-main > .topbar .user-chip { gap:.8rem; }
     .admin-view > .welcome { margin-bottom:1.3rem; }
@@ -55,13 +59,13 @@
     .admin-view .card { border-radius:12px; box-shadow:0 8px 24px #173a3908; }
     .admin-view .section-head h2 { letter-spacing:-.025em; }
     .admin-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9rem; }
-    .admin-metrics .card { min-height:112px; padding:1.1rem 1.25rem; border-top:3px solid #7acfc2; }
+    .admin-metrics .card { min-height:112px; padding:1.1rem 1.25rem; border-top:3px solid #9aafe8; }
     .admin-metrics .stat-label { text-transform:capitalize; }
     .admin-metrics .stat-value { font-size:2rem; }
-    .admin-overview-hero { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; margin-bottom:1.2rem; padding:1.65rem 1.8rem; color:#effffc; background:linear-gradient(115deg,#124d4a,#1f6c68 60%,#2b7774); border-radius:14px; box-shadow:0 14px 30px #14514b1c; }
-    .admin-overview-hero .eyebrow { color:#a7e4dc; }
+    .admin-overview-hero { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; margin-bottom:1.2rem; padding:1.65rem 1.8rem; color:#eff3ff; background:linear-gradient(115deg,#102668,#1b3c83 60%,#3158a5); border-radius:14px; box-shadow:0 14px 30px #10266824; }
+    .admin-overview-hero .eyebrow { color:#c2d0fa; }
     .admin-overview-hero h2 { margin:.4rem 0; font:600 clamp(1.75rem,3vw,2.35rem)/1.15 'Space Grotesk',sans-serif; letter-spacing:-.035em; }
-    .admin-overview-hero p { margin:0; color:#d3f0eb; line-height:1.55; }
+    .admin-overview-hero p { margin:0; color:#e2e9ff; line-height:1.55; }
     .admin-overview-actions { display:flex; flex-wrap:wrap; gap:.65rem; }
     .admin-overview-hero .admin-overview-actions .secondary { border-color:#ffffff55; color:#fff; background:#ffffff14; white-space:nowrap; }
     .admin-overview-hero .admin-overview-actions .secondary:hover { background:#ffffff25; }
@@ -70,7 +74,7 @@
     .admin-overview-heading p { margin:.25rem 0 0; font-size:.82rem; }
     .admin-ops-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9rem; }
     .admin-ops-card { min-width:0; position:relative; overflow:hidden; padding:1.1rem 1.2rem; }
-    .admin-ops-card::after { content:""; position:absolute; width:4.5rem; height:4.5rem; right:-1.6rem; bottom:-2.2rem; border-radius:50%; background:#0f766e0b; }
+    .admin-ops-card::after { content:""; position:absolute; width:4.5rem; height:4.5rem; right:-1.6rem; bottom:-2.2rem; border-radius:50%; background:#1026680b; }
     .admin-ops-card .stat-value { font-size:1.9rem; }
     .admin-ops-card .admin-metric-note { color:var(--muted); font-size:.78rem; }
     .admin-overview-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:1rem; margin-top:1rem; }
@@ -89,10 +93,10 @@
     .admin-activity-item time { color:var(--muted); font-size:.74rem; white-space:nowrap; }
     .admin-activity-meta { grid-column:1/-1; color:var(--muted); font-size:.78rem; overflow-wrap:anywhere; }
     .admin-empty-inline { padding:.8rem 0; color:var(--muted); font-size:.86rem; }
-    .admin-product-tabs { display:flex; flex-wrap:wrap; gap:.45rem; margin:1.2rem 0 1rem; padding:.45rem; background:#e9f0f1; border:1px solid #dfe8e9; border-radius:10px; }
-    .admin-product-tab { border:0; border-radius:7px; padding:.7rem .95rem; color:#4b6264; background:transparent; font:600 .85rem 'DM Sans',sans-serif; }
+    .admin-product-tabs { display:flex; flex-wrap:wrap; gap:.45rem; margin:1.2rem 0 1rem; padding:.45rem; background:#edf1fa; border:1px solid #dce3f2; border-radius:10px; }
+    .admin-product-tab { border:0; border-radius:7px; padding:.7rem .95rem; color:#52617f; background:transparent; font:600 .85rem 'DM Sans',sans-serif; }
     .admin-product-tab:hover { color:var(--ink); background:#ffffff9c; }
-    .admin-product-tab[aria-selected="true"] { color:#fff; background:#145e59; box-shadow:0 2px 6px #145e5929; }
+    .admin-product-tab[aria-selected="true"] { color:#fff; background:#102668; box-shadow:0 2px 6px #10266829; }
     .admin-product-panel[hidden] { display:none !important; }
     .admin-product-panel > .section-head:first-child { margin-top:.3rem; }
     .admin-license-workspace { margin-top:.4rem; }
@@ -126,7 +130,7 @@
     .registration-detail-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.8rem; margin-bottom:1rem; }
     .registration-detail-grid section { min-width:0; padding:.9rem; border:1px solid var(--line); border-radius:10px; background:#fff; }
     .admin-key-reveal { width:min(440px,calc(100vw - 2rem)); margin:auto; padding:1.4rem; border:1px solid var(--line); border-radius:14px; color:var(--ink); background:#fff; box-shadow:0 24px 80px #102a2a3d; }
-    .admin-key-reveal::backdrop { background:#0d242acc; }
+    .admin-key-reveal::backdrop { background:#102668cc; }
     .admin-key-reveal form { display:grid; gap:1rem; }
     .admin-key-reveal h2 { margin:0; }
     .admin-key-reveal label { display:grid; gap:.4rem; color:var(--muted); font-size:.8rem; font-weight:700; }
@@ -149,7 +153,7 @@
     .admin-d1-card p { margin:.3rem 0; color:var(--muted); font-size:.82rem; }
     .admin-d1-card strong { color:var(--ink); }
     .admin-d1-meter { height:9px; margin:.6rem 0 .9rem; overflow:hidden; border-radius:99px; background:#e8eeee; }
-    .admin-d1-meter span { display:block; height:100%; border-radius:inherit; background:#278579; }
+    .admin-d1-meter span { display:block; height:100%; border-radius:inherit; background:#3158a5; }
     .admin-d1-meter span.warning { background:#d89b28; }
     .admin-d1-meter span.critical { background:#c84e4e; }
     .admin-d1-status { display:inline-block; padding:.2rem .5rem; border-radius:99px; color:#276b55; background:#e5f4ed; font-size:.74rem; font-weight:700; }
@@ -170,7 +174,7 @@
     .admin-support-list-panel { min-width:0; }
     .admin-support-list { display:grid; max-height:72vh; gap:.55rem; overflow:auto; }
     .admin-support-ticket { display:grid; width:100%; gap:.3rem; padding:.85rem 1rem; border:1px solid var(--line); border-radius:9px; color:var(--ink); background:#fff; font:inherit; text-align:left; cursor:pointer; }
-    .admin-support-ticket:hover,.admin-support-ticket.active { border-color:#0f766e; box-shadow:0 0 0 2px #0f766e18; }
+    .admin-support-ticket:hover,.admin-support-ticket.active { border-color:#102668; box-shadow:0 0 0 2px #10266818; }
     .admin-support-ticket-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; color:var(--muted); font-size:.75rem; }
     .admin-support-ticket strong { font-size:.88rem; overflow-wrap:anywhere; }
     .admin-support-ticket small { color:var(--muted); font-size:.75rem; overflow-wrap:anywhere; }
@@ -178,7 +182,7 @@
     .admin-support-pagination p { margin:0; color:var(--muted); font-size:.8rem; }
     .admin-support-detail { min-width:0; }
     .admin-support-contact { margin:.4rem 0 1rem; color:var(--muted); font-size:.82rem; overflow-wrap:anywhere; }
-    .admin-support-description { padding:.85rem 1rem; border-left:3px solid #7acfc2; border-radius:4px; background:#f5f8f8; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .admin-support-description { padding:.85rem 1rem; border-left:3px solid #9aafe8; border-radius:4px; background:#f5f7fc; white-space:pre-wrap; overflow-wrap:anywhere; }
     .admin-support-detail h4 { margin:1.2rem 0 .6rem; }
     .admin-support-messages,.admin-support-activity { display:grid; gap:.6rem; }
     .admin-support-message { padding:.75rem .9rem; border:1px solid var(--line); border-radius:9px; background:#fff; }
@@ -201,7 +205,7 @@
     <div class="login-panel"><form id="adminLoginForm" class="login-box"><span class="eyebrow">Internal access</span><h2>Administrator sign in</h2><p class="muted">Super admin credentials are required.</p><label for="adminEmail">Email address</label><input id="adminEmail" name="email" type="email" autocomplete="username" required /><label for="adminPassword">Password</label><input id="adminPassword" name="password" type="password" autocomplete="current-password" required /><button class="primary" type="submit">Sign in</button><p id="adminLoginMessage" class="message" role="alert"></p></form></div>
   </section>
   <section id="adminPortalView" class="admin-shell hidden">
-    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="support">Support tickets</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button><button data-admin-view="security">Security</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
+    <aside class="admin-aside"><span class="brand">SMRITISYS</span><nav class="admin-nav" aria-label="Administration sections"><button class="active" data-admin-view="overview">Overview</button><button data-admin-view="users">Users</button><button data-admin-view="organizations">Organizations</button><button data-admin-view="partner-deals">Partner deals</button><button data-admin-view="follow-ups">Follow-ups</button><button data-admin-view="products">Products &amp; licenses</button><button data-admin-view="support">Support tickets</button><button data-admin-view="announcements">Announcements</button><button data-admin-view="audit">Audit</button><button data-admin-view="security">Security</button></nav><button id="adminLogout" class="admin-logout">Sign out</button></aside>
     <main class="admin-main"><header class="topbar"><h1 id="adminPageTitle">Overview</h1><span class="admin-topbar-label">Internal control plane</span><div class="user-chip"><button id="organizationContextButton" class="secondary context-switcher" type="button">Select organization</button><span id="adminUserName">Administrator</span><span class="avatar">A</span></div></header><div class="admin-content"><div id="adminError" class="state-panel hidden" role="alert"></div>
       <section class="admin-view active" data-admin-section="overview">
         <div class="admin-overview-hero">
@@ -365,6 +369,40 @@
         </form>
         <div id="adminPartnerInvitesState" class="state-panel">Loading partner invitations...</div>
         <div id="adminPartnerInvitesList" class="card hidden"></div>
+      </section>
+      <section class="admin-view" data-admin-section="partner-deals">
+        <div class="section-head"><div><span class="eyebrow">Channel operations</span><h2>Partner deal registrations</h2></div><button class="secondary" id="adminPartnerDealsRefresh" type="button">Refresh</button></div>
+        <p class="muted">Review submissions manually. Possible duplicates are a review hint only; no protection period, commercial terms, or automated decisions are applied.</p>
+        <form id="adminPartnerDealFilters" class="admin-support-filters">
+          <div><label for="adminPartnerDealSearch">Search deals and partners</label><input id="adminPartnerDealSearch" type="search" maxlength="100" placeholder="Deal, prospect, contact, or partner" /></div>
+          <div><label for="adminPartnerDealStatus">Status</label><select id="adminPartnerDealStatus"><option value="">All statuses</option><option value="submitted">Submitted</option><option value="under_review">Under review</option><option value="needs_information">Needs information</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
+          <button class="secondary" type="submit">Search</button>
+        </form>
+        <div id="adminPartnerDealsState" class="state-panel">Loading deal registrations...</div>
+        <div id="adminPartnerDealsList"></div>
+        <div id="adminPartnerDealsPagination" class="admin-support-pagination hidden"><p id="adminPartnerDealsPaginationStatus"></p><div class="form-actions"><button id="adminPartnerDealsPrevious" class="secondary" type="button">Previous</button><button id="adminPartnerDealsNext" class="secondary" type="button">Next</button></div></div>
+      </section>
+      <section class="admin-view" data-admin-section="follow-ups">
+        <div class="section-head"><div><span class="eyebrow">Internal operations</span><h2>Follow-up queue</h2></div><button class="secondary" id="adminFollowUpsRefresh" type="button">Refresh</button></div>
+        <p class="muted">Internal-only follow-up tasks support manual owners, due dates, and status. No service targets are inferred, and no messages are sent.</p>
+        <form id="adminFollowUpTaskForm" class="card">
+          <div class="section-head compact"><div><span class="eyebrow">Manual task</span><h3>Create a follow-up</h3></div></div>
+          <div class="form-grid">
+            <div class="full"><label for="adminFollowUpTaskTitle">Task title</label><input id="adminFollowUpTaskTitle" name="title" maxlength="200" required /></div>
+            <div class="full"><label for="adminFollowUpTaskDescription">Notes</label><textarea id="adminFollowUpTaskDescription" name="description" maxlength="2000" rows="3"></textarea></div>
+            <div><label for="adminFollowUpTaskAssignee">Owner</label><select id="adminFollowUpTaskAssignee" name="assigned_to_user_id"><option value="">Unassigned</option></select></div>
+            <div><label for="adminFollowUpTaskDueDate">Due date (optional)</label><input id="adminFollowUpTaskDueDate" name="due_date" type="date" /></div>
+          </div>
+          <button id="adminFollowUpTaskCreate" class="primary" type="submit">Create task</button>
+          <p id="adminFollowUpTaskMessage" class="message" role="status"></p>
+        </form>
+        <div id="adminFollowUpTasksState" class="state-panel">Loading follow-up tasks...</div>
+        <div id="adminFollowUpTasksList"></div>
+        <div id="adminFollowUpTasksPagination" class="admin-support-pagination hidden"><p id="adminFollowUpTasksPaginationStatus"></p><div class="form-actions"><button id="adminFollowUpTasksPrevious" class="secondary" type="button">Previous</button><button id="adminFollowUpTasksNext" class="secondary" type="button">Next</button></div></div>
+        <div class="section-head"><div><span class="eyebrow">Items requiring review</span><h3>Support, deals &amp; invitations</h3></div></div>
+        <div id="adminFollowUpsState" class="state-panel">Loading follow-ups...</div>
+        <div id="adminFollowUpsList" class="card hidden"></div>
+        <div id="adminFollowUpsPagination" class="admin-support-pagination hidden"><p id="adminFollowUpsPaginationStatus"></p><div class="form-actions"><button id="adminFollowUpsPrevious" class="secondary" type="button">Previous</button><button id="adminFollowUpsNext" class="secondary" type="button">Next</button></div></div>
       </section>
       <section class="admin-view" data-admin-section="products">
         <div class="section-head"><div><span class="eyebrow">Control plane</span><h2>Products &amp; licenses</h2></div><button class="secondary admin-refresh" data-refresh="products" type="button">Refresh</button></div>
@@ -561,6 +599,6 @@
     </dialog>
   </section>
   <script src="js/organization-context.js" defer></script>
-  <script src="js/admin.js?v=session-org-context-v1" defer></script>
+  <script src="js/admin.js?v=partner-workflows-v1" defer></script>
 </body>
 </html>
