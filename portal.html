@@ -8,9 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/design-system.css?v=shared-theme-v1" />
   <link rel="stylesheet" href="css/portal.css?v=session-org-context-v1" />
 </head>
-<body>
+<body data-theme="customer">
   <section id="loginView" class="login-shell">
     <div class="login-art">
       <div class="brand">SMRITISYS / CUSTOMER PORTAL</div>
@@ -36,8 +37,9 @@
   <section id="portalView" class="portal hidden">
     <aside>
       <span class="brand">SMRITISYS</span>
-      <nav class="nav" aria-label="Portal sections">
-        <button class="active" data-view="overview">Home</button>
+      <button id="customerMobileNavToggle" class="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="customerNavigation">Menu</button>
+      <nav id="customerNavigation" class="nav" aria-label="Portal sections">
+        <button class="active" data-view="overview" aria-current="page">Home</button>
         <button data-view="organization">My organization</button>
         <button data-view="products">My products</button>
         <button data-view="licenses">Licenses &amp; entitlements</button>

@@ -12,7 +12,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 function setMessage(element, text, ok) {
   if (!element) return;
   element.textContent = text;
-  element.style.color = ok ? 'var(--turquoise)' : 'var(--red)';
+  element.style.color = ok ? 'var(--accent)' : 'var(--red)';
 }
 
 async function api(path, options = {}) {
@@ -386,13 +386,34 @@ async function loadAdminUsers() {
 function navigate(view) {
   const button = $(`button[data-view="${view}"]`);
   if (!button) return;
-  $$('.nav button').forEach((item) => item.classList.remove('active'));
+  $$('.nav button').forEach((item) => {
+    item.classList.toggle('active', item === button);
+    if (item === button) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
   button.classList.add('active');
   $$('.view').forEach((section) => section.classList.toggle('active', section.dataset.section === view));
   $('#pageTitle').textContent = button.textContent;
+  const menuWasOpen = customerMobileNavToggle.getAttribute('aria-expanded') === 'true';
+  customerNavigation.classList.remove('is-open');
+  customerMobileNavToggle.setAttribute('aria-expanded', 'false');
+  if (menuWasOpen && getComputedStyle(customerMobileNavToggle).display !== 'none') customerMobileNavToggle.focus();
   loadView(view);
 }
 
+const customerMobileNavToggle = $('#customerMobileNavToggle');
+const customerNavigation = $('#customerNavigation');
+customerMobileNavToggle.addEventListener('click', () => {
+  const isExpanded = customerMobileNavToggle.getAttribute('aria-expanded') === 'true';
+  customerMobileNavToggle.setAttribute('aria-expanded', String(!isExpanded));
+  customerNavigation.classList.toggle('is-open', !isExpanded);
+});
+customerNavigation.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || customerMobileNavToggle.getAttribute('aria-expanded') !== 'true') return;
+  customerNavigation.classList.remove('is-open');
+  customerMobileNavToggle.setAttribute('aria-expanded', 'false');
+  customerMobileNavToggle.focus();
+});
 $$('.nav button[data-view]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.view)));
 $$('[data-go]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.go)));
 $$('.refresh-view').forEach((button) => button.addEventListener('click', () => loadView(button.closest('.view').dataset.section)));

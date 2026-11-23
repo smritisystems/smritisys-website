@@ -19,9 +19,26 @@ const partnerState = { token: null, permissions: {}, dealPage: 1, dealRequestId:
 const partner$ = (selector) => document.querySelector(selector);
 const partner$$ = (selector) => [...document.querySelectorAll(selector)];
 let partnerRevealTimer = null;
+const PARTNER_TYPE_LABELS = {
+  channel_partner: 'Channel partner',
+  reseller: 'Reseller',
+  implementation_partner: 'Implementation partner',
+  technology_partner: 'Technology partner',
+  referral_partner: 'Referral partner',
+  distributor: 'Distributor',
+};
+const PARTNER_ROLE_LABELS = {
+  partner_admin: 'Partner administrator',
+  partner_member: 'Partner member',
+};
 
 function partnerEscape(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+}
+
+function partnerDisplayLabel(value, labels) {
+  const raw = String(value ?? '');
+  return labels[raw] || raw.replace(/_/g, ' ').replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
 async function partnerApi(path, options = {}) {
@@ -40,7 +57,7 @@ async function partnerApi(path, options = {}) {
 function partnerMessage(element, text, ok) {
   if (!element) return;
   element.textContent = text;
-  element.style.color = ok ? 'var(--turquoise)' : 'var(--red)';
+  element.style.color = ok ? 'var(--accent)' : 'var(--red)';
 }
 
 function showPartnerLogin(message = '') {
@@ -91,10 +108,12 @@ async function loadPartnerProfile() {
   partner$('#partnerWelcomeName').textContent = (user.name || 'there').split(' ')[0];
   partner$('#partnerAvatar').textContent = (user.name || 'P').charAt(0).toUpperCase();
   partner$('#partnerOrganizationName').textContent = partner.name;
-  partner$('#partnerType').textContent = `${partner.partner_type} · ${partner.partner_role}`;
+  const partnerType = partnerDisplayLabel(partner.partner_type, PARTNER_TYPE_LABELS);
+  const partnerRole = partnerDisplayLabel(partner.partner_role, PARTNER_ROLE_LABELS);
+  partner$('#partnerType').textContent = `${partnerType} · ${partnerRole}`;
   partner$('#partnerOrganizationDetails').className = 'card';
   const location = [partner.address, partner.city, partner.state, partner.pincode, partner.country].filter(Boolean);
-  partner$('#partnerOrganizationDetails').innerHTML = `<span class="eyebrow">Partner organization</span><h3>${partnerEscape(partner.name)}</h3><p>${partnerEscape(partner.legal_name || 'Legal name not provided')}</p>${location.length ? `<p>${partnerEscape(location.join(', '))}</p>` : ''}${partner.phone ? `<p>${partnerEscape(partner.phone)}</p>` : ''}${partner.website ? `<p>${partnerEscape(partner.website)}</p>` : ''}<p class="muted">${partnerEscape(partner.partner_type)} · ${partnerEscape(partner.partner_role)}</p>`;
+  partner$('#partnerOrganizationDetails').innerHTML = `<span class="eyebrow">Partner organization</span><h3>${partnerEscape(partner.name)}</h3><p>${partnerEscape(partner.legal_name || 'Legal name not provided')}</p>${location.length ? `<p>${partnerEscape(location.join(', '))}</p>` : ''}${partner.phone ? `<p>${partnerEscape(partner.phone)}</p>` : ''}${partner.website ? `<p>${partnerEscape(partner.website)}</p>` : ''}<p class="muted">${partnerEscape(partnerType)} · ${partnerEscape(partnerRole)}</p>`;
   partner$('#partnerCustomerInviteForm').classList.toggle('hidden', !partnerState.permissions.register_customers);
   partner$('button[data-partner-view="inventory"]').hidden = !partnerState.permissions.view_inventory;
 }
@@ -304,10 +323,18 @@ async function logoutPartner() {
 function navigatePartner(view) {
   const button = partner$(`button[data-partner-view="${view}"]`);
   if (!button) return;
-  partner$$('.partner-nav button').forEach((item) => item.classList.remove('active'));
+  partner$$('.partner-nav button').forEach((item) => {
+    item.classList.toggle('active', item === button);
+    if (item === button) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
   button.classList.add('active');
   partner$$('.partner-view').forEach((section) => section.classList.toggle('active', section.dataset.partnerSection === view));
   partner$('#partnerPageTitle').textContent = button.textContent;
+  const menuWasOpen = partnerMobileNavToggle.getAttribute('aria-expanded') === 'true';
+  partnerNavigation.classList.remove('is-open');
+  partnerMobileNavToggle.setAttribute('aria-expanded', 'false');
+  if (menuWasOpen && getComputedStyle(partnerMobileNavToggle).display !== 'none') partnerMobileNavToggle.focus();
   if (view === 'customers') loadPartnerCustomers();
   if (view === 'deals') loadPartnerDeals(1);
   if (view === 'inventory') loadPartnerInventory();
@@ -316,6 +343,19 @@ function navigatePartner(view) {
   if (view !== 'customers') clearPartnerCustomerInviteLink();
 }
 
+const partnerMobileNavToggle = partner$('#partnerMobileNavToggle');
+const partnerNavigation = partner$('#partnerNavigation');
+partnerMobileNavToggle.addEventListener('click', () => {
+  const isExpanded = partnerMobileNavToggle.getAttribute('aria-expanded') === 'true';
+  partnerMobileNavToggle.setAttribute('aria-expanded', String(!isExpanded));
+  partnerNavigation.classList.toggle('is-open', !isExpanded);
+});
+partnerNavigation.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || partnerMobileNavToggle.getAttribute('aria-expanded') !== 'true') return;
+  partnerNavigation.classList.remove('is-open');
+  partnerMobileNavToggle.setAttribute('aria-expanded', 'false');
+  partnerMobileNavToggle.focus();
+});
 partner$$('.partner-nav button').forEach((button) => button.addEventListener('click', () => navigatePartner(button.dataset.partnerView)));
 partner$$('.partner-refresh').forEach((button) => button.addEventListener('click', () => {
   if (button.dataset.refresh === 'customers') loadPartnerCustomers();
