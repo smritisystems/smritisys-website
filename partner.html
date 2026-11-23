@@ -9,15 +9,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/design-system.css?v=shared-theme-v1" />
   <link rel="stylesheet" href="css/portal.css?v=session-org-context-v1" />
   <style>
     .partner-shell { min-height:100vh; display:grid; grid-template-columns:245px 1fr; background:var(--paper); }
-    .partner-aside { background:#134e4a; color:#d4faf4; padding:1.5rem 1rem; display:flex; flex-direction:column; }
+    .partner-aside { background:var(--ds-sidebar); color:var(--ds-sidebar-text); padding:1.5rem 1rem; display:flex; flex-direction:column; }
     .partner-aside .brand { color:#fff; padding:.5rem .75rem 2rem; display:block; }
     .partner-nav { display:grid; gap:.25rem; }
-    .partner-nav button { text-align:left; border:0; color:#a7e4dc; background:transparent; padding:.75rem; border-radius:4px; font:inherit; cursor:pointer; }
-    .partner-nav button:hover,.partner-nav button.active { color:#fff; background:#ffffff18; }
-    .partner-logout { margin-top:auto; border:1px solid #5eead433; color:#a7e4dc; background:transparent; padding:.7rem; border-radius:4px; font:inherit; cursor:pointer; }
+    .partner-nav button { text-align:left; border:0; color:var(--ds-sidebar-link); background:transparent; padding:.75rem; border-radius:var(--ds-radius-control); font:inherit; cursor:pointer; }
+    .partner-nav button:hover,.partner-nav button.active { color:#fff; background:var(--ds-sidebar-active); }
+    .partner-logout { margin-top:auto; border:1px solid var(--ds-sidebar-border); color:var(--ds-sidebar-link); background:transparent; padding:.7rem; border-radius:var(--ds-radius-control); font:inherit; cursor:pointer; }
     .partner-main { min-width:0; }
     .partner-content { max-width:1440px; padding:clamp(1.2rem,4vw,3rem); }
     .partner-grid { display:grid; gap:1rem; grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -28,26 +29,26 @@
     .partner-table th,.partner-table td { text-align:left; padding:.8rem .5rem; border-bottom:1px solid var(--line); }
     .partner-table th { color:var(--muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; }
     .partner-table .partner-actions { white-space:nowrap; }
-    .partner-reveal-dialog { width:min(440px,calc(100% - 2rem)); border:1px solid var(--line); border-radius:12px; padding:1.5rem; box-shadow:0 20px 60px #102e2a33; }
-    .partner-reveal-dialog::backdrop { background:#102e2a88; }
+    .partner-reveal-dialog { width:min(440px,calc(100% - 2rem)); border:1px solid var(--line); border-radius:var(--ds-radius-dialog); padding:1.5rem; box-shadow:var(--ds-shadow-dialog); }
+    .partner-reveal-dialog::backdrop { background:var(--ds-backdrop); }
     .partner-reveal-dialog label { display:grid; gap:.4rem; margin:.8rem 0; }
     .partner-context-dialog form { display:grid; gap:.8rem; }
     .partner-context-dialog h2 { margin:0; }
     .partner-context-dialog label { margin:0; }
     .partner-context-dialog .message { margin:0; }
     .context-switcher { max-width:min(32vw,20rem); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .partner-reveal-key { display:block; padding:.8rem; border-radius:8px; background:var(--paper); font:600 1rem monospace; overflow-wrap:anywhere; }
-    @media (max-width:850px) { .partner-shell { grid-template-columns:1fr; } .partner-aside { padding:.8rem; } .partner-aside .brand { padding:.5rem .75rem 1rem; } .partner-nav { display:flex; overflow:auto; } .partner-nav button { white-space:nowrap; } .partner-logout { margin-top:.7rem; } }
+    .partner-reveal-key { display:block; padding:.8rem; border-radius:var(--ds-radius-control); background:var(--paper); font:600 1rem monospace; overflow-wrap:anywhere; }
+    @media (max-width:850px) { .partner-shell { grid-template-columns:1fr; } .partner-aside { padding:.8rem; } .partner-aside .brand { padding:.5rem .75rem 1rem; } .partner-aside .mobile-nav-toggle { display:inline-flex; } .partner-nav { display:none; } .partner-nav.is-open { display:grid; overflow:visible; } .partner-nav button { white-space:normal; } .partner-logout { margin-top:.7rem; } }
     @media (max-width:560px) { .partner-content { padding:1rem; } .partner-grid { grid-template-columns:1fr; } .partner-table { display:block; overflow-x:auto; white-space:nowrap; } }
   </style>
 </head>
-<body>
+<body data-theme="partner">
   <section id="partnerLoginView" class="login-shell">
     <div class="login-art"><div class="brand">SMRITISYS / PARTNER PORTAL</div><h1>Build the channel with confidence.</h1><p>See your partner relationship, linked customers, licenses and product releases in one workspace.</p><img src="assets/SmritiSathi/saathi_male_fullbody_hd.png" alt="SMRITI Saathi supporting partner relationships" class="saathi-login-visual" /></div>
     <div class="login-panel"><form id="partnerLoginForm" class="login-box"><span class="eyebrow">Partner access</span><h2>Welcome back</h2><p class="muted">Sign in with your authorized SMRITISYS account.</p><label for="partnerEmail">Email address</label><input id="partnerEmail" name="email" type="email" autocomplete="email" required /><label for="partnerPassword">Password</label><input id="partnerPassword" name="password" type="password" autocomplete="current-password" required /><button class="primary" type="submit">Sign in</button><p id="partnerLoginMessage" class="message" role="alert"></p></form></div>
   </section>
   <section id="partnerPortalView" class="partner-shell hidden">
-    <aside class="partner-aside"><span class="brand">SMRITISYS</span><nav class="partner-nav" aria-label="Partner sections"><button class="active" data-partner-view="overview">Home</button><button data-partner-view="organization">Partner organization</button><button data-partner-view="customers">Customers</button><button data-partner-view="deals">Deal registrations</button><button data-partner-view="inventory">Assigned inventory</button><button data-partner-view="licenses">Customer licenses</button><button data-partner-view="releases">Product releases</button></nav><button id="partnerLogout" class="partner-logout">Sign out</button></aside>
+    <aside class="partner-aside"><span class="brand">SMRITISYS</span><button id="partnerMobileNavToggle" class="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="partnerNavigation">Menu</button><nav id="partnerNavigation" class="partner-nav" aria-label="Partner sections"><button class="active" data-partner-view="overview" aria-current="page">Home</button><button data-partner-view="organization">Partner organization</button><button data-partner-view="customers">Customers</button><button data-partner-view="deals">Deal registrations</button><button data-partner-view="inventory">Assigned inventory</button><button data-partner-view="licenses">Customer licenses</button><button data-partner-view="releases">Product releases</button></nav><button id="partnerLogout" class="partner-logout">Sign out</button></aside>
     <main class="partner-main"><header class="topbar"><h1 id="partnerPageTitle">Overview</h1><div class="user-chip"><button id="organizationContextButton" class="secondary context-switcher" type="button">Select organization</button><span id="partnerUserName">Partner</span><span id="partnerAvatar" class="avatar">P</span></div></header><div class="partner-content">
       <div id="partnerError" class="state-panel hidden" role="alert"></div>
       <section class="partner-view active" data-partner-section="overview"><div class="welcome"><div><span class="eyebrow">Partner workspace</span><h2>Welcome, <span id="partnerWelcomeName">there</span>.</h2><p class="muted">Your authorized channel relationship at a glance.</p></div></div><div class="partner-grid"><article class="card partner-card"><span class="eyebrow">Partner organization</span><h3 id="partnerOrganizationName">Loading...</h3><p id="partnerType">Loading partner profile...</p></article><article class="card partner-card"><span class="eyebrow">Managed customers</span><strong class="stat-value" id="partnerCustomerCount">—</strong><p>Company customer organizations assigned to your partner relationship.</p></article><article class="card partner-card"><span class="eyebrow">Assigned activation codes</span><strong class="stat-value" id="partnerInventoryCount">—</strong><p>Company-issued serials allocated to this partner.</p></article><article class="card partner-card"><span class="eyebrow">Customer licenses</span><strong class="stat-value" id="partnerLicenseCount">—</strong><p>License visibility for linked customer organizations.</p></article></div></section>

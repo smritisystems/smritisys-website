@@ -23,7 +23,7 @@ const inviteSubmit = document.querySelector('#inviteSubmit');
 
 function showInviteMessage(message, success = false) {
   inviteMessage.textContent = message;
-  inviteMessage.style.color = success ? 'var(--turquoise)' : 'var(--red)';
+  inviteMessage.style.color = success ? 'var(--accent)' : 'var(--red)';
 }
 
 const inviteParams = new URLSearchParams(window.location.hash.slice(1));

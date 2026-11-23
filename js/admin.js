@@ -71,7 +71,7 @@ async function adminApi(path, options = {}) {
 function adminMessage(element, text, ok) {
   if (!element) return;
   element.textContent = text;
-  element.style.color = ok ? 'var(--turquoise)' : 'var(--red)';
+  element.style.color = ok ? 'var(--accent)' : 'var(--red)';
 }
 
 function clearCustomerInviteLink() {
@@ -1893,14 +1893,22 @@ async function logoutAdmin() {
 }
 
 function navigateAdmin(view, productTab = null) {
-  const button = admin$(`button[data-admin-view="${view}"]`);
+  const button = admin$(`.admin-nav button[data-admin-view="${view}"]`);
   if (!button) return;
   if (view !== 'organizations') clearCustomerInviteLink();
   if (view !== 'organizations') clearAdminCustomerResetLink();
-  admin$$('.admin-nav button').forEach((item) => item.classList.remove('active'));
+  admin$$('.admin-nav button').forEach((item) => {
+    item.classList.toggle('active', item === button);
+    if (item === button) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
   button.classList.add('active');
   admin$$('.admin-view').forEach((section) => section.classList.toggle('active', section.dataset.adminSection === view));
   admin$('#adminPageTitle').textContent = button.textContent;
+  const menuWasOpen = adminMobileNavToggle.getAttribute('aria-expanded') === 'true';
+  adminNavigation.classList.remove('is-open');
+  adminMobileNavToggle.setAttribute('aria-expanded', 'false');
+  if (menuWasOpen && getComputedStyle(adminMobileNavToggle).display !== 'none') adminMobileNavToggle.focus();
   if (view === 'overview') loadAdminOverview();
   if (view === 'users') loadAdminUsers();
   if (view === 'organizations') {
@@ -1936,6 +1944,19 @@ function selectAdminProductTab(tabName) {
   });
 }
 
+const adminMobileNavToggle = admin$('#adminMobileNavToggle');
+const adminNavigation = admin$('#adminNavigation');
+adminMobileNavToggle.addEventListener('click', () => {
+  const isExpanded = adminMobileNavToggle.getAttribute('aria-expanded') === 'true';
+  adminMobileNavToggle.setAttribute('aria-expanded', String(!isExpanded));
+  adminNavigation.classList.toggle('is-open', !isExpanded);
+});
+adminNavigation.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || adminMobileNavToggle.getAttribute('aria-expanded') !== 'true') return;
+  adminNavigation.classList.remove('is-open');
+  adminMobileNavToggle.setAttribute('aria-expanded', 'false');
+  adminMobileNavToggle.focus();
+});
 admin$$('[data-admin-view]').forEach((button) => button.addEventListener('click', () => navigateAdmin(button.dataset.adminView, button.dataset.productTab)));
 admin$$('.admin-product-tab').forEach((tab, index, tabs) => {
   tab.addEventListener('click', () => selectAdminProductTab(tab.dataset.productTab));

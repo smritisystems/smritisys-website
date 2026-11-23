@@ -25,7 +25,7 @@ window.history.replaceState(null, '', window.location.pathname);
 
 function showResetMessage(message, success = false) {
   resetMessage.textContent = message;
-  resetMessage.style.color = success ? 'var(--turquoise)' : 'var(--red)';
+  resetMessage.style.color = success ? 'var(--accent)' : 'var(--red)';
 }
 
 if (!/^[a-f0-9]{48}$/.test(resetToken)) {

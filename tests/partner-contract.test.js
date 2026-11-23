@@ -20,6 +20,16 @@ test("partner portal is an authenticated workspace, not a placeholder", () => {
   assert.doesNotMatch(html, /Register customer|View commissions|View licenses/);
 });
 
+test("partner profiles display readable partner type and role labels", () => {
+  assert.match(script, /channel_partner: 'Channel partner'/);
+  assert.match(script, /distributor: 'Distributor'/);
+  assert.match(script, /partner_admin: 'Partner administrator'/);
+  assert.match(script, /partner_member: 'Partner member'/);
+  assert.match(script, /partnerDisplayLabel\(partner\.partner_type, PARTNER_TYPE_LABELS\)/);
+  assert.match(script, /partnerDisplayLabel\(partner\.partner_role, PARTNER_ROLE_LABELS\)/);
+  assert.doesNotMatch(script, /textContent = `\$\{partner\.partner_type\}/);
+});
+
 test("partner APIs reuse session identity and partner membership scope", () => {
   assert.match(api, /async function getPartnerSession/);
   assert.match(api, /async function hasPartnerPermission/);

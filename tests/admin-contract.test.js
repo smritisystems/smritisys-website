@@ -69,6 +69,16 @@ test("admin endpoints require the super-admin guard", () => {
   assert.match(api, /Super admin access required/);
 });
 
+test("admin overview promotes existing review queues before summary metrics", () => {
+  const queueIndex = html.indexOf('class="admin-review-queues"');
+  const metricIndex = html.indexOf('id="adminMetrics"');
+  assert.ok(queueIndex >= 0 && metricIndex > queueIndex);
+  for (const view of ["partner-deals", "follow-ups", "support", "releases"]) {
+    assert.match(html, new RegExp(`data-admin-view="${view}"`));
+  }
+  assert.match(script, /\.admin-nav button\[data-admin-view="\$\{view\}"\]/);
+});
+
 test("GitHub release tags create drafts only after CI and main ancestry checks", () => {
   assert.match(releaseDraftWorkflow, /smritisys-control-plane-v\*/);
   assert.match(releaseDraftWorkflow, /smritisys-public-website-v\*/);
