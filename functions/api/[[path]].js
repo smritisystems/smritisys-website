@@ -7268,7 +7268,14 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/?/, "").replace(/\/$/, "") || "";
   const origin = isTrustedOrigin(request, env);
+  const isUnsafeMethod = ["POST", "PUT", "PATCH", "DELETE"].includes(request.method);
+  const hasBearerToken = /^Bearer\s+\S+$/i.test(request.headers.get("Authorization") || "");
+  const hasCookieSession = Boolean(getCookie(request, "smritisys_session"));
 
+  if (isUnsafeMethod && hasCookieSession && !hasBearerToken &&
+      request.headers.get("Origin") !== url.origin && !origin) {
+    return json({ ok: false, error: "A trusted origin is required for cookie-authenticated requests" }, 403);
+  }
   if (request.method === "OPTIONS") return cors(origin);
 
   try {

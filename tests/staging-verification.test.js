@@ -151,6 +151,41 @@ async function selectSessionOrganization(env, token, organizationId = null) {
   });
 }
 
+test("cookie-authenticated mutations reject untrusted origins without blocking bearer clients", async () => {
+  const d1 = createD1Mock();
+  const cookie = "smritisys_session=csrf-test-session";
+  const untrusted = await callApi(d1, "logout", {
+    method: "POST",
+    headers: { Cookie: cookie, Origin: "https://attacker.example" },
+  });
+  assert.equal(untrusted.status, 403);
+
+  const missingOrigin = await callApi(d1, "logout", {
+    method: "POST",
+    headers: { Cookie: cookie },
+  });
+  assert.equal(missingOrigin.status, 403);
+
+  const sameOrigin = await callApi(d1, "logout", {
+    method: "POST",
+    headers: { Cookie: cookie, Origin: "https://smritisys.test" },
+  });
+  assert.equal(sameOrigin.status, 200);
+
+  const allowlistedOrigin = await callApi(d1, "logout", {
+    method: "POST",
+    headers: { Cookie: cookie, Origin: "https://portal.example" },
+    bindings: { ALLOWED_ORIGINS: "https://portal.example" },
+  });
+  assert.equal(allowlistedOrigin.status, 200);
+
+  const bearer = await callApi(d1, "logout", {
+    method: "POST",
+    headers: { Authorization: "Bearer csrf-test-token", Origin: "https://attacker.example" },
+  });
+  assert.equal(bearer.status, 200);
+});
+
 test("customer records are isolated by the explicitly selected organization", async () => {
   const d1 = createD1Mock();
   d1.raw.prepare(

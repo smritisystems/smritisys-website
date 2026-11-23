@@ -42,11 +42,12 @@ Customer and partner access now uses the selected organization, canonical
 membership roles, and active partner assignments; ambiguous account/license
 selection fails closed.
 
-These are local implementation changes only. Migration `0031` has not been
-applied to production, and no production schema, API authorization, or data
-has been changed. This narrow migration does not implement the person/role
-reference columns or pairwise relationship table proposed in the illustrative
-sections below; those remain a separate design.
+The draft's original local-only status was superseded when the production D1
+workflow applied migration `0031_identity_organization_scope.sql` on
+2026-11-22. Recheck the remote migration ledger before future work. This narrow
+migration does not implement the person/role reference columns or pairwise
+relationship table proposed in the illustrative sections below; those remain
+a separate design.
 
 ## Scope of this migration design
 

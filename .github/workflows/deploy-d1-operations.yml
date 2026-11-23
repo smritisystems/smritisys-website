@@ -1,16 +1,13 @@
 name: Deploy D1 Operations
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "d1-ops/**"
-      - "migrations/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/deploy-d1-operations.yml"
   workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: Confirm this run may apply pending production D1 migrations and deploy the operations Worker
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,8 +17,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_production == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check dependency advisories
+        run: npm audit --audit-level=moderate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build CSS
+        run: npm run build:css
+
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.confirm_production == true
+    needs: validate
+    environment:
+      name: production
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

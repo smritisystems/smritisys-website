@@ -17,12 +17,11 @@ related_modules: ["12_RBAC_SECURITY", "16_DATABASE_API"]
 ## Status and purpose
 
 Version 1.1.0 records the approved conceptual architecture decisions. It does not
-approve production database changes or deployment. Session organization
-context was separately implemented in migration `0029`. A narrow identity and
-organization-scope hardening implementation, including local migration `0031`,
-is now present in the uncommitted working tree for review; it has not been
-applied to production. The broader person/role reference and pairwise
-relationship redesign remains review-only.
+by itself authorize production changes. Session organization context was
+implemented in migration `0029`. The narrow identity and organization-scope
+hardening was committed as `ba9c1b0`; the production D1 workflow applied
+migration `0031_identity_organization_scope.sql` on 2026-11-22. The broader
+person/role reference and pairwise relationship redesign remains review-only.
 
 The purpose is to establish a safe extension path for the existing SMRITISYS
 identity and partner model. The intended boundary is the one in
@@ -91,7 +90,7 @@ Not in scope:
 | `partner_memberships` | A second membership-like record with partner organization, account, partner role, partner type, and status. Role and type data overlap other tables. |
 | `partner_customer_links` | A direct partner-to-customer assignment with status. It currently provides customer scope but does not state whether the partner sourced, resells, implements, or services the customer. |
 | `audit_logs` | Existing actor, organization, action, resource, old/new value, IP, and timestamp fields for auditable mutations. |
-| `sessions` | Stores account identity and the selected `organization_id` added by migration `0029`. Identity resolution requires that explicit, active membership; it does not fall back to the first membership. In the local working tree, partner authorization uses the selected canonical membership role and an active partner classification; `partner_memberships` is retained as a compatibility projection. Production has not received this local authorization change. |
+| `sessions` | Stores account identity and the selected `organization_id` added by migration `0029`. Identity resolution requires that explicit, active membership; it does not fall back to the first membership. The identity hardening uses the selected canonical membership role and an active partner classification; `partner_memberships` is retained as a compatibility projection. |
 
 The identity and partner baseline is implemented in
 [schema.sql](../../schema.sql), [0002_identity_rbac.sql](../../migrations/0002_identity_rbac.sql),
@@ -142,11 +141,13 @@ The production API's organization-context GET returns active memberships and
 the selected session organization. Its POST accepts only an active membership,
 updates that session, and writes an audit record. `getIdentitySession` requires
 a non-null selected organization and joins it to the caller's active
-organization membership. In the production runtime inspected on 2026-11-22,
-the partner resolver also reads `partner_memberships`; the local working tree
-instead uses the canonical membership role and active partner classification.
-Both versions scope partner customer, license, and release queries by the
-selected partner organization and active customer assignments.
+organization membership. The production D1 workflow applied the identity
+hardening migration on 2026-11-22. The partner resolver uses the canonical
+membership role and active partner classification; `partner_memberships`
+remains a compatibility projection. Partner customer, license, and release
+queries remain scoped by the selected partner organization and active customer
+assignments. A production multi-membership or partner-member end-to-end test
+has not been performed.
 
 There are eight unexpired production sessions: one has an organization context
 and seven do not. A session without a selected organization cannot pass
@@ -502,12 +503,13 @@ behavior, or production data.
   and covered by the local suite. The broader canonical membership and
   pairwise-relationship proposal remains a review-only design in
   [Identity Membership Migration Design](./2026-11-22_03_IDENTITY_MEMBERSHIP_MIGRATION_DESIGN_DRAFT.md).
-- Local, uncommitted identity hardening adds organization ownership to
+- Identity hardening in commit `ba9c1b0` adds organization ownership to
   licenses, tickets, orders, and AMC contracts; uses canonical partner roles;
   and fails closed on ambiguous membership/activation selection. Migration
   `0031` backfills only unambiguous ownership and active compatibility
-  memberships. It has not been applied to production.
-- The full repository test suite passed 129/129 after these local changes.
+  memberships. The production D1 workflow applied it on 2026-11-22.
+- The full repository test suite passed after these changes; the current local
+  suite has since passed 131/131.
   Production data does not
   currently exercise a multi-membership account or a partner member; synthetic
   authorization tests remain necessary.
@@ -516,8 +518,8 @@ behavior, or production data.
 
 ## Approval boundary
 
-Approval of version 1.1.0 locks the conceptual decisions above. The current
-local hardening is uncommitted and undeployed for review only. It does not
-authorize applying migration `0031`, changing production API behavior,
-altering production data, or deploying without subsequent review and separate
-approval.
+Approval of version 1.1.0 locks the conceptual decisions above. The narrow
+identity hardening and migration `0031` have been deployed. The broader
+person/role-reference and pairwise-relationship design remains unimplemented;
+this specification does not authorize that future migration, any additional
+production data change, or a recovery operation.

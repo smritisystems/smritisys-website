@@ -5,7 +5,14 @@ SMRITISYS is the relationship, licensing, support, partner, commercial, and cont
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the product boundary and experience map.
 See [docs/LICENSE_ARCHITECTURE.md](docs/LICENSE_ARCHITECTURE.md) for the Phase 3 license model and state machine.
 
-Push to GitHub = automatic deploy. No manual `wrangler deploy`.
+Cloudflare Pages Git integration deploys the `main` branch automatically. The
+repository CI workflow runs tests, dependency checks, and the CSS build, but
+GitHub branch protection must require that check before merge.
+
+Production D1 migrations and the D1 operations Worker are separate. They run
+only through an explicitly confirmed `workflow_dispatch`. Before using the
+workflow, configure required reviewers on the GitHub `production` environment;
+the workflow's environment declaration alone does not enforce approval.
 
 ## Structure
 
@@ -29,21 +36,21 @@ smritisys.com/partner.html Partner portal
 app.smritisys.com         SMRITI Retail OS operational application
 ```
 
-## One-time setup (only once)
+## Local development
 
-### 1. Create D1 database
-1. Cloudflare Dashboard → **Workers & Pages** → **D1**
-2. Create database → name: `smritisys-db`
-3. Copy **database_id** (optional for local)
+The root `wrangler.toml` points to a local-only D1 database named
+`smritisys-local`. Initialize only the local database with the schema:
 
-### 2. Create tables
-In D1 console (or CLI):
 ```bash
-npx wrangler d1 execute smritisys-db --file=./schema.sql
+npx wrangler d1 execute smritisys-local --local --file=./schema.sql
 ```
-Or open D1 → Console → paste contents of `schema.sql` → Run.
 
-### 3. Connect GitHub to Cloudflare Pages
+Do not use `schema.sql` against an existing or production database; use
+migrations through the approved production workflow.
+
+## Cloudflare Pages deployment setup
+
+### 1. Connect GitHub to Cloudflare Pages
 1. Cloudflare Dashboard → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
 2. Select repo: `smritisystems/smritisys-website`
 3. Settings:
@@ -58,7 +65,7 @@ Or open D1 → Console → paste contents of `schema.sql` → Run.
 
 4. **Save and Deploy**
 
-### 4. Bind D1 to the Pages project (important)
+### 2. Bind production D1 to the Pages project (important)
 1. Open the Pages project → **Settings** → **Functions**
 2. Scroll to **D1 database bindings**
 3. Add binding:
@@ -66,7 +73,8 @@ Or open D1 → Console → paste contents of `schema.sql` → Run.
    - D1 database: `smritisys-db`
 4. Save
 
-After this, every push to `main` auto-deploys.
+The Pages Git integration deploys pushes to `main`. Configure branch protection
+so the `CI / test` check must pass before changes are merged.
 
 ## Daily use
 
@@ -76,7 +84,14 @@ git commit -m "update"
 git push
 ```
 
-Cloudflare Pages will automatically build and deploy. No manual deploy command.
+Cloudflare Pages will automatically deploy. D1 migrations do not run as part of
+that Pages deployment; use the separate protected production workflow only
+after staging validation and approval.
+
+The root `wrangler.toml` uses a local-only D1 database name and ID. Do not use
+the production D1 operations configuration for local development. No staging
+D1 target is currently configured in this repository; an authorized operator
+must provision and verify the isolated database and signer settings first.
 
 ## API
 
@@ -148,40 +163,30 @@ Staff signup is not public. The one-time bootstrap request must include the
 before the first staff user exists. Remove or rotate the secret after bootstrapping.
 
 Set `ALLOWED_ORIGINS` as a comma-separated Pages environment variable for production
-and local development. The API does not allow wildcard CORS.
+and local development. The API does not allow wildcard CORS. Cookie-authenticated
+unsafe requests also require a same-origin or explicitly allowlisted Origin;
+Bearer clients are unaffected.
 
 ## Production handoff checklist
 
-Before deploying the completed control plane:
+Before a future production release:
 
-1. Back up the remote D1 database.
-2. Apply migrations `0002_identity_rbac.sql` through `0013_customer_announcements.sql` in order, excluding staging seed migrations `0005`, `0009`, and `0011` in production. Migration `0013` preserves existing announcements while adding product targeting, severity, scheduling, and audit attribution.
-3. Migrations `0029_session_organization_context.sql` and `0030_partner_workflow_foundations.sql` have been applied to production; do not reapply them.
-4. Apply only production-approved customer, partner, and admin seed records; never deploy the example credentials or demo download URLs.
-5. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
-6. Create the first super-admin with `X-Staff-Bootstrap`, then rotate or remove `STAFF_BOOTSTRAP_TOKEN`.
-7. Verify customer, partner, and admin login, explicit organization selection, tenant isolation, logout invalidation, and the accounting boundary after deployment.
-8. Verify D1-backed throttling for login, signup, demo, and password endpoints, then enable Cloudflare WAF rate limiting, error monitoring, backups, and alerting before inviting production users.
+1. Use an isolated non-production D1 database and signer configuration with synthetic data. Do not test activation, renewal, or recovery against production customer records.
+2. Require the GitHub `CI / test` check before merging to `main`; CI runs `npm audit`, `npm test`, and `npm run build:css`.
+3. Before any production migration, confirm a pre-change recovery point and migration plan. The scheduled D1 operations sampler stores capacity telemetry; it is not a backup.
+4. Production migration `0031_identity_organization_scope.sql` was applied by the D1 workflow on 2026-11-22. The workflow reported it as pending and applied it successfully. Recheck the remote migration ledger before future work; do not replay `schema.sql` or manually rerun migrations.
+5. Before using the D1 operations workflow, configure required reviewers on the GitHub `production` environment. Dispatch only from `main`, set `confirm_production` to true, and obtain environment approval. The workflow tests and builds before applying migrations and deploying the Worker.
+6. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
+7. Verify customer, partner, and admin login, explicit organization selection, tenant isolation, logout invalidation, and the accounting boundary in staging before a production release.
+8. Have an authorized operator confirm the license signer, key lifecycle, monitoring, D1 Time Travel retention, and isolated recovery target before inviting additional production users.
 
-## Phase 2 identity migration
+## Migration status
 
-Before deploying the Phase 2 API to an existing D1 database, run the repeatable
-identity migration:
-
-```bash
-npx wrangler d1 execute smritisys-db --remote --file=./migrations/0002_identity_rbac.sql
-npx wrangler d1 execute smritisys-db --remote --file=./migrations/0003_license_control_plane.sql
-```
-
-The migration preserves `users`, `customers`, sessions, and existing customer data.
-It backfills `people`, deterministic organizations, memberships, roles, permissions,
-and audit storage. Runtime authorization resolves the authenticated account through
-organization membership and role permissions; browser-supplied organization or role
-values are not trusted.
-
-The license migration reuses the existing product and license tables and adds editions,
-entitlements, activations, and immutable license events. It does not move operational
-POS, sales, purchase, inventory, accounting, GST, or reporting data into SMRITISYS.
+The production workflow applied migration `0031` on 2026-11-22 after reporting
+it as the pending migration. This confirms that the prior migration files in
+that run were already recorded as applied. Always check the production
+migration ledger before a future change; the historical SQL examples below are
+not instructions to replay migrations.
 
 ## Create first staff user
 
@@ -194,7 +199,8 @@ curl -X POST https://YOUR_PROJECT.pages.dev/api/signup \
   -d "{\"type\":\"user\",\"email\":\"admin@smritisys.com\",\"password\":\"change-me\",\"name\":\"Admin\"}"
 ```
 
-## Free tier
-- Pages: unlimited bandwidth, 500 builds/month
-- D1: 5M reads/day, 100k writes/day, 5GB storage
-- Enough for demos + user/customer accounts
+## Cloudflare plan
+
+Cloudflare limits, recovery retention, and pricing depend on the account plan.
+Verify them in the authorized Cloudflare account and current Cloudflare
+documentation before capacity or recovery planning.

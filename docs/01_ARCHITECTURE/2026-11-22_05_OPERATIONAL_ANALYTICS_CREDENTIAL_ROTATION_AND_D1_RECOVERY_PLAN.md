@@ -48,6 +48,11 @@ The production database was queried through read-only Wrangler commands on
   attempted because sign-in and organization selection write production
   session/audit data.
 
+This read-only snapshot preceded the D1 operations workflow's later report on
+2026-11-22 that migration `0031_identity_organization_scope.sql` was pending;
+the workflow then applied it successfully. Recheck the remote migration
+ledger before future operations.
+
 ## Operational analytics contract
 
 The following metric families are approved. Implementation is prepared locally
@@ -122,11 +127,11 @@ authorized.
 | Cloudflare Pages Git integration | Configured through Cloudflare dashboard settings; repository configuration does not expose its authorization owner/scopes. | Pages production deploys use the dashboard Git integration and are separate from the D1 operations workflow. |
 | Pages/Worker runtime secrets and bindings | Runtime dashboard settings were not inventoried in this read-only repository review. | An authorized Cloudflare operator must inventory names, consumers, and deployment environments; never copy values into this document. |
 
-The repository's `wrangler.toml` is labeled local-only but binds `DB` to the
-production D1 database. Do not use the unmodified binding for recovery testing
-or local data writes. The D1 operations workflow applies pending production
-migrations before deploying a Worker; do not trigger it as a credential
-canary.
+The root `wrangler.toml` now uses a synthetic local-only D1 binding. The
+separate `d1-ops/wrangler.jsonc` configuration and D1 operations workflow are
+production-bound; do not use them for recovery testing or as a credential
+canary. The workflow applies pending production migrations before deploying
+the operations Worker.
 
 ### Rotation sequence — not executed
 
