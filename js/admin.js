@@ -1583,6 +1583,9 @@ async function loadAdminLicenseReactivationDetail(requestId) {
         <dt>Requested</dt><dd>${adminEscape(item.created_at)}</dd>
         <dt>Active seats</dt><dd>${adminEscape(item.active_activation_count)} / ${adminEscape(item.seats)}</dd>
         <dt>Expires</dt><dd>${adminEscape(item.expires_at)}</dd>
+        ${Number(item.surrender_confirmed || 0) === 1
+          ? `<dt>Surrender confirmed</dt><dd>Yes — ${adminEscape(item.surrender_reason || 'Reason not provided')}</dd>`
+          : '<dt>Surrender confirmed</dt><dd>No</dd>'}
       </dl>
       ${item.status !== 'pending' ? `<p class="message">This request is ${adminEscape(item.status)} and can no longer be reviewed.</p>` : ''}
       <form data-admin-reactivation-review="${adminEscape(item.request_id)}">
@@ -1595,7 +1598,11 @@ async function loadAdminLicenseReactivationDetail(requestId) {
             </select>
             ${requiresReplacement ? '<small class="muted">The license has no free seat; one active installation must be released.</small>' : ''}
           </div>
-          ${cooldown ? `<div class="full"><label><input name="cooldown_override" type="checkbox" value="true" /> Override the 30-day transfer cooldown (available ${adminEscape(item.transfer_available_at)})</label><small class="muted">Use only after verifying the customer by phone and documenting the reason.</small></div>` : ''}
+          ${Number(item.surrender_confirmed || 0) === 1
+            ? '<div class="full"><div class="message"><strong>Surrender confirmed.</strong> This request is eligible for immediate reactivation without a 30-day transfer cooldown.</div></div>'
+            : cooldown
+              ? `<div class="full"><label><input name="cooldown_override" type="checkbox" value="true" /> Override the 30-day transfer cooldown (available ${adminEscape(item.transfer_available_at)})</label><small class="muted">Use only after verifying the customer by phone and documenting the reason.</small></div>`
+              : ''}
           <div class="full"><label><input name="phone_confirmed" type="checkbox" value="true" /> I called and confirmed with the customer at the registered phone number</label></div>
           <div class="full"><label for="adminReactivationReason">Decision reason</label><textarea id="adminReactivationReason" name="reason" minlength="10" maxlength="500" rows="3" required></textarea></div>
         </div>

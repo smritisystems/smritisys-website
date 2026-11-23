@@ -1501,6 +1501,11 @@ async function requestLicenseReactivation(request, env, origin) {
   const installationId = boundedString(body?.installation_id, 36);
   const activationIdentifier = boundedString(body?.activation_identifier, 36);
   const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
+  const surrenderConfirmed = body?.surrender_confirmed === true;
+  const surrenderReason = surrenderConfirmed ? boundedString(body?.surrender_reason, 300) : null;
+  if (surrenderConfirmed && (!surrenderReason || surrenderReason.length < 10)) {
+    return json({ ok: false, error: "A surrender reason of at least 10 characters is required" }, 400, origin);
+  }
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
   if (!licenseId) {
     return json({ ok: false, error: "A valid license_id is required" }, 400, origin);
@@ -1591,7 +1596,9 @@ async function requestLicenseReactivation(request, env, origin) {
      WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
        AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
   ).bind(license.id).first();
-  const status = Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown
+  const status = surrenderConfirmed
+    ? "approved"
+    : Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown
     ? "approved"
     : "pending";
   const requestId = crypto.randomUUID();
@@ -1599,12 +1606,12 @@ async function requestLicenseReactivation(request, env, origin) {
     `INSERT OR IGNORE INTO license_reactivation_requests
        (request_id, license_id, customer_id, organization_id, requester_person_id,
         product_code, company_binding, installation_id, activation_identifier,
-        refresh_public_key, status, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
+      refresh_public_key, status, surrender_confirmed, surrender_reason, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
   ).bind(
     requestId, license.id, session.account_id, license.organization_id, session.person_id,
     license.product_code, license.company_binding, installationId, activationIdentifier,
-    refreshPublicKey, status,
+    refreshPublicKey, status, surrenderConfirmed ? 1 : 0, surrenderReason,
   ).run();
   if (Number(inserted?.meta?.changes || 0) !== 1) {
     return json({ ok: false, error: "The reactivation request could not be created" }, 409, origin);
@@ -1634,8 +1641,19 @@ async function requestLicenseReactivation(request, env, origin) {
       : { error: "No registered notification email is available" };
     notificationStatus = delivery.error ? "failed" : "sent";
     await env.DB.prepare(
-      "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ?"
-    ).bind(notificationStatus, requestId).run();
+      `UPDATE license_reactivation_requests
+       SET notification_status = ?,
+           notification_attempts = notification_attempts + 1,
+           notification_error = ?,
+           notification_next_retry_at = CASE WHEN ? = 'failed'
+             THEN datetime('now', '+30 minutes') ELSE NULL END
+       WHERE request_id = ?`
+    ).bind(
+      notificationStatus,
+      delivery.error ? String(delivery.error).slice(0, 500) : null,
+      notificationStatus,
+      requestId,
+    ).run();
   }
 
   return json({
@@ -2054,8 +2072,14 @@ async function activateLicense(request, env, origin) {
       : { error: "No registered notification email is available" };
     const notificationStatus = delivery.error ? "failed" : "sent";
     await env.DB.prepare(
-      "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ? AND status = 'completed'"
-    ).bind(notificationStatus, reactivationRequestId).run();
+      `UPDATE license_reactivation_requests
+       SET notification_status = ?,
+           notification_attempts = notification_attempts + 1,
+           notification_error = ?,
+           notification_next_retry_at = CASE WHEN ? = 'failed'
+             THEN datetime('now', '+30 minutes') ELSE NULL END
+       WHERE request_id = ? AND status = 'completed'`
+    ).bind(notificationStatus, delivery.error ? String(delivery.error).slice(0, 500) : null, notificationStatus, reactivationRequestId).run();
     if (delivery.error) {
       reactivationNotificationWarning = "Activation succeeded, but its email notification could not be delivered.";
     }
@@ -2396,6 +2420,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     const record = await env.DB.prepare(
       `SELECT r.request_id, r.license_id, r.customer_id, r.status, r.created_at, r.expires_at,
               r.installation_id, r.product_code, l.serial_number, p.name AS product_name,
+              r.surrender_confirmed, r.surrender_reason,
               c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
               l.seats,
               (SELECT COUNT(*) FROM license_activations la
@@ -2448,6 +2473,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
   const record = await env.DB.prepare(
     `SELECT r.request_id, r.license_id, r.customer_id, r.status, r.expires_at,
             r.activation_identifier, r.installation_id,
+            r.surrender_confirmed, r.surrender_reason,
             l.organization_id, l.seats, l.status AS license_status,
             l.starts_at, l.expires_at AS license_expires_at, l.last_self_service_transfer_at,
             r.expires_at > datetime('now') AS request_is_live,
@@ -2462,6 +2488,8 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
      WHERE r.request_id = ?`
   ).bind(requestId).first();
   if (!record) return json({ ok: false, error: "Reactivation request not found" }, 404, origin);
+  const effectiveCooldownOverride =
+    cooldownOverride === true || Number(record.surrender_confirmed || 0) === 1;
   if (record.status !== "pending") {
     return json({ ok: false, error: "Only pending reactivation requests can be reviewed" }, 409, origin);
   }
@@ -2490,8 +2518,14 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
       : { error: "No registered notification email is available" };
     const notificationStatus = delivery.error ? "failed" : "sent";
     await env.DB.prepare(
-      "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ?"
-    ).bind(notificationStatus, requestId).run();
+      `UPDATE license_reactivation_requests
+       SET notification_status = ?,
+           notification_attempts = notification_attempts + 1,
+           notification_error = ?,
+           notification_next_retry_at = CASE WHEN ? = 'failed'
+             THEN datetime('now', '+30 minutes') ELSE NULL END
+       WHERE request_id = ?`
+    ).bind(notificationStatus, delivery.error ? String(delivery.error).slice(0, 500) : null, notificationStatus, requestId).run();
     return json({
       ok: true,
       status: "rejected",
@@ -2515,10 +2549,10 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
      WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
        AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
   ).bind(record.license_id).first();
-  if (cooldownOverride && !cooldown) {
+  if (effectiveCooldownOverride && !cooldown && !record.surrender_confirmed) {
     return json({ ok: false, error: "There is no active device transfer cooldown to override" }, 400, origin);
   }
-  if (cooldown && !cooldownOverride) {
+  if (cooldown && !effectiveCooldownOverride) {
     return json({
       ok: false,
       error: "A device transfer cooldown is active. Confirm the exception before approving.",
@@ -2562,7 +2596,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
              AND (? = 1 OR last_self_service_transfer_at IS NULL
                OR julianday(last_self_service_transfer_at) <= julianday('now', '-30 days'))
          )`
-    ).bind(replacement.id, record.license_id, requestId, record.license_id, cooldownOverride ? 1 : 0));
+    ).bind(replacement.id, record.license_id, requestId, record.license_id, effectiveCooldownOverride ? 1 : 0));
   }
   updateStatements.push(env.DB.prepare(
     `UPDATE license_reactivation_requests
@@ -2588,7 +2622,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
             WHERE license_id = ? AND status = 'active') < ?`
   ).bind(
     replacement ? replacement.id : null, reason, session.person_id,
-    cooldownOverride ? 1 : 0, requestId, record.license_id, cooldownOverride ? 1 : 0,
+    effectiveCooldownOverride ? 1 : 0, requestId, record.license_id, effectiveCooldownOverride ? 1 : 0,
     record.license_id, replacement ? replacement.id : null,
     replacement ? replacement.id : null, record.license_id, record.license_id, seatLimit,
   ));
@@ -2602,7 +2636,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
       reason,
       phone_confirmed: true,
       replaced_activation_id: replacement?.id || null,
-      cooldown_override: cooldownOverride,
+      cooldown_override: effectiveCooldownOverride,
     });
   await recordLicenseEvent(
     env,
@@ -2611,7 +2645,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     "LICENSE_REACTIVATION_APPROVED",
     record.license_status,
     record.license_status,
-    { request_id: requestId, replaced_activation_id: replacement?.id || null, cooldown_override: cooldownOverride },
+    { request_id: requestId, replaced_activation_id: replacement?.id || null, cooldown_override: effectiveCooldownOverride },
   );
   if (replacement) {
     await recordLicenseEvent(
@@ -2626,8 +2660,14 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     : { error: "No registered notification email is available" };
   const notificationStatus = delivery.error ? "failed" : "sent";
   await env.DB.prepare(
-    "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ? AND status = 'approved'"
-  ).bind(notificationStatus, requestId).run();
+    `UPDATE license_reactivation_requests
+     SET notification_status = ?,
+         notification_attempts = notification_attempts + 1,
+         notification_error = ?,
+         notification_next_retry_at = CASE WHEN ? = 'failed'
+           THEN datetime('now', '+30 minutes') ELSE NULL END
+     WHERE request_id = ? AND status = 'approved'`
+  ).bind(notificationStatus, delivery.error ? String(delivery.error).slice(0, 500) : null, notificationStatus, requestId).run();
   return json({
     ok: true,
     status: "approved",

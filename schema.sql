@@ -555,8 +555,13 @@ CREATE TABLE IF NOT EXISTS license_reactivation_requests (
   reviewed_by_person_id INTEGER,
   phone_confirmed_at TEXT,
   cooldown_override INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_override IN (0, 1)),
+  surrender_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (surrender_confirmed IN (0, 1)),
+  surrender_reason TEXT,
   notification_status TEXT NOT NULL DEFAULT 'pending'
     CHECK (notification_status IN ('pending', 'sent', 'failed')),
+  notification_attempts INTEGER NOT NULL DEFAULT 0,
+  notification_next_retry_at TEXT,
+  notification_error TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,
   reviewed_at TEXT,

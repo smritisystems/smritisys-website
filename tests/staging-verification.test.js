@@ -3325,6 +3325,21 @@ test("customer reactivation automatically approves an available seat and returns
   assert.equal(invalidPublicKey.status, 400);
   assert.equal(invalidPublicKey.data.error, "A valid 32-byte Ed25519 refresh_public_key is required");
 
+  const surrenderRequest = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      activation_identifier: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      refresh_public_key: refreshPublicKey,
+      surrender_confirmed: true,
+      surrender_reason: "Previous device surrendered to support",
+    },
+  });
+  assert.equal(surrenderRequest.status, 201);
+  assert.equal(surrenderRequest.data.status, "approved");
+
   const request = await callApi(d1, "license/reactivations", {
     method: "POST",
     token: customerToken,
