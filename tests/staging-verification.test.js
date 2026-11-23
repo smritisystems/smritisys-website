@@ -3273,6 +3273,19 @@ test("customer reactivation automatically approves an available seat and returns
   const installationId = "PRATHAM-789F-CEBC-0916-6315";
   const activationIdentifier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const { refreshPublicKey, bindings } = await createLicenseSignerBindings("reactivation-test-key");
+  const invalidLicenseId = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 0,
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(invalidLicenseId.status, 400);
+  assert.equal(invalidLicenseId.data.error, "A valid license_id is required");
+
   const invalidHardwareId = await callApi(d1, "license/reactivations", {
     method: "POST",
     token: customerToken,
@@ -3284,6 +3297,33 @@ test("customer reactivation automatically approves an available seat and returns
     },
   });
   assert.equal(invalidHardwareId.status, 400);
+  assert.equal(invalidHardwareId.data.error, "A valid installation_id is required");
+
+  const invalidActivationId = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: installationId,
+      activation_identifier: "not-a-uuid",
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(invalidActivationId.status, 400);
+  assert.equal(invalidActivationId.data.error, "A valid UUID activation_identifier is required");
+
+  const invalidPublicKey = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      refresh_public_key: "too-short",
+    },
+  });
+  assert.equal(invalidPublicKey.status, 400);
+  assert.equal(invalidPublicKey.data.error, "A valid 32-byte Ed25519 refresh_public_key is required");
 
   const request = await callApi(d1, "license/reactivations", {
     method: "POST",

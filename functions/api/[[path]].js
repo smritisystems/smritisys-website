@@ -1502,10 +1502,17 @@ async function requestLicenseReactivation(request, env, origin) {
   const activationIdentifier = boundedString(body?.activation_identifier, 36);
   const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
-  if (!licenseId || !isValidInstallationId(installationId) ||
-      !UUID_PATTERN.test(activationIdentifier || "") ||
-      !refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
-    return json({ ok: false, error: "A valid license and installation identity are required" }, 400, origin);
+  if (!licenseId) {
+    return json({ ok: false, error: "A valid license_id is required" }, 400, origin);
+  }
+  if (!isValidInstallationId(installationId)) {
+    return json({ ok: false, error: "A valid installation_id is required" }, 400, origin);
+  }
+  if (!UUID_PATTERN.test(activationIdentifier || "")) {
+    return json({ ok: false, error: "A valid UUID activation_identifier is required" }, 400, origin);
+  }
+  if (!refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
+    return json({ ok: false, error: "A valid 32-byte Ed25519 refresh_public_key is required" }, 400, origin);
   }
 
   const license = await env.DB.prepare(
