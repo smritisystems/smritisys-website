@@ -1010,6 +1010,12 @@ const DEFAULT_EVALUATION_POLICY = {
   locked_modules: ["billing", "inventory_transactions", "accounting", "payroll"],
 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PRATHAM_HARDWARE_ID_PATTERN = /^PRATHAM-(?:[0-9A-F]{4}-){3}[0-9A-F]{4}$/i;
+
+function isValidInstallationId(value) {
+  return typeof value === "string" &&
+    (UUID_PATTERN.test(value) || PRATHAM_HARDWARE_ID_PATTERN.test(value));
+}
 
 function decodeBase64Url(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
@@ -1496,7 +1502,7 @@ async function requestLicenseReactivation(request, env, origin) {
   const activationIdentifier = boundedString(body?.activation_identifier, 36);
   const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
-  if (!licenseId || !UUID_PATTERN.test(installationId || "") ||
+  if (!licenseId || !isValidInstallationId(installationId) ||
       !UUID_PATTERN.test(activationIdentifier || "") ||
       !refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
     return json({ ok: false, error: "A valid license and installation identity are required" }, 400, origin);
@@ -1548,6 +1554,7 @@ async function requestLicenseReactivation(request, env, origin) {
     if (existingRequest.status !== "expired") {
       return json({
         ok: true,
+        id: existingRequest.request_id,
         request_id: existingRequest.request_id,
         status: existingRequest.status,
         expires_at: existingRequest.expires_at,
@@ -1626,6 +1633,7 @@ async function requestLicenseReactivation(request, env, origin) {
 
   return json({
     ok: true,
+    id: requestId,
     request_id: requestId,
     status,
     expires_at: savedRequest?.expires_at || null,
@@ -1673,6 +1681,7 @@ async function getCustomerLicenseReactivationRequest(request, env, requestId, or
 
   return json({
     ok: true,
+    id: requestId,
     request_id: requestId,
     status,
     expires_at: record.expires_at,
@@ -1780,7 +1789,7 @@ async function activateLicense(request, env, origin) {
       (usesEmailVerification && (!emailChallengeId || !activationEmail || !requestedLicenseId || licenseKey)) ||
       (usesAccountReactivation && (usesActivationCode || usesEmailVerification || licenseKey)) ||
       (licenseKey && usesActivationCode) ||
-      !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
+      !productCode || !isValidInstallationId(installationId) || !UUID_PATTERN.test(activationIdentifier || "")) {
     return json({ ok: false, error: "Provide a license credential, verified email activation, or approved customer reactivation request" }, 400, origin);
   }
   if (usesActivationCode && !/^(?:\d{1,9}|SMR-LIC-(?:\d{8}|[A-F0-9]{20}))$/.test(serialNumber)) {
@@ -2078,7 +2087,7 @@ async function refreshLicense(request, env, origin) {
   const signature = decodeBase64Url(body?.signature);
   if (
     !productCode ||
-    !UUID_PATTERN.test(installationId || "") ||
+    !isValidInstallationId(installationId) ||
     !UUID_PATTERN.test(activationIdentifier || "") ||
     !companyBinding ||
     !Number.isSafeInteger(timestamp) ||
@@ -2208,7 +2217,7 @@ async function manageLicenseActivation(request, env, origin) {
   if (
     action !== "deactivate" ||
     !productCode ||
-    !UUID_PATTERN.test(installationId || "") ||
+    !isValidInstallationId(installationId) ||
     !UUID_PATTERN.test(activationIdentifier || "") ||
     !companyBinding ||
     !Number.isSafeInteger(timestamp) ||

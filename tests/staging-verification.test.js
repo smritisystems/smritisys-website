@@ -3270,9 +3270,21 @@ test("customer reactivation automatically approves an available seat and returns
   assert.equal(options.status, 200);
   assert.ok(options.data.licenses.some((license) => license.license_id === 101));
 
-  const installationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const installationId = "PRATHAM-789F-CEBC-0916-6315";
   const activationIdentifier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const { refreshPublicKey, bindings } = await createLicenseSignerBindings("reactivation-test-key");
+  const invalidHardwareId = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "PRATHAM-789F-CEBC-0916-631",
+      activation_identifier: activationIdentifier,
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(invalidHardwareId.status, 400);
+
   const request = await callApi(d1, "license/reactivations", {
     method: "POST",
     token: customerToken,
@@ -3284,6 +3296,7 @@ test("customer reactivation automatically approves an available seat and returns
     },
   });
   assert.equal(request.status, 201);
+  assert.equal(request.data.id, request.data.request_id);
   assert.equal(request.data.status, "approved");
 
   const duplicate = await callApi(d1, "license/reactivations", {
@@ -3297,6 +3310,7 @@ test("customer reactivation automatically approves an available seat and returns
     },
   });
   assert.equal(duplicate.status, 200);
+  assert.equal(duplicate.data.id, request.data.request_id);
   assert.equal(duplicate.data.request_id, request.data.request_id);
   assert.equal((await callApi(d1, `license/reactivations/${request.data.request_id}`, {
     token: otherCustomerToken,
