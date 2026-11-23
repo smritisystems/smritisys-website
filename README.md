@@ -12,7 +12,8 @@ GitHub branch protection must require that check before merge.
 Production D1 migrations and the D1 operations Worker are separate. They run
 only through an explicitly confirmed `workflow_dispatch`. Before using the
 workflow, configure required reviewers on the GitHub `production` environment;
-the workflow's environment declaration alone does not enforce approval.
+the workflow's environment declaration alone does not enforce approval. The
+configured reviewer may self-approve this repository's production run.
 
 ## Structure
 
@@ -182,7 +183,7 @@ Before a future production release:
 2. Keep the GitHub Actions `test` check required for updates to `main`; CI runs `npm audit`, `npm test`, and `npm run build:css`.
 3. Before any production migration, confirm a pre-change recovery point and migration plan. The scheduled D1 operations sampler stores capacity telemetry; it is not a backup.
 4. Production migration `0031_identity_organization_scope.sql` was applied by the D1 workflow on 2026-11-22. The workflow reported it as pending and applied it successfully. Recheck the remote migration ledger before future work; do not replay `schema.sql` or manually rerun migrations.
-5. Before using the D1 operations workflow, configure an independent write-capable reviewer on the GitHub `production` environment. The current reviewer cannot approve a run they trigger because self-review is blocked. Dispatch only from `main`, set `confirm_production` to true, and obtain environment approval. The workflow tests and builds before applying migrations and deploying the Worker.
+5. Before using the D1 operations workflow, ensure a required reviewer is configured on the GitHub `production` environment. Self-review is enabled, so the configured reviewer may approve their own run. Dispatch only from protected `main`, set `confirm_production` to true, and obtain environment approval. The workflow tests and builds before applying migrations and deploying the Worker.
 6. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
 7. Verify customer, partner, and admin login, explicit organization selection, tenant isolation, logout invalidation, and the accounting boundary in staging before a production release.
 8. Have an authorized operator confirm the license signer, key lifecycle, monitoring, D1 Time Travel retention, and isolated recovery target before inviting additional production users.
