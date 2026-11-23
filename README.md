@@ -73,8 +73,8 @@ migrations through the approved production workflow.
    - D1 database: `smritisys-db`
 4. Save
 
-The Pages Git integration deploys pushes to `main`. Configure branch protection
-so the `CI / test` check must pass before changes are merged.
+The Pages Git integration deploys pushes to `main`. The `test` GitHub Actions
+check is required for updates to `main`.
 
 ## Daily use
 
@@ -89,9 +89,16 @@ that Pages deployment; use the separate protected production workflow only
 after staging validation and approval.
 
 The root `wrangler.toml` uses a local-only D1 database name and ID. Do not use
-the production D1 operations configuration for local development. No staging
-D1 target is currently configured in this repository; an authorized operator
-must provision and verify the isolated database and signer settings first.
+the production D1 operations configuration for local development. The isolated
+`smritisys-staging` D1 database is provisioned in APAC and has the baseline plus
+all checked-in migrations applied. It contains no customer or license records.
+Use `d1-ops/wrangler.staging.jsonc` for staging database operations.
+
+The separate `smritisys-license-signer-staging` Worker uses a test-only Ed25519
+key stored as a Cloudflare secret and has no public Worker route or preview URL.
+Never reuse the production key or production data in staging. A staging Pages
+project/binding has not been configured, so the remote database and signer are
+not yet connected to a deployed copy of the Pages API.
 
 ## API
 
@@ -172,10 +179,10 @@ Bearer clients are unaffected.
 Before a future production release:
 
 1. Use an isolated non-production D1 database and signer configuration with synthetic data. Do not test activation, renewal, or recovery against production customer records.
-2. Require the GitHub `CI / test` check before merging to `main`; CI runs `npm audit`, `npm test`, and `npm run build:css`.
+2. Keep the GitHub Actions `test` check required for updates to `main`; CI runs `npm audit`, `npm test`, and `npm run build:css`.
 3. Before any production migration, confirm a pre-change recovery point and migration plan. The scheduled D1 operations sampler stores capacity telemetry; it is not a backup.
 4. Production migration `0031_identity_organization_scope.sql` was applied by the D1 workflow on 2026-11-22. The workflow reported it as pending and applied it successfully. Recheck the remote migration ledger before future work; do not replay `schema.sql` or manually rerun migrations.
-5. Before using the D1 operations workflow, configure required reviewers on the GitHub `production` environment. Dispatch only from `main`, set `confirm_production` to true, and obtain environment approval. The workflow tests and builds before applying migrations and deploying the Worker.
+5. Before using the D1 operations workflow, configure an independent write-capable reviewer on the GitHub `production` environment. The current reviewer cannot approve a run they trigger because self-review is blocked. Dispatch only from `main`, set `confirm_production` to true, and obtain environment approval. The workflow tests and builds before applying migrations and deploying the Worker.
 6. Set production `ALLOWED_ORIGINS` explicitly and verify no local origins are included.
 7. Verify customer, partner, and admin login, explicit organization selection, tenant isolation, logout invalidation, and the accounting boundary in staging before a production release.
 8. Have an authorized operator confirm the license signer, key lifecycle, monitoring, D1 Time Travel retention, and isolated recovery target before inviting additional production users.
