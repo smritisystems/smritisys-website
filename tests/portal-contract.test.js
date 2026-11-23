@@ -92,13 +92,23 @@ test("custom requirements use organization-scoped request resources", () => {
 });
 
 test("release center consumes eligible customer releases read-only", () => {
+  const customerReleaseApi = api.slice(api.indexOf("async function handleReleases"), api.indexOf("async function handlePartner"));
+  const partnerReleaseApi = api.slice(api.indexOf('if (resource === "releases")'), api.indexOf("const DEAL_REGISTRATION_STATUSES"));
   assert.match(html, /data-view="releases"/);
   assert.match(html, /data-section="releases"/);
   assert.match(script, /api\('releases'/);
   assert.match(html, /Latest eligible release/);
   assert.match(api, /release\.view/);
-  assert.match(api, /r\.status = 'published'/);
-  assert.match(api, /om\.organization_id = \?/);
+  assert.match(customerReleaseApi, /r\.status = 'published'/);
+  assert.match(customerReleaseApi, /l\.status = 'ACTIVE'/);
+  assert.match(customerReleaseApi, /date\(l\.starts_at\) <= date\('now'\)/);
+  assert.match(customerReleaseApi, /date\(l\.expires_at\) >= date\('now'\)/);
+  assert.match(customerReleaseApi, /AND l\.organization_id = \?/);
+  assert.match(customerReleaseApi, /om\.organization_id = l\.organization_id/);
+  assert.match(partnerReleaseApi, /l\.status = 'ACTIVE'/);
+  assert.match(partnerReleaseApi, /date\(l\.starts_at\) <= date\('now'\)/);
+  assert.match(partnerReleaseApi, /date\(l\.expires_at\) >= date\('now'\)/);
+  assert.match(partnerReleaseApi, /pcl\.status = 'active'/);
   assert.match(api, /Release not found/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS releases/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS release_assets/);

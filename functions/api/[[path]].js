@@ -4833,6 +4833,232 @@ async function handleAdminAnnouncements(request, env, announcementId = null) {
   return json({ ok: false, error: "Unsupported announcement operation" }, 405);
 }
 
+const RELEASE_STATUSES = ["draft", "review", "published", "withdrawn"];
+const RELEASE_STATUS_TRANSITIONS = {
+  draft: ["review", "withdrawn"],
+  review: ["draft", "published", "withdrawn"],
+  published: ["withdrawn"],
+  withdrawn: [],
+};
+const RELEASE_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
+
+function optionalReleaseText(value, maxLength) {
+  if (value == null) return { valid: true, value: null };
+  if (typeof value !== "string" || value.trim().length > maxLength) return { valid: false, value: null };
+  return { valid: true, value: value.trim() || null };
+}
+
+function releaseAdminQuery() {
+  return `SELECT r.id, r.product_id, r.version, r.title, r.summary, r.release_notes,
+                 r.status, r.published_at, r.created_at, r.updated_at,
+                 p.slug AS product_code, p.name AS product_name
+          FROM releases r JOIN products p ON p.id = r.product_id`;
+}
+
+function releaseAdminResponse(release, assets = []) {
+  return {
+    id: release.id,
+    version: release.version,
+    title: release.title,
+    summary: release.summary,
+    release_notes: release.release_notes,
+    status: release.status,
+    published_at: release.published_at,
+    created_at: release.created_at,
+    updated_at: release.updated_at,
+    product_id: release.product_id,
+    product: { id: release.product_id, code: release.product_code, name: release.product_name },
+    assets,
+  };
+}
+
+function normalizeReleaseAssets(value) {
+  if (!Array.isArray(value) || value.length > 10) return null;
+  const names = new Set();
+  const assets = [];
+  for (const asset of value) {
+    if (!asset || typeof asset !== "object" || Array.isArray(asset)) return null;
+    const name = boundedString(asset.name, 200);
+    const rawPlatform = asset.platform == null ? null : boundedString(asset.platform, 100);
+    const platform = rawPlatform || null;
+    const downloadUrl = boundedString(asset.download_url, 2048);
+    const checksum = boundedString(asset.checksum, 64);
+    if (!name || (asset.platform != null && rawPlatform === null) ||
+        !downloadUrl || !checksum || !/^[a-f0-9]{64}$/i.test(checksum) || names.has(name.toLowerCase())) {
+      return null;
+    }
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(downloadUrl);
+    } catch {
+      return null;
+    }
+    if (parsedUrl.protocol !== "https:" || parsedUrl.username || parsedUrl.password) return null;
+    names.add(name.toLowerCase());
+    assets.push({ name, platform, download_url: parsedUrl.toString(), checksum: checksum.toLowerCase() });
+  }
+  return assets;
+}
+
+async function getAdminRelease(env, releaseId) {
+  const release = await env.DB.prepare(`${releaseAdminQuery()} WHERE r.id = ?`).bind(releaseId).first();
+  if (!release) return null;
+  const { results: assets } = await env.DB.prepare(
+    "SELECT id, name, platform, download_url, checksum FROM release_assets WHERE release_id = ? ORDER BY name"
+  ).bind(releaseId).all();
+  return releaseAdminResponse(release, assets);
+}
+
+async function handleAdminReleases(request, env, releaseId = null) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403);
+
+  if (request.method === "GET" && !releaseId) {
+    const { results } = await env.DB.prepare(`${releaseAdminQuery()} ORDER BY r.updated_at DESC, r.id DESC LIMIT 200`).all();
+    if (!results.length) return json({ ok: true, releases: [] });
+    const ids = results.map((release) => release.id);
+    const placeholders = ids.map(() => "?").join(", ");
+    const { results: assets } = await env.DB.prepare(
+      `SELECT id, release_id, name, platform, download_url, checksum
+       FROM release_assets WHERE release_id IN (${placeholders}) ORDER BY name`
+    ).bind(...ids).all();
+    const assetsByRelease = new Map();
+    for (const asset of assets) {
+      if (!assetsByRelease.has(asset.release_id)) assetsByRelease.set(asset.release_id, []);
+      assetsByRelease.get(asset.release_id).push(asset);
+    }
+    return json({
+      ok: true,
+      releases: results.map((release) => releaseAdminResponse(release, assetsByRelease.get(release.id) || [])),
+    });
+  }
+
+  if (request.method === "GET" && releaseId) {
+    const release = await getAdminRelease(env, releaseId);
+    return release
+      ? json({ ok: true, release })
+      : json({ ok: false, error: "Release not found" }, 404);
+  }
+
+  const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "A release object is required" }, 400);
+  }
+
+  if (request.method === "POST" && !releaseId) {
+    const productId = numericId(body.product_id);
+    const version = boundedString(body.version, 64);
+    const title = boundedString(body.title, 200);
+    const summaryField = optionalReleaseText(body.summary, 1000);
+    const releaseNotesField = optionalReleaseText(body.release_notes, 20000);
+    const summary = summaryField.value;
+    const releaseNotes = releaseNotesField.value;
+    const assets = Object.hasOwn(body, "assets") ? normalizeReleaseAssets(body.assets) : [];
+    if (!productId || !version || !RELEASE_VERSION_PATTERN.test(version) || !title) {
+      return json({ ok: false, error: "A valid product, version, and title are required" }, 400);
+    }
+    if (!summaryField.valid || !releaseNotesField.valid) return json({ ok: false, error: "Release summary or notes are invalid" }, 400);
+    if (Object.hasOwn(body, "status") && body.status !== "draft") {
+      return json({ ok: false, error: "New releases must start as a draft" }, 400);
+    }
+    if (!assets) return json({ ok: false, error: "Release assets must use unique names, HTTPS URLs, and SHA-256 checksums" }, 400);
+    const product = await env.DB.prepare("SELECT id FROM products WHERE id = ? AND status = 'active'").bind(productId).first();
+    if (!product) return json({ ok: false, error: "Active product not found" }, 404);
+    const duplicate = await env.DB.prepare("SELECT id FROM releases WHERE product_id = ? AND version = ?")
+      .bind(productId, version).first();
+    if (duplicate) return json({ ok: false, error: "A release with this product and version already exists" }, 409);
+
+    const statements = [
+      env.DB.prepare(
+        `INSERT INTO releases (product_id, version, title, summary, release_notes, status)
+         VALUES (?, ?, ?, ?, ?, 'draft')`
+      ).bind(productId, version, title, summary, releaseNotes),
+      ...assets.map((asset) => env.DB.prepare(
+        `INSERT INTO release_assets (release_id, name, platform, download_url, checksum)
+         SELECT id, ?, ?, ?, ? FROM releases WHERE product_id = ? AND version = ?`
+      ).bind(asset.name, asset.platform, asset.download_url, asset.checksum, productId, version)),
+    ];
+    await env.DB.batch(statements);
+    const release = await env.DB.prepare(`${releaseAdminQuery()} WHERE r.product_id = ? AND r.version = ?`)
+      .bind(productId, version).first();
+    const created = await getAdminRelease(env, release.id);
+    await writeAudit(env, request, session, "RELEASE_CREATED", "release", created.id, null, created);
+    return json({ ok: true, release: created }, 201);
+  }
+
+  if (request.method === "PATCH" && releaseId) {
+    const current = await getAdminRelease(env, releaseId);
+    if (!current) return json({ ok: false, error: "Release not found" }, 404);
+    const status = Object.hasOwn(body, "status") ? body.status : current.status;
+    if (!RELEASE_STATUSES.includes(status)) return json({ ok: false, error: "Invalid release status" }, 400);
+    if (status !== current.status && !(RELEASE_STATUS_TRANSITIONS[current.status] || []).includes(status)) {
+      return json({ ok: false, error: "Invalid release status transition" }, 409);
+    }
+
+    const assetsProvided = Object.hasOwn(body, "assets");
+    const editable = current.status === "draft" || (current.status === "review" && status === "draft");
+    const hasContentChanges = ["title", "summary", "release_notes", "assets"].some((key) => Object.hasOwn(body, key));
+    if (hasContentChanges && !editable) {
+      return json({ ok: false, error: "Return this release to draft before editing it" }, 409);
+    }
+    const title = Object.hasOwn(body, "title") ? boundedString(body.title, 200) : current.title;
+    const summaryField = Object.hasOwn(body, "summary") ? optionalReleaseText(body.summary, 1000) : { valid: true, value: current.summary };
+    const releaseNotesField = Object.hasOwn(body, "release_notes")
+      ? optionalReleaseText(body.release_notes, 20000)
+      : { valid: true, value: current.release_notes };
+    const summary = summaryField.value;
+    const releaseNotes = releaseNotesField.value;
+    const assets = assetsProvided ? normalizeReleaseAssets(body.assets) : current.assets;
+    if (!title) return json({ ok: false, error: "A release title is required" }, 400);
+    if (!summaryField.valid || !releaseNotesField.valid) return json({ ok: false, error: "Release summary or notes are invalid" }, 400);
+    if (!assets) return json({ ok: false, error: "Release assets must use unique names, HTTPS URLs, and SHA-256 checksums" }, 400);
+    if (["review", "published"].includes(status) &&
+        (!releaseNotes || !releaseNotes.trim() || assets.length === 0)) {
+      return json({ ok: false, error: "Release notes and at least one download with a SHA-256 checksum are required before review or publication" }, 409);
+    }
+
+    const statements = [
+      env.DB.prepare(
+        `UPDATE releases SET title = ?, summary = ?, release_notes = ?, status = ?,
+         published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, datetime('now')) ELSE published_at END,
+         updated_at = datetime('now') WHERE id = ? AND status = ?`
+      ).bind(title, summary, releaseNotes, status, status, releaseId, current.status),
+    ];
+    if (assetsProvided) {
+      statements.push(env.DB.prepare(
+        `DELETE FROM release_assets WHERE release_id = ?
+         AND EXISTS (SELECT 1 FROM releases WHERE id = ? AND status IN ('draft', 'review'))`
+      ).bind(releaseId, releaseId));
+      for (const asset of assets) {
+        statements.push(env.DB.prepare(
+          `INSERT INTO release_assets (release_id, name, platform, download_url, checksum)
+           SELECT ?, ?, ?, ?, ? WHERE EXISTS (
+             SELECT 1 FROM releases WHERE id = ? AND status IN ('draft', 'review')
+           )`
+        ).bind(releaseId, asset.name, asset.platform, asset.download_url, asset.checksum, releaseId));
+      }
+    }
+    const results = await env.DB.batch(statements);
+    if (!results[0]?.meta?.changes) return json({ ok: false, error: "Release changed; reload and try again" }, 409);
+    const updated = await getAdminRelease(env, releaseId);
+    const transitionActions = {
+      "draft:review": "RELEASE_SUBMITTED_FOR_REVIEW",
+      "draft:withdrawn": "RELEASE_WITHDRAWN",
+      "review:draft": "RELEASE_RETURNED_TO_DRAFT",
+      "review:published": "RELEASE_PUBLISHED",
+      "review:withdrawn": "RELEASE_WITHDRAWN",
+      "published:withdrawn": "RELEASE_WITHDRAWN",
+    };
+    const action = status === current.status
+      ? "RELEASE_UPDATED"
+      : transitionActions[`${current.status}:${status}`];
+    await writeAudit(env, request, session, action, "release", releaseId, current, updated);
+    return json({ ok: true, release: updated });
+  }
+
+  return json({ ok: false, error: "Unsupported release operation" }, 405);
+}
+
 function releaseResponse(release, assets = []) {
   return {
     id: release.id,
@@ -4855,8 +5081,11 @@ async function handleReleases(request, env, releaseId = null) {
            r.release_notes, r.published_at, p.slug AS product_code, p.name AS product_name
     FROM releases r
     JOIN products p ON p.id = r.product_id
-    JOIN licenses l ON l.product_id = r.product_id AND l.status <> 'CANCELLED'
+    JOIN licenses l ON l.product_id = r.product_id AND l.status = 'ACTIVE'
+      AND (l.starts_at IS NULL OR date(l.starts_at) <= date('now'))
+      AND (l.expires_at IS NULL OR date(l.expires_at) >= date('now'))
       AND l.organization_id = ?
+    JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
     JOIN organization_members om ON om.account_type = 'customer'
       AND om.account_id = l.customer_id AND om.organization_id = l.organization_id
       AND om.status = 'active'
@@ -5014,9 +5243,12 @@ async function handlePartner(request, env, resource) {
               p.slug AS product_code, p.name AS product_name
        FROM releases r
        JOIN products p ON p.id = r.product_id
-       JOIN licenses l ON l.product_id = r.product_id AND l.status <> 'CANCELLED'
+       JOIN licenses l ON l.product_id = r.product_id AND l.status = 'ACTIVE'
+         AND (l.starts_at IS NULL OR date(l.starts_at) <= date('now'))
+         AND (l.expires_at IS NULL OR date(l.expires_at) >= date('now'))
        JOIN organization_members om ON om.account_type = 'customer' AND om.account_id = l.customer_id
          AND om.organization_id = l.organization_id AND om.status = 'active'
+       JOIN organizations customer_org ON customer_org.id = om.organization_id AND customer_org.status = 'active'
        JOIN partner_customer_links pcl ON pcl.customer_organization_id = om.organization_id
          AND pcl.partner_organization_id = ? AND pcl.status = 'active'
        WHERE r.status = 'published' AND r.published_at IS NOT NULL
@@ -7408,6 +7640,14 @@ export async function onRequest(context) {
       const announcementId = numericId(path.split("/")[2]);
       if (!announcementId) return json({ ok: false, error: "A valid announcement id is required" }, 400);
       return await handleAdminAnnouncements(request, env, announcementId);
+    }
+    if (path === "admin/releases" && ["GET", "POST"].includes(request.method)) {
+      return await handleAdminReleases(request, env);
+    }
+    if (path.startsWith("admin/releases/") && ["GET", "PATCH"].includes(request.method)) {
+      const releaseId = numericId(path.split("/")[2]);
+      if (!releaseId) return json({ ok: false, error: "A valid release id is required" }, 400);
+      return await handleAdminReleases(request, env, releaseId);
     }
     const partnerCodeReveal = path.match(/^partner\/codes\/([0-9a-f-]{36})\/(\d{9})\/reveal$/i);
     if (partnerCodeReveal && request.method === "POST") {

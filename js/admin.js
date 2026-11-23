@@ -18,6 +18,7 @@
 const adminState = {
   token: null,
   announcements: [],
+  releases: [],
   products: [],
   licenses: [],
   registrationPage: 1,
@@ -1763,6 +1764,75 @@ function adminDateInput(value) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+function adminReleaseAssetRow(asset = {}) {
+  return `<div class="form-grid admin-release-asset-row">
+    <div><label>Download name</label><input aria-label="Download name" data-release-asset="name" maxlength="200" value="${adminEscape(asset.name)}" /></div>
+    <div><label>Platform (optional)</label><input aria-label="Platform (optional)" data-release-asset="platform" maxlength="100" value="${adminEscape(asset.platform)}" /></div>
+    <div class="full"><label>HTTPS download URL</label><input aria-label="HTTPS download URL" data-release-asset="download_url" type="url" maxlength="2048" value="${adminEscape(asset.download_url)}" /></div>
+    <div class="full"><label>SHA-256 checksum</label><input aria-label="SHA-256 checksum" data-release-asset="checksum" maxlength="64" pattern="[A-Fa-f0-9]{64}" value="${adminEscape(asset.checksum)}" /></div>
+    <div class="full"><button class="text-button" type="button" data-release-asset-remove>Remove download</button></div>
+  </div>`;
+}
+
+function resetAdminReleaseForm() {
+  admin$('#adminReleaseForm').reset();
+  admin$('#adminReleaseId').value = '';
+  admin$('#adminReleaseProduct').disabled = false;
+  admin$('#adminReleaseVersion').disabled = false;
+  admin$('#adminReleaseSaveButton').textContent = 'Create draft';
+  admin$('#adminReleaseCancelEdit').classList.add('hidden');
+  admin$('#adminReleaseAssets').innerHTML = adminReleaseAssetRow();
+}
+
+async function loadAdminReleases() {
+  try {
+    const [data, products] = await Promise.all([adminApi('admin/releases'), adminApi('products')]);
+    adminState.releases = data.releases;
+    adminState.products = products.products;
+    const productSelect = admin$('#adminReleaseProduct');
+    const selectedProductId = productSelect.value;
+    productSelect.innerHTML = products.products
+      .filter((product) => product.status === 'active')
+      .map((product) => `<option value="${adminEscape(product.id)}">${adminEscape(product.name)} (${adminEscape(product.code)})</option>`)
+      .join('');
+    if (products.products.some((product) => String(product.id) === selectedProductId && product.status === 'active')) {
+      productSelect.value = selectedProductId;
+    }
+
+    const state = admin$('#adminReleasesState');
+    const list = admin$('#adminReleasesList');
+    if (!data.releases.length) {
+      adminStatePanel('adminReleasesState', 'adminReleasesList', 'No releases yet. Create a draft to start the review process.');
+    } else {
+      state.classList.add('hidden');
+      list.classList.remove('hidden');
+      list.innerHTML = data.releases.map((release) => {
+        const actions = [
+          release.status === 'draft' ? `<button class="secondary" type="button" data-release-edit="${release.id}">Edit draft</button><button class="primary" type="button" data-release-transition="review" data-release-id="${release.id}">Submit for review</button><button class="text-button" type="button" data-release-transition="withdrawn" data-release-id="${release.id}">Cancel draft</button>` : '',
+          release.status === 'review' ? `<button class="secondary" type="button" data-release-transition="draft" data-release-id="${release.id}">Return to draft</button><button class="primary" type="button" data-release-transition="published" data-release-id="${release.id}">Publish</button><button class="text-button" type="button" data-release-transition="withdrawn" data-release-id="${release.id}">Withdraw</button>` : '',
+          release.status === 'published' ? `<button class="text-button" type="button" data-release-transition="withdrawn" data-release-id="${release.id}">Withdraw</button>` : '',
+        ].join('');
+        const assets = release.assets.length
+          ? `<ul>${release.assets.map((asset) => `<li>${adminEscape(asset.name)}${asset.platform ? ` · ${adminEscape(asset.platform)}` : ''} · SHA-256 ${adminEscape(asset.checksum)}</li>`).join('')}</ul>`
+          : '<p class="muted">No downloads attached.</p>';
+        return `<article class="card module">
+          <div class="section-head compact"><div><span class="eyebrow">${adminEscape(release.product.name)} · ${adminEscape(release.version)}</span><h3>${adminEscape(release.title)}</h3></div><span class="status">${adminEscape(release.status)}</span></div>
+          ${release.summary ? `<p>${adminEscape(release.summary)}</p>` : ''}
+          ${release.release_notes ? `<details><summary>Release notes</summary><p style="white-space:pre-wrap">${adminEscape(release.release_notes)}</p></details>` : '<p class="muted">Release notes are pending.</p>'}
+          ${assets}
+          <p class="muted">Updated ${adminEscape(release.updated_at)}${release.published_at ? ` · Published ${adminEscape(release.published_at)}` : ''}</p>
+          <div class="form-actions">${actions}</div>
+        </article>`;
+      }).join('');
+    }
+    if (!admin$('#adminReleaseId').value && !admin$('#adminReleaseAssets').children.length) {
+      admin$('#adminReleaseAssets').innerHTML = adminReleaseAssetRow();
+    }
+  } catch (error) {
+    adminStatePanel('adminReleasesState', 'adminReleasesList', error.status === 403 ? 'Super admin access required.' : `Releases are unavailable: ${error.message}`, true);
+  }
+}
+
 async function loadAdminAnnouncements() {
   try {
     const [data, products] = await Promise.all([adminApi('admin/announcements'), adminApi('products')]);
@@ -1847,6 +1917,7 @@ function navigateAdmin(view, productTab = null) {
     loadAdminProducts();
     if (productTab) selectAdminProductTab(productTab);
   }
+  if (view === 'releases') loadAdminReleases();
   if (view === 'support') loadAdminSupportTickets();
   if (view === 'announcements') loadAdminAnnouncements();
   if (view === 'audit') loadAdminAudit();
@@ -2369,6 +2440,97 @@ admin$('#adminAnnouncementsList').addEventListener('click', async (event) => {
     adminMessage(admin$('#announcementMessage'), error.message, false);
   } finally {
     statusButton.disabled = false;
+  }
+});
+
+admin$('#adminReleaseForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const releaseId = admin$('#adminReleaseId').value;
+  const assets = [];
+  for (const row of admin$$('#adminReleaseAssets .admin-release-asset-row')) {
+    const asset = Object.fromEntries([...row.querySelectorAll('[data-release-asset]')].map((input) => [input.dataset.releaseAsset, input.value.trim()]));
+    if (!Object.values(asset).some(Boolean)) continue;
+    if (!asset.name || !asset.download_url || !asset.checksum) {
+      adminMessage(admin$('#adminReleaseMessage'), 'Complete the name, HTTPS URL, and SHA-256 checksum for each download.', false);
+      return;
+    }
+    assets.push(asset);
+  }
+  const body = {
+    title: admin$('#adminReleaseTitle').value,
+    summary: admin$('#adminReleaseSummary').value,
+    release_notes: admin$('#adminReleaseNotes').value,
+    assets,
+  };
+  if (!releaseId) {
+    body.product_id = admin$('#adminReleaseProduct').value;
+    body.version = admin$('#adminReleaseVersion').value;
+  }
+  const button = admin$('#adminReleaseSaveButton');
+  button.disabled = true;
+  try {
+    const result = await adminApi(releaseId ? `admin/releases/${releaseId}` : 'admin/releases', {
+      method: releaseId ? 'PATCH' : 'POST',
+      body: JSON.stringify(body),
+    });
+    adminMessage(admin$('#adminReleaseMessage'), releaseId ? 'Draft updated.' : `Draft release #${result.release.id} created.`, true);
+    resetAdminReleaseForm();
+    await loadAdminReleases();
+  } catch (error) {
+    adminMessage(admin$('#adminReleaseMessage'), error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+admin$('#adminReleaseAddAsset').addEventListener('click', () => {
+  admin$('#adminReleaseAssets').insertAdjacentHTML('beforeend', adminReleaseAssetRow());
+});
+admin$('#adminReleaseAssets').addEventListener('click', (event) => {
+  const removeButton = event.target.closest('[data-release-asset-remove]');
+  if (removeButton) removeButton.closest('.admin-release-asset-row').remove();
+});
+admin$('#adminReleaseCancelEdit').addEventListener('click', resetAdminReleaseForm);
+admin$('#adminReleasesList').addEventListener('click', async (event) => {
+  const editButton = event.target.closest('[data-release-edit]');
+  if (editButton) {
+    const release = adminState.releases.find((item) => item.id === Number(editButton.dataset.releaseEdit));
+    if (!release || release.status !== 'draft') return;
+    admin$('#adminReleaseId').value = release.id;
+    admin$('#adminReleaseProduct').value = release.product_id;
+    admin$('#adminReleaseProduct').disabled = true;
+    admin$('#adminReleaseVersion').value = release.version;
+    admin$('#adminReleaseVersion').disabled = true;
+    admin$('#adminReleaseTitle').value = release.title;
+    admin$('#adminReleaseSummary').value = release.summary || '';
+    admin$('#adminReleaseNotes').value = release.release_notes || '';
+    admin$('#adminReleaseAssets').innerHTML = release.assets.length
+      ? release.assets.map((asset) => adminReleaseAssetRow(asset)).join('')
+      : adminReleaseAssetRow();
+    admin$('#adminReleaseSaveButton').textContent = 'Save draft';
+    admin$('#adminReleaseCancelEdit').classList.remove('hidden');
+    admin$('#adminReleaseTitle').focus();
+    return;
+  }
+
+  const transitionButton = event.target.closest('[data-release-transition]');
+  if (!transitionButton) return;
+  const status = transitionButton.dataset.releaseTransition;
+  const releaseId = transitionButton.dataset.releaseId;
+  if (status === 'published' && !window.confirm('Publish this release to eligible licensed organizations?')) return;
+  if (status === 'withdrawn' && !window.confirm('Withdraw this release from customer and partner views?')) return;
+  transitionButton.disabled = true;
+  try {
+    await adminApi(`admin/releases/${releaseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+    adminMessage(admin$('#adminReleaseMessage'), `Release status changed to ${status}.`, true);
+    await loadAdminReleases();
+  } catch (error) {
+    adminMessage(admin$('#adminReleaseMessage'), error.message, false);
+  } finally {
+    transitionButton.disabled = false;
   }
 });
 

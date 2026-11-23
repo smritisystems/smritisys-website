@@ -27,6 +27,7 @@ const d1Worker = fs.readFileSync(new URL("../d1-ops/src/index.js", import.meta.u
 const d1WorkerConfig = fs.readFileSync(new URL("../d1-ops/wrangler.jsonc", import.meta.url), "utf8");
 const d1StagingConfig = fs.readFileSync(new URL("../d1-ops/wrangler.staging.jsonc", import.meta.url), "utf8");
 const d1OperationsWorkflow = fs.readFileSync(new URL("../.github/workflows/deploy-d1-operations.yml", import.meta.url), "utf8");
+const releaseDraftWorkflow = fs.readFileSync(new URL("../.github/workflows/release-draft.yml", import.meta.url), "utf8");
 const signerConfig = fs.readFileSync(new URL("../license-signer/wrangler.jsonc", import.meta.url), "utf8");
 const signerStagingConfig = fs.readFileSync(new URL("../license-signer/wrangler.staging.jsonc", import.meta.url), "utf8");
 
@@ -36,6 +37,9 @@ const signerStagingConfig = fs.readFileSync(new URL("../license-signer/wrangler.
   assert.match(html, /data-admin-view="organizations"/);
   assert.match(html, /data-admin-view="partner-deals"/);
   assert.match(html, /data-admin-view="follow-ups"/);
+  assert.match(html, /data-admin-view="releases"/);
+  assert.match(html, /id="adminReleaseForm"/);
+  assert.match(html, /id="adminReleasesList"/);
   assert.match(html, /data-admin-view="support"/);
   assert.match(html, /data-admin-view="audit"/);
   assert.match(html, /data-admin-view="announcements"/);
@@ -43,6 +47,7 @@ const signerStagingConfig = fs.readFileSync(new URL("../license-signer/wrangler.
   assert.match(html, /id="adminPasswordForm" class="card" method="post"/);
   assert.match(script, /adminApi\('admin\/password'/);
   assert.match(script, /adminApi\('admin\/announcements'\)/);
+  assert.match(script, /adminApi\('admin\/releases'\)/);
   assert.match(script, /adminApi\('admin\/overview'\)/);
   assert.match(script, /adminApi\('admin\/organizations'\)/);
   assert.match(script, /adminApi\(`admin\/partner-deals\?/);
@@ -57,8 +62,21 @@ test("admin endpoints require the super-admin guard", () => {
   assert.match(api, /admin\/organizations/);
   assert.match(api, /admin\/audit/);
   assert.match(api, /admin\/announcements/);
+  assert.match(api, /admin\/releases/);
+  assert.match(api, /async function handleAdminReleases/);
+  assert.match(api, /RELEASE_PUBLISHED/);
   assert.match(api, /handleAdminAnnouncements/);
   assert.match(api, /Super admin access required/);
+});
+
+test("GitHub release tags create drafts only after CI and main ancestry checks", () => {
+  assert.match(releaseDraftWorkflow, /smritisys-control-plane-v\*/);
+  assert.match(releaseDraftWorkflow, /smritisys-public-website-v\*/);
+  assert.match(releaseDraftWorkflow, /npm audit --audit-level=moderate/);
+  assert.match(releaseDraftWorkflow, /npm test/);
+  assert.match(releaseDraftWorkflow, /npm run build:css/);
+  assert.match(releaseDraftWorkflow, /git merge-base --is-ancestor/);
+  assert.match(releaseDraftWorkflow, /gh release create "\$RELEASE_TAG" --draft --verify-tag --generate-notes/);
 });
 
 test("organizations can be filtered and opened in a detail view without exposing license keys", () => {
@@ -122,7 +140,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=partner-workflows-v1/);
+  assert.match(html, /js\/admin\.js\?v=release-management-v1/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);

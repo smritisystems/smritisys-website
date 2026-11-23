@@ -121,9 +121,13 @@ not yet connected to a deployed copy of the Pages API.
 | POST | `/api/requirements` | Submit a custom requirement request (Bearer token) |
 | GET | `/api/requirements/:id` | Read one organization-owned requirement and replies (Bearer token) |
 | POST | `/api/requirements/:id/messages` | Add a customer reply to an organization-owned requirement (Bearer token) |
+| GET | `/api/releases` | List published releases eligible for the authenticated organization |
+| GET | `/api/releases/:id` | Read one eligible release and its download assets |
 | GET | `/api/announcements` | List current customer notices for the authenticated organization and its licensed products |
 | GET/POST | `/api/admin/announcements` | List or create announcements (super admin only) |
 | PATCH | `/api/admin/announcements/:id` | Edit an announcement or transition its status (super admin only) |
+| GET/POST | `/api/admin/releases` | List releases or create a release draft (super admin only) |
+| GET/PATCH | `/api/admin/releases/:id` | Read or update a draft and explicitly transition its status (super admin only) |
 | GET | `/api/partner/me` | Read the authenticated partner relationship (Bearer token) |
 | GET | `/api/partner/customers` | List linked customer organizations (partner membership required) |
 | GET/POST | `/api/partner/deals` | List or submit deal registrations scoped to the selected partner organization |
@@ -162,6 +166,8 @@ Browser logins receive an `HttpOnly`, `Secure`, `SameSite=Lax` `smritisys_sessio
 After login, a user must explicitly select an organization. That selection is stored on the individual server session, and organization-scoped API routes deny access until it is set. Changing an organization affects only that session; it does not change the user's memberships or other active sessions. Migration `0029_session_organization_context.sql` adds the nullable session column without backfilling existing sessions, so active users must select a context again after the migration.
 
 Partner deal registrations are an internal-review workflow only. Partners can submit and view their own registrations and respond to requests for information; super admins can review them, and possible duplicate name/email matches are review hints rather than automatic decisions. Approval does not create deal protection, pricing, commissions, a customer organization, or a customer link. The follow-up workspace includes a paginated, read-only view of open support tickets, submitted/in-review deals, and unexpired invitations, plus manually managed tasks with optional owners and due dates. It does not enforce SLAs or send outbound messages. Migration `0030_partner_workflow_foundations.sql` was applied to production on 2026-11-22. No partner data was seeded.
+
+Portal releases are separate from GitHub releases. Super admins create drafts, attach downloads with HTTPS URLs and SHA-256 checksums, and explicitly move a complete draft to review before manual publication. The portal validates checksum format, but an operator must verify the downloaded file matches its checksum before publishing. Published releases are visible only to active customer memberships with active, in-date product licenses; partner views additionally require an active customer link and partner release permission. Withdrawal hides a release while retaining its publication timestamp and audit history. These transitions do not send messages, deploy software, or change licenses. The `Draft GitHub Release` workflow accepts `smritisys-control-plane-v*` and `smritisys-public-website-v*` tags only when the tagged commit is already on `main`; it runs CI and creates a GitHub draft with generated notes. It never publishes automatically. A control-plane or website release is not a PrathamOne EduOS product build.
 
 `super_admin` is the full-control administrative role. Administrative endpoints must
 call the super-admin guard; ordinary `staff` accounts cannot manage users or demos.

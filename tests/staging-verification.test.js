@@ -151,6 +151,155 @@ async function selectSessionOrganization(env, token, organizationId = null) {
   });
 }
 
+test("admin release drafts follow an audited manual publication lifecycle", async () => {
+  const d1 = createD1Mock();
+  const adminToken = "release-lifecycle-admin";
+  const customerToken = "release-lifecycle-customer";
+  const partnerToken = "release-lifecycle-partner";
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+1 hour'))",
+  ).run(adminToken);
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+1 hour'))",
+  ).run(customerToken);
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 103, 103, datetime('now', '+1 hour'))",
+  ).run(partnerToken);
+  const productId = d1.raw.prepare("SELECT id FROM products WHERE slug = 'prathamone-eduos'").get().id;
+  const asset = {
+    name: "PrathamOne package",
+    platform: "Windows",
+    download_url: "https://downloads.example.test/prathamone/2026.11.0",
+    checksum: "a".repeat(64),
+  };
+  const draftBody = {
+    product_id: productId,
+    version: "2026.11.0",
+    title: "PrathamOne EduOS November 2026",
+    summary: "Draft pending product validation.",
+    release_notes: "Release notes for the verified package.",
+    assets: [asset],
+  };
+
+  const denied = await callApi(d1, "admin/releases", { method: "POST", token: customerToken, body: draftBody });
+  assert.equal(denied.status, 403);
+  const insecureAsset = await callApi(d1, "admin/releases", {
+    method: "POST",
+    token: adminToken,
+    body: { ...draftBody, assets: [{ ...asset, download_url: "http://downloads.example.test/package" }] },
+  });
+  assert.equal(insecureAsset.status, 400);
+  const incomplete = await callApi(d1, "admin/releases", {
+    method: "POST",
+    token: adminToken,
+    body: { product_id: productId, version: "2026.11.1", title: "Pending product package" },
+  });
+  assert.equal(incomplete.status, 201);
+  assert.equal(
+    (await callApi(d1, `admin/releases/${incomplete.data.release.id}`, {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "review" },
+    })).status,
+    409,
+  );
+
+  const created = await callApi(d1, "admin/releases", { method: "POST", token: adminToken, body: draftBody });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.release.status, "draft");
+  assert.equal(created.data.release.published_at, null);
+  const releaseId = created.data.release.id;
+  assert.equal(
+    (await callApi(d1, `admin/releases/${releaseId}`, {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "published" },
+    })).status,
+    409,
+  );
+  assert.equal(
+    (await callApi(d1, `admin/releases/${releaseId}`, {
+      method: "PATCH",
+      token: adminToken,
+      body: { status: "review" },
+    })).data.release.status,
+    "review",
+  );
+  assert.equal(
+    (await callApi(d1, `admin/releases/${releaseId}`, {
+      method: "PATCH",
+      token: adminToken,
+      body: { title: "Edit during review" },
+    })).status,
+    409,
+  );
+  const published = await callApi(d1, `admin/releases/${releaseId}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "published" },
+  });
+  assert.equal(published.status, 200);
+  assert.ok(published.data.release.published_at);
+  d1.raw.prepare(
+    `INSERT INTO licenses (customer_id, organization_id, product_id, license_key, starts_at, expires_at, status)
+     VALUES (101, 101, ?, 'TEST-PRATHAMONE-RELEASE', date('now', '-1 day'), date('now', '+1 day'), 'ACTIVE')`,
+  ).run(productId);
+  for (const [path, token] of [["releases", customerToken], ["partner/releases", partnerToken]]) {
+    const visible = await callApi(d1, path, { token });
+    assert.ok(visible.data.releases.some((release) => release.version === "2026.11.0"));
+  }
+  const withdrawn = await callApi(d1, `admin/releases/${releaseId}`, {
+    method: "PATCH",
+    token: adminToken,
+    body: { status: "withdrawn" },
+  });
+  assert.equal(withdrawn.status, 200);
+  assert.equal(withdrawn.data.release.status, "withdrawn");
+  assert.equal(withdrawn.data.release.published_at, published.data.release.published_at);
+  for (const [path, token] of [["releases", customerToken], ["partner/releases", partnerToken]]) {
+    const hidden = await callApi(d1, path, { token });
+    assert.ok(!hidden.data.releases.some((release) => release.version === "2026.11.0"));
+  }
+  assert.equal(d1.raw.prepare("SELECT COUNT(*) AS count FROM audit_logs WHERE resource_type = 'release'").get().count, 5);
+});
+
+test("customer and partner release visibility requires active, in-date licenses", async () => {
+  const d1 = createD1Mock();
+  const customerToken = "release-validity-customer";
+  const partnerToken = "release-validity-partner";
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+1 hour'))",
+  ).run(customerToken);
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 103, 103, datetime('now', '+1 hour'))",
+  ).run(partnerToken);
+
+  for (const [path, token] of [["releases", customerToken], ["partner/releases", partnerToken]]) {
+    const active = await callApi(d1, path, { token });
+    assert.equal(active.status, 200);
+    assert.equal(active.data.releases.length, 1);
+  }
+
+  d1.raw.prepare("UPDATE licenses SET status = 'SUSPENDED' WHERE id = 101").run();
+  for (const [path, token] of [["releases", customerToken], ["partner/releases", partnerToken]]) {
+    assert.equal((await callApi(d1, path, { token })).data.releases.length, 0);
+  }
+
+  d1.raw.prepare(
+    "UPDATE licenses SET status = 'ACTIVE', starts_at = date('now', '+1 day'), expires_at = date('now', '+2 days') WHERE id = 101",
+  ).run();
+  for (const [path, token] of [["releases", customerToken], ["partner/releases", partnerToken]]) {
+    assert.equal((await callApi(d1, path, { token })).data.releases.length, 0);
+  }
+
+  d1.raw.prepare(
+    "UPDATE licenses SET starts_at = date('now', '-2 days'), expires_at = date('now', '-1 day') WHERE id = 101",
+  ).run();
+  for (const [path, token] of [["releases", customerToken], ["partner/releases", partnerToken]]) {
+    assert.equal((await callApi(d1, path, { token })).data.releases.length, 0);
+  }
+});
+
 test("cookie-authenticated mutations reject untrusted origins without blocking bearer clients", async () => {
   const d1 = createD1Mock();
   const cookie = "smritisys_session=csrf-test-session";
