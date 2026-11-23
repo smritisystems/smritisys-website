@@ -16,6 +16,14 @@ window.createOrganizationContextController = function ({
   const submitButton = form.querySelector('[type="submit"]');
   const signOutButton = document.getElementById('organizationContextSignOutButton');
   let selectedOrganizationId = null;
+  let selectedWorkspace = null;
+
+  function workspaceLabel(organization) {
+    if (organization.workspace_type === 'partner') {
+      return `${organization.partner_type || 'Partner'} partner`;
+    }
+    return organization.workspace_type === 'staff' ? 'Staff' : 'Customer';
+  }
 
   async function refresh(openWhenMissing = false) {
     const data = await api('organization-context');
@@ -26,7 +34,7 @@ window.createOrganizationContextController = function ({
     select.replaceChildren(new Option('Choose an organization', ''));
     for (const organization of organizations) {
       select.add(new Option(
-        `${organization.organization_name} — ${organization.member_role}`,
+        `${organization.organization_name} — ${workspaceLabel(organization)} · ${organization.member_role}`,
         String(organization.organization_id),
       ));
     }
@@ -35,8 +43,9 @@ window.createOrganizationContextController = function ({
     const selectedOrganization = organizations.find(
       (organization) => String(organization.organization_id) === selectedOrganizationId,
     );
+    selectedWorkspace = selectedOrganization || null;
     button.textContent = selectedOrganization
-      ? `Organization: ${selectedOrganization.organization_name}`
+      ? `${workspaceLabel(selectedOrganization)}: ${selectedOrganization.organization_name}`
       : 'Select organization';
     message.textContent = organizations.length
       ? selectedOrganizationId ? '' : 'Select an organization to continue.'
@@ -77,7 +86,7 @@ window.createOrganizationContextController = function ({
       selectedOrganizationId = select.value;
       await refresh();
       dialog.close();
-      await onSelected();
+      await onSelected(selectedWorkspace);
     } catch (error) {
       message.textContent = error.message || 'The organization could not be selected.';
     } finally {

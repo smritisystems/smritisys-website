@@ -60,29 +60,8 @@ function partnerMessage(element, text, ok) {
   element.style.color = ok ? 'var(--accent)' : 'var(--red)';
 }
 
-function showPartnerLogin(message = '') {
-  const contextDialog = partner$('#organizationContextDialog');
-  if (contextDialog?.open) contextDialog.close();
-  const contactDialog = partner$('#partnerCustomerContactDialog');
-  if (contactDialog?.open) contactDialog.close();
-  partner$('#partnerCustomerContactForm').reset();
-  partner$('#partnerCustomerContactForm').dataset.customerId = '';
-  partner$('#partnerCustomerList').textContent = '';
-  partner$('#partnerCustomerState').textContent = 'Sign in to view assigned customers.';
-  partner$('#partnerCustomerState').className = 'state-panel';
-  partner$('#partnerDealList').textContent = '';
-  partner$('#partnerDealState').textContent = 'Sign in to view deal registrations.';
-  partner$('#partnerDealState').className = 'state-panel';
-  partner$('#partnerDealPagination').classList.add('hidden');
-  partner$('#partnerDealForm').reset();
-  partner$('#partnerDealMessage').textContent = '';
-  partnerState.dealPage = 1;
-  partnerState.dealRequestId += 1;
-  clearPartnerCustomerInviteLink();
-  partnerState.permissions = {};
-  partner$('#partnerPortalView').classList.add('hidden');
-  partner$('#partnerLoginView').classList.remove('hidden');
-  partnerMessage(partner$('#partnerLoginMessage'), message, false);
+function showPartnerLogin() {
+  window.location.replace('/login.html?entry=partner&choose=1&notice=partner');
 }
 
 function showPartnerPortal() {
@@ -310,7 +289,10 @@ const organizationContext = window.createOrganizationContextController({
   formId: 'organizationContextForm',
   selectId: 'organizationContextSelect',
   messageId: 'organizationContextMessage',
-  onSelected: loadPartnerWorkspace,
+  onSelected: (workspace) => {
+    if (workspace?.workspace_type === 'partner') return loadPartnerWorkspace();
+    window.location.assign(workspace?.workspace_type === 'staff' ? '/admin' : '/portal');
+  },
   onSignOut: logoutPartner,
 });
 
@@ -504,23 +486,27 @@ partner$('#partnerCodeRevealCopy').addEventListener('click', async () => {
 partner$('#partnerCodeRevealCancel').addEventListener('click', () => partner$('#partnerCodeRevealDialog').close());
 partner$('#partnerCodeRevealDialog').addEventListener('close', clearPartnerCodeReveal);
 
-partner$('#partnerLoginForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const form = new FormData(event.target);
-  const button = event.target.querySelector('button');
-  button.disabled = true;
-  partnerMessage(partner$('#partnerLoginMessage'), 'Signing in...', true);
-  try {
-    const data = await partnerApi('login', { method: 'POST', body: JSON.stringify({ email: form.get('email'), password: form.get('password') }) });
-    partnerState.token = null;
-    showPartnerPortal();
-  } catch (error) {
-    partnerMessage(partner$('#partnerLoginMessage'), error.status === 401 ? 'Invalid email or password.' : error.message, false);
-  } finally {
-    button.disabled = false;
-  }
-});
-
 partner$('#partnerLogout').addEventListener('click', logoutPartner);
 
-showPartnerLogin();
+async function initializePartnerPortal() {
+  try {
+    const context = await partnerApi('organization-context');
+    const selected = (context.organizations || []).find(
+      (workspace) => Number(workspace.organization_id) === Number(context.selected_organization_id),
+    );
+    if (selected?.workspace_type === 'partner') {
+      showPartnerPortal();
+      return;
+    }
+    if (selected?.workspace_type === 'staff') {
+      window.location.replace('/admin');
+      return;
+    }
+    window.location.replace('/login.html?entry=partner');
+  } catch (error) {
+    const notice = error.status === 401 ? 'session' : 'workspace';
+    window.location.replace(`/login.html?entry=partner&notice=${notice}`);
+  }
+}
+
+initializePartnerPortal();

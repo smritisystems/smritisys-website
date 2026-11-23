@@ -290,18 +290,14 @@ function makeLicenseEmailCode() {
   return String(random[0] % range).padStart(8, "0");
 }
 
-async function sendLicenseVerificationEmail(env, email, code, purpose) {
+async function sendLicenseEmail(env, email, subject, text, context = "License email") {
   const accountId = boundedString(env.CLOUDFLARE_EMAIL_ACCOUNT_ID, 64);
   const apiToken = boundedString(env.CLOUDFLARE_EMAIL_API_TOKEN, 512);
   const from = validEmail(env.LICENSE_EMAIL_FROM);
   if (!accountId || !apiToken || !from) {
-    return { error: "License verification email is not configured", status: 503 };
+    return { error: `${context} is not configured`, status: 503 };
   }
 
-  const subject = purpose === "email_change"
-    ? "Confirm your PrathamOne license email change"
-    : "Your PrathamOne license verification code";
-  const text = `Your PrathamOne verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`;
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/email/sending/send`,
     {
@@ -313,30 +309,57 @@ async function sendLicenseVerificationEmail(env, email, code, purpose) {
       body: JSON.stringify({ to: [email], from, subject, text }),
     },
   ).catch((error) => {
-    console.error("License verification email request failed", error);
+    console.error(`${context} request failed`, error);
     return null;
   });
-  if (!response) return { error: "License verification email could not be sent", status: 503 };
+  if (!response) return { error: `${context} could not be sent`, status: 503 };
 
   let result;
   try {
     result = await response.json();
   } catch (error) {
-    console.error("License verification email service returned invalid JSON", error);
-    return { error: "License verification email service returned an invalid response", status: 502 };
+    console.error(`${context} service returned invalid JSON`, error);
+    return { error: `${context} service returned an invalid response`, status: 502 };
   }
   const sentToRecipient = [
     ...(Array.isArray(result?.result?.delivered) ? result.result.delivered : []),
     ...(Array.isArray(result?.result?.queued) ? result.result.queued : []),
   ].some((recipient) => String(recipient).toLowerCase() === email);
   if (!response.ok || result?.success !== true || !sentToRecipient) {
-    console.error("License verification email service rejected a message", {
+    console.error(`${context} service rejected a message`, {
       status: response.status,
       success: result?.success === true,
     });
-    return { error: "License verification email could not be delivered", status: 503 };
+    return { error: `${context} could not be delivered`, status: 503 };
   }
   return { ok: true };
+}
+
+async function sendLicenseVerificationEmail(env, email, code, purpose) {
+  const subject = purpose === "email_change"
+    ? "Confirm your PrathamOne license email change"
+    : "Your PrathamOne license verification code";
+  const text = `Your PrathamOne verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`;
+  return sendLicenseEmail(env, email, subject, text, "License verification email");
+}
+
+async function sendLicenseReactivationNotice(env, email, request, status) {
+  const serialSuffix = request.serial_number ? String(request.serial_number).slice(-4) : "unknown";
+  const subject = status === "pending"
+    ? "PrathamOne license reactivation request received"
+    : status === "approved"
+      ? "PrathamOne license reactivation approved"
+    : status === "rejected"
+      ? "PrathamOne license reactivation request update"
+      : "PrathamOne license activation notice";
+  const text = status === "pending"
+    ? `A reactivation request for ${request.product_name} (license ending ${serialSuffix}) is pending review. SMRITISYS support will contact the registered phone number. If you did not request this, contact support.`
+    : status === "approved"
+      ? `The reactivation request for ${request.product_name} (license ending ${serialSuffix}) was approved after support confirmed your registered phone. Open PrathamOne and sign in to complete activation. If you did not request this, contact SMRITISYS support immediately.`
+    : status === "rejected"
+      ? `The reactivation request for ${request.product_name} (license ending ${serialSuffix}) was not approved. Contact SMRITISYS support if you need help.`
+      : `A PrathamOne license activation for ${request.product_name} (license ending ${serialSuffix}) was completed on a new installation. If you did not request this, contact SMRITISYS support immediately.`;
+  return sendLicenseEmail(env, email, subject, text, "License reactivation notification");
 }
 
 async function createLicenseEmailVerification(env, {
@@ -609,6 +632,11 @@ async function getCustomerSession(request, env) {
   return principal;
 }
 
+async function getCustomerAccountSession(request, env) {
+  const session = await getSessionIdentity(request, env);
+  return session?.account_type === "customer" ? session : null;
+}
+
 async function getSessionIdentity(request, env) {
   const token = requestSessionToken(request);
   if (!token) return null;
@@ -638,13 +666,35 @@ async function handleOrganizationContext(request, env) {
 
   const memberships = await env.DB.prepare(
     `SELECT m.id AS membership_id, m.organization_id, o.name AS organization_name,
-            m.member_role
+            m.member_role,
+            CASE
+              WHEN m.member_role IN ('partner_admin', 'partner_member')
+                AND pm.id IS NOT NULL AND rel.id IS NOT NULL THEN 'partner'
+              WHEN ? = 'user' THEN 'staff'
+              ELSE 'customer'
+            END AS workspace_type,
+            CASE
+              WHEN m.member_role IN ('partner_admin', 'partner_member')
+                AND rel.id IS NOT NULL THEN pm.partner_type
+              ELSE NULL
+            END AS partner_type
      FROM organization_members m
      JOIN organizations o ON o.id = m.organization_id
+     LEFT JOIN partner_memberships pm
+       ON pm.partner_organization_id = m.organization_id
+       AND pm.account_type = m.account_type AND pm.account_id = m.account_id
+       AND pm.status = 'active'
+     LEFT JOIN relationships rel
+       ON rel.organization_id = pm.partner_organization_id
+       AND rel.relationship_type = pm.partner_type AND rel.status = 'active'
      WHERE m.account_type = ? AND m.account_id = ?
        AND m.status = 'active' AND o.status = 'active'
+       AND (
+         m.member_role NOT IN ('partner_admin', 'partner_member')
+         OR (pm.id IS NOT NULL AND rel.id IS NOT NULL)
+       )
      ORDER BY o.name COLLATE NOCASE, o.id`
-  ).bind(session.account_type, session.account_id).all();
+  ).bind(session.account_type, session.account_type, session.account_id).all();
   const availableMemberships = memberships.results || [];
   const selectedMembership = availableMemberships.find(
     (membership) => Number(membership.organization_id) === Number(session.organization_id),
@@ -761,17 +811,23 @@ async function getPartnerSession(request, env) {
   const principal = await getIdentitySession(request, env);
   if (!principal) return null;
   const membership = await env.DB.prepare(
-    `SELECT r.organization_id AS partner_organization_id,
-            r.relationship_type AS partner_type,
+    `SELECT pm.partner_organization_id, pm.partner_type,
             o.name AS partner_name, o.status AS partner_status
-     FROM relationships r
-     JOIN organizations o ON o.id = r.organization_id AND o.status = 'active'
-     WHERE r.organization_id = ? AND r.status = 'active'
-       AND r.relationship_type IN (
+     FROM partner_memberships pm
+     JOIN relationships r ON r.organization_id = pm.partner_organization_id
+       AND r.relationship_type = pm.partner_type AND r.status = 'active'
+     JOIN organizations o ON o.id = pm.partner_organization_id AND o.status = 'active'
+     WHERE pm.partner_organization_id = ? AND pm.account_type = ? AND pm.account_id = ?
+       AND pm.status = 'active'
+       AND pm.partner_type IN (
          'channel_partner', 'reseller', 'implementation_partner',
          'technology_partner', 'referral_partner', 'distributor'
        )`
-  ).bind(principal.organization_id).first();
+  ).bind(
+    principal.organization_id,
+    principal.account_type,
+    principal.account_id,
+  ).first();
   if (!membership) return null;
   return { ...principal, ...membership, partner_role: principal.member_role };
 }
@@ -783,12 +839,11 @@ async function hasPartnerPermission(env, principal, permission) {
      JOIN roles r ON r.name = m.member_role
      JOIN role_permissions rp ON rp.role_id = r.id
      JOIN permissions p ON p.id = rp.permission_id
-     JOIN relationships rel ON rel.organization_id = m.organization_id
-       AND rel.status = 'active'
-       AND rel.relationship_type IN (
-         'channel_partner', 'reseller', 'implementation_partner',
-         'technology_partner', 'referral_partner', 'distributor'
-       )
+     JOIN partner_memberships pm ON pm.partner_organization_id = m.organization_id
+       AND pm.account_type = m.account_type AND pm.account_id = m.account_id
+       AND pm.status = 'active'
+     JOIN relationships rel ON rel.organization_id = pm.partner_organization_id
+       AND rel.relationship_type = pm.partner_type AND rel.status = 'active'
      WHERE m.organization_id = ? AND m.account_type = ? AND m.account_id = ?
        AND m.member_role IN ('partner_admin', 'partner_member')
        AND m.status = 'active' AND p.name = ?`
@@ -1395,6 +1450,241 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   return { license_id: licenseId.license_id };
 }
 
+async function listCustomerLicenseReactivationOptions(request, env, origin) {
+  const session = await getCustomerAccountSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer sign-in required" }, 401, origin);
+
+  const { results } = await env.DB.prepare(
+    `SELECT l.id AS license_id, l.serial_number, l.seats, l.expires_at,
+            p.slug AS product_code, p.name AS product_name,
+            (SELECT e.value_text FROM license_entitlements e
+             WHERE e.license_id = l.id AND e.entitlement_key = 'company.binding') AS company_binding,
+            (SELECT COUNT(*) FROM license_activations la
+             WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count
+     FROM licenses l
+     JOIN products p ON p.id = l.product_id AND p.status = 'active'
+     JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
+     WHERE l.customer_id = ? AND l.status = 'ACTIVE'
+       AND date(l.starts_at) <= date('now')
+       AND (l.expires_at IS NULL OR date(l.expires_at) >= date('now'))
+       AND EXISTS (
+         SELECT 1 FROM license_entitlements e
+         WHERE e.license_id = l.id AND e.entitlement_key = 'company.binding'
+           AND NULLIF(trim(e.value_text), '') IS NOT NULL
+       )
+     ORDER BY p.name COLLATE NOCASE, l.id`
+  ).bind(session.account_id).all();
+  return json({ ok: true, licenses: results || [] }, 200, origin, { "Cache-Control": "no-store" });
+}
+
+async function requestLicenseReactivation(request, env, origin) {
+  const session = await getCustomerAccountSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer sign-in required" }, 401, origin);
+  const limited = await requireRateLimit(
+    env, request, "license-reactivation-request", 10, 3600, String(session.account_id),
+  );
+  if (limited) return limited;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid reactivation request is required" }, 400, origin);
+  }
+  const licenseId = numericId(body?.license_id);
+  const installationId = boundedString(body?.installation_id, 36);
+  const activationIdentifier = boundedString(body?.activation_identifier, 36);
+  const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
+  const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
+  if (!licenseId || !UUID_PATTERN.test(installationId || "") ||
+      !UUID_PATTERN.test(activationIdentifier || "") ||
+      !refreshPublicKeyBytes || refreshPublicKeyBytes.length !== 32) {
+    return json({ ok: false, error: "A valid license and installation identity are required" }, 400, origin);
+  }
+
+  const license = await env.DB.prepare(
+    `SELECT l.id, l.customer_id, l.organization_id, l.serial_number, l.seats,
+            l.status, l.starts_at, l.expires_at, l.last_self_service_transfer_at,
+            COALESCE(NULLIF(trim(l.registered_email), ''), c.email) AS notification_email,
+            p.slug AS product_code, p.name AS product_name,
+            (SELECT e.value_text FROM license_entitlements e
+             WHERE e.license_id = l.id AND e.entitlement_key = 'company.binding') AS company_binding
+     FROM licenses l
+     JOIN customers c ON c.id = l.customer_id AND c.status IN ('active', 'trial')
+     JOIN products p ON p.id = l.product_id AND p.status = 'active'
+     JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
+     WHERE l.id = ? AND l.customer_id = ? AND l.status = 'ACTIVE'
+       AND date(l.starts_at) <= date('now')
+       AND (l.expires_at IS NULL OR date(l.expires_at) >= date('now'))
+       AND EXISTS (
+         SELECT 1 FROM license_entitlements e
+         WHERE e.license_id = l.id AND e.entitlement_key = 'company.binding'
+           AND NULLIF(trim(e.value_text), '') IS NOT NULL
+       )`
+  ).bind(licenseId, session.account_id).first();
+  if (!license) {
+    return json({ ok: false, error: "An eligible license was not found for this customer account" }, 404, origin);
+  }
+
+  const existingRequest = await env.DB.prepare(
+    `SELECT request_id, installation_id, refresh_public_key, status, expires_at,
+            expires_at > datetime('now') AS is_live
+     FROM license_reactivation_requests
+     WHERE license_id = ? AND customer_id = ? AND activation_identifier = ?
+     ORDER BY created_at DESC LIMIT 1`
+  ).bind(license.id, session.account_id, activationIdentifier).first();
+  if (existingRequest) {
+    if (existingRequest.installation_id !== installationId ||
+        existingRequest.refresh_public_key !== refreshPublicKey) {
+      return json({ ok: false, error: "This activation identity is already linked to another installation" }, 409, origin);
+    }
+    if (["pending", "approved"].includes(existingRequest.status) && !existingRequest.is_live) {
+      await env.DB.prepare(
+        `UPDATE license_reactivation_requests SET status = 'expired'
+         WHERE request_id = ? AND status IN ('pending', 'approved') AND expires_at <= datetime('now')`
+      ).bind(existingRequest.request_id).run();
+      existingRequest.status = "expired";
+    }
+    if (existingRequest.status !== "expired") {
+      return json({
+        ok: true,
+        request_id: existingRequest.request_id,
+        status: existingRequest.status,
+        expires_at: existingRequest.expires_at,
+      }, 200, origin, { "Cache-Control": "no-store" });
+    }
+  }
+
+  const priorActivation = await env.DB.prepare(
+    `SELECT installation_id, refresh_public_key, status
+     FROM license_activations WHERE license_id = ? AND activation_identifier = ?`
+  ).bind(license.id, activationIdentifier).first();
+  if (priorActivation) {
+    if (priorActivation.status === "active" &&
+        priorActivation.installation_id === installationId &&
+        priorActivation.refresh_public_key === refreshPublicKey) {
+      return json({ ok: true, status: "already_active" }, 200, origin, { "Cache-Control": "no-store" });
+    }
+    return json({ ok: false, error: "Create a new installation identity before requesting reactivation" }, 409, origin);
+  }
+
+  const activeCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM license_activations WHERE license_id = ? AND status = 'active'"
+  ).bind(license.id).first();
+  const transferCooldown = await env.DB.prepare(
+    `SELECT 1 AS active
+     FROM licenses
+     WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
+       AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
+  ).bind(license.id).first();
+  const status = Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown
+    ? "approved"
+    : "pending";
+  const requestId = crypto.randomUUID();
+  const inserted = await env.DB.prepare(
+    `INSERT OR IGNORE INTO license_reactivation_requests
+       (request_id, license_id, customer_id, organization_id, requester_person_id,
+        product_code, company_binding, installation_id, activation_identifier,
+        refresh_public_key, status, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
+  ).bind(
+    requestId, license.id, session.account_id, license.organization_id, session.person_id,
+    license.product_code, license.company_binding, installationId, activationIdentifier,
+    refreshPublicKey, status,
+  ).run();
+  if (Number(inserted?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "The reactivation request could not be created" }, 409, origin);
+  }
+  const savedRequest = await env.DB.prepare(
+    "SELECT expires_at FROM license_reactivation_requests WHERE request_id = ?"
+  ).bind(requestId).first();
+
+  await writeAudit(
+    env, request, session, "CUSTOMER_LICENSE_REACTIVATION_REQUESTED",
+    "license_reactivation_request", requestId, null,
+    { license_id: license.id, status, installation_id: installationId },
+  );
+  if (license.organization_id) {
+    await recordLicenseEvent(
+      env, license, session, "LICENSE_REACTIVATION_REQUESTED",
+      license.status, license.status,
+      { request_id: requestId, status, installation_id: installationId },
+    );
+  }
+
+  let notificationStatus = "pending";
+  if (status === "pending") {
+    const email = validEmail(license.notification_email);
+    const delivery = email
+      ? await sendLicenseReactivationNotice(env, email, license, "pending")
+      : { error: "No registered notification email is available" };
+    notificationStatus = delivery.error ? "failed" : "sent";
+    await env.DB.prepare(
+      "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ?"
+    ).bind(notificationStatus, requestId).run();
+  }
+
+  return json({
+    ok: true,
+    request_id: requestId,
+    status,
+    expires_at: savedRequest?.expires_at || null,
+    notification_status: notificationStatus,
+    ...(notificationStatus === "failed"
+      ? { notification_warning: "The request was saved, but its email notification could not be delivered." }
+      : {}),
+  }, 201, origin, { "Cache-Control": "no-store" });
+}
+
+async function getCustomerLicenseReactivationRequest(request, env, requestId, origin) {
+  const session = await getCustomerAccountSession(request, env);
+  if (!session) return json({ ok: false, error: "Customer sign-in required" }, 401, origin);
+  const record = await env.DB.prepare(
+    `SELECT request_id, status, expires_at, notification_status, decision_reason,
+            license_id, activation_identifier,
+            expires_at > datetime('now') AS is_live
+     FROM license_reactivation_requests
+     WHERE request_id = ? AND customer_id = ?`
+  ).bind(requestId, session.account_id).first();
+  if (!record) return json({ ok: false, error: "Reactivation request not found" }, 404, origin);
+
+  let status = record.status;
+  if (["pending", "approved"].includes(status) && !record.is_live) {
+    await env.DB.prepare(
+      `UPDATE license_reactivation_requests SET status = 'expired'
+       WHERE request_id = ? AND status IN ('pending', 'approved') AND expires_at <= datetime('now')`
+    ).bind(requestId).run();
+    status = "expired";
+  }
+
+  let artifact = null;
+  if (status === "completed") {
+    artifact = await env.DB.prepare(
+      `SELECT a.document_id, a.algorithm, a.key_id,
+              a.payload_base64url AS payload, a.signature_base64url AS signature
+       FROM license_artifacts a
+       JOIN license_activations la ON la.license_id = a.license_id
+         AND la.activation_identifier = a.activation_identifier
+       WHERE a.license_id = ? AND a.activation_identifier = ?
+         AND la.status = 'active'
+       ORDER BY a.created_at DESC LIMIT 1`
+    ).bind(record.license_id, record.activation_identifier).first();
+  }
+
+  return json({
+    ok: true,
+    request_id: requestId,
+    status,
+    expires_at: record.expires_at,
+    notification_status: record.notification_status,
+    ...(status === "rejected" ? { message: "The request was not approved. Contact SMRITISYS support." } : {}),
+    ...(record.notification_status === "failed"
+      ? { notification_warning: "The request was saved, but its email notification could not be delivered." }
+      : {}),
+    ...(artifact ? { artifact } : {}),
+  }, 200, origin, { "Cache-Control": "no-store" });
+}
+
 async function activateLicense(request, env, origin) {
   const rateLimit = await requireRateLimit(env, request, "license-activation", 20, 60);
   if (rateLimit) return rateLimit;
@@ -1405,26 +1695,93 @@ async function activateLicense(request, env, origin) {
   } catch {
     return json({ ok: false, error: "A JSON activation request is required" }, 400, origin);
   }
+  const reactivationRequestId = boundedString(body?.reactivation_request_id, 36);
+  let reactivationSession = null;
+  let reactivationRequest = null;
+  if (reactivationRequestId) {
+    if (!UUID_PATTERN.test(reactivationRequestId)) {
+      return json({ ok: false, error: "A valid reactivation request is required" }, 400, origin);
+    }
+    reactivationSession = await getCustomerAccountSession(request, env);
+    if (!reactivationSession) return json({ ok: false, error: "Customer sign-in required" }, 401, origin);
+    reactivationRequest = await env.DB.prepare(
+      `SELECT request_id, license_id, customer_id, product_code, company_binding,
+              installation_id, activation_identifier, refresh_public_key, status,
+              expires_at, expires_at > datetime('now') AS is_live
+       FROM license_reactivation_requests
+       WHERE request_id = ? AND customer_id = ?`
+    ).bind(reactivationRequestId, reactivationSession.account_id).first();
+    if (!reactivationRequest) {
+      return json({ ok: false, error: "Reactivation request not found" }, 404, origin);
+    }
+    if (reactivationRequest.status === "completed") {
+      const artifact = await env.DB.prepare(
+        `SELECT document_id, algorithm, key_id,
+                payload_base64url AS payload, signature_base64url AS signature
+         FROM license_artifacts a
+         JOIN license_activations la ON la.license_id = a.license_id
+           AND la.activation_identifier = a.activation_identifier
+         WHERE a.license_id = ? AND a.activation_identifier = ? AND la.status = 'active'
+         ORDER BY created_at DESC LIMIT 1`
+      ).bind(reactivationRequest.license_id, reactivationRequest.activation_identifier).first();
+      if (!artifact) return json({ ok: false, error: "The completed activation artifact is unavailable" }, 409, origin);
+      return json({ ok: true, artifact }, 200, origin, { "Cache-Control": "no-store" });
+    }
+    if (!["approved"].includes(reactivationRequest.status)) {
+      return json({
+        ok: false,
+        error: reactivationRequest.status === "pending"
+          ? "This reactivation is waiting for administrator review"
+          : "This reactivation request is no longer available",
+      }, 409, origin);
+    }
+    if (!reactivationRequest.is_live) {
+      await env.DB.prepare(
+        `UPDATE license_reactivation_requests SET status = 'expired'
+         WHERE request_id = ? AND status = 'approved' AND expires_at <= datetime('now')`
+      ).bind(reactivationRequestId).run();
+      return json({ ok: false, error: "This reactivation request has expired" }, 410, origin);
+    }
+  }
+
   const licenseKey = boundedString(body?.license_key, 200);
   const serialNumber = boundedString(body?.serial_number, 80)?.toUpperCase() || null;
   const activationKey = boundedString(body?.activation_key, 100)?.toUpperCase() || null;
-  const productCode = boundedString(body?.product_code, 100);
-  const installationId = boundedString(body?.installation_id, 36);
-  const activationIdentifier = boundedString(body?.activation_identifier, 36);
-  const companyBinding = body?.company_binding == null ? null : boundedString(body.company_binding, 128);
-  const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
+  const bodyProductCode = boundedString(body?.product_code, 100);
+  const bodyInstallationId = boundedString(body?.installation_id, 36);
+  const bodyActivationIdentifier = boundedString(body?.activation_identifier, 36);
+  const bodyCompanyBinding = body?.company_binding == null ? null : boundedString(body.company_binding, 128);
+  const bodyRefreshPublicKey = boundedString(body?.refresh_public_key, 100);
+  if (reactivationRequest && (
+      (bodyProductCode && bodyProductCode !== reactivationRequest.product_code) ||
+      (bodyInstallationId && bodyInstallationId !== reactivationRequest.installation_id) ||
+      (bodyActivationIdentifier && bodyActivationIdentifier !== reactivationRequest.activation_identifier) ||
+      (bodyCompanyBinding && bodyCompanyBinding !== reactivationRequest.company_binding) ||
+      (bodyRefreshPublicKey && bodyRefreshPublicKey !== reactivationRequest.refresh_public_key))) {
+    return json({ ok: false, error: "Activation details do not match the approved reactivation request" }, 403, origin);
+  }
+  if (reactivationRequest && (licenseKey || serialNumber || activationKey || body?.email_challenge_id)) {
+    return json({ ok: false, error: "Use either account reactivation or an existing activation credential" }, 400, origin);
+  }
+  const productCode = reactivationRequest?.product_code || bodyProductCode;
+  const installationId = reactivationRequest?.installation_id || bodyInstallationId;
+  const activationIdentifier = reactivationRequest?.activation_identifier || bodyActivationIdentifier;
+  const companyBinding = reactivationRequest?.company_binding || bodyCompanyBinding;
+  const refreshPublicKey = reactivationRequest?.refresh_public_key || bodyRefreshPublicKey;
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
   const emailChallengeId = boundedString(body?.email_challenge_id, 36);
   const activationEmail = validEmail(body?.email);
   const requestedLicenseId = numericId(body?.license_id);
   const usesActivationCode = Boolean(serialNumber || activationKey);
   const usesEmailVerification = Boolean(emailChallengeId || activationEmail || requestedLicenseId);
-  if ((!licenseKey && !usesActivationCode && !usesEmailVerification) ||
+  const usesAccountReactivation = Boolean(reactivationRequest);
+  if ((!licenseKey && !usesActivationCode && !usesEmailVerification && !usesAccountReactivation) ||
       (usesActivationCode && (!serialNumber || !activationKey || licenseKey || usesEmailVerification)) ||
       (usesEmailVerification && (!emailChallengeId || !activationEmail || !requestedLicenseId || licenseKey)) ||
+      (usesAccountReactivation && (usesActivationCode || usesEmailVerification || licenseKey)) ||
       (licenseKey && usesActivationCode) ||
       !productCode || !UUID_PATTERN.test(installationId || "") || !UUID_PATTERN.test(activationIdentifier || "")) {
-    return json({ ok: false, error: "Provide a license key, serial and activation key, or verified email activation details with product and installation identifiers" }, 400, origin);
+    return json({ ok: false, error: "Provide a license credential, verified email activation, or approved customer reactivation request" }, 400, origin);
   }
   if (usesActivationCode && !/^(?:\d{1,9}|SMR-LIC-(?:\d{8}|[A-F0-9]{20}))$/.test(serialNumber)) {
     return json({ ok: false, error: "The serial number format is invalid" }, 400, origin);
@@ -1476,7 +1833,7 @@ async function activateLicense(request, env, origin) {
       `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
               l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
               l.registered_email, c.email AS customer_email,
-              p.slug AS product_code, p.billing_period,
+              p.slug AS product_code, p.name AS product_name, p.billing_period,
               le.edition_id, pe.code AS edition_code, l.organization_id
        FROM licenses l
        JOIN products p ON p.id = l.product_id
@@ -1486,6 +1843,28 @@ async function activateLicense(request, env, origin) {
        LEFT JOIN product_editions pe ON pe.id = le.edition_id
        WHERE l.id = ? AND p.slug = ?`
     ).bind(claim.license_id, productCode).first();
+  } else if (usesAccountReactivation) {
+    license = await env.DB.prepare(
+      `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
+              l.offline_validity_days, l.seats, l.status, l.starts_at, l.expires_at,
+              l.registered_email, c.email AS customer_email,
+              p.slug AS product_code, p.name AS product_name, p.billing_period,
+              le.edition_id, pe.code AS edition_code, l.organization_id
+       FROM licenses l
+       JOIN products p ON p.id = l.product_id
+       JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
+       JOIN customers c ON c.id = l.customer_id AND c.status IN ('active', 'trial')
+       LEFT JOIN license_editions le ON le.license_id = l.id
+       LEFT JOIN product_editions pe ON pe.id = le.edition_id
+       WHERE l.id = ? AND l.customer_id = ? AND l.status = 'ACTIVE'
+         AND l.starts_at <= datetime('now')
+         AND (l.expires_at IS NULL OR l.expires_at >= datetime('now'))
+         AND p.slug = ?`
+    ).bind(
+      reactivationRequest.license_id,
+      reactivationSession.account_id,
+      reactivationRequest.product_code,
+    ).first();
   } else {
     license = await env.DB.prepare(
       `SELECT l.id, l.customer_id, l.product_id, l.license_key, l.serial_number,
@@ -1613,10 +1992,28 @@ async function activateLicense(request, env, origin) {
        )`
     ).bind(signed.document_id, license.id, installationId, activationIdentifier, signed.key_id, signed.payload, signed.signature, signed.issued_at, license.id, activationIdentifier, installationId),
   );
+  if (reactivationRequest) {
+    activationStatements.push(env.DB.prepare(
+      `UPDATE license_reactivation_requests
+       SET status = 'completed', completed_at = datetime('now')
+       WHERE request_id = ? AND customer_id = ? AND status = 'approved'
+         AND expires_at > datetime('now')
+         AND EXISTS (
+           SELECT 1 FROM license_activations
+           WHERE license_id = ? AND activation_identifier = ?
+             AND installation_id = ? AND status = 'active'
+         )`
+    ).bind(
+      reactivationRequestId, reactivationSession.account_id,
+      license.id, activationIdentifier, installationId,
+    ));
+  }
   const artifactResult = await env.DB.batch(activationStatements);
   const artifactInsertIndex = emailChallenge ? 3 : 2;
+  const requestCompleteIndex = emailChallenge ? 4 : 3;
   if ((emailChallenge && Number(artifactResult?.[0]?.meta?.changes || 0) !== 1) ||
-      Number(artifactResult?.[artifactInsertIndex]?.meta?.changes || 0) !== 1) {
+      Number(artifactResult?.[artifactInsertIndex]?.meta?.changes || 0) !== 1 ||
+      (reactivationRequest && Number(artifactResult?.[requestCompleteIndex]?.meta?.changes || 0) !== 1)) {
     return json({ ok: false, error: "The license activation limit was reached during registration" }, 409, origin);
   }
 
@@ -1625,9 +2022,28 @@ async function activateLicense(request, env, origin) {
       "ACTIVATION_CREATED", license.status, license.status,
       { installation_id: installationId, activation_identifier: activationIdentifier, artifact_id: signed.document_id });
   }
-  await writeAudit(env, request, { person_id: null, organization_id: license.organization_id },
-    "LICENSE_ARTIFACT_ISSUED", "license_artifact", signed.document_id, null,
+  await writeAudit(env, request, reactivationSession || { person_id: null, organization_id: license.organization_id },
+    reactivationRequest ? "CUSTOMER_LICENSE_REACTIVATION_COMPLETED" : "LICENSE_ARTIFACT_ISSUED",
+    "license_artifact", signed.document_id, null,
     { license_id: license.id, installation_id: installationId, key_id: signed.key_id });
+
+  let reactivationNotificationWarning = null;
+  if (reactivationRequest) {
+    const email = validEmail(license.registered_email || license.customer_email);
+    const delivery = email
+      ? await sendLicenseReactivationNotice(env, email, {
+        serial_number: license.serial_number,
+        product_name: license.product_name,
+      }, "completed")
+      : { error: "No registered notification email is available" };
+    const notificationStatus = delivery.error ? "failed" : "sent";
+    await env.DB.prepare(
+      "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ? AND status = 'completed'"
+    ).bind(notificationStatus, reactivationRequestId).run();
+    if (delivery.error) {
+      reactivationNotificationWarning = "Activation succeeded, but its email notification could not be delivered.";
+    }
+  }
 
   return json({
     ok: true,
@@ -1639,6 +2055,7 @@ async function activateLicense(request, env, origin) {
       payload: signed.payload,
       signature: signed.signature,
     },
+    ...(reactivationNotificationWarning ? { notification_warning: reactivationNotificationWarning } : {}),
   }, 201, origin);
 }
 
@@ -1935,6 +2352,272 @@ async function requireSuperAdmin(request, env) {
   const session = await requirePermission(request, env, "admin.system");
   if (!session || session.account_type !== "user" || session.member_role !== "super_admin") return null;
   return session;
+}
+
+async function handleAdminLicenseReactivationRequests(request, env, origin, requestId = null) {
+  const session = await requireSuperAdmin(request, env);
+  if (!session) return json({ ok: false, error: "Super admin access required" }, 403, origin);
+
+  if (request.method === "GET" && !requestId) {
+    const { results } = await env.DB.prepare(
+      `SELECT r.request_id, r.license_id, r.status, r.created_at, r.expires_at,
+              r.installation_id, r.product_code, l.serial_number, p.name AS product_name,
+              c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
+              l.seats,
+              (SELECT COUNT(*) FROM license_activations la
+               WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count
+       FROM license_reactivation_requests r
+       JOIN licenses l ON l.id = r.license_id
+       JOIN products p ON p.id = l.product_id
+       JOIN customers c ON c.id = r.customer_id
+       WHERE r.status = 'pending' AND r.expires_at > datetime('now')
+       ORDER BY r.created_at ASC LIMIT 100`
+    ).all();
+    return json({ ok: true, requests: results || [] }, 200, origin, { "Cache-Control": "no-store" });
+  }
+
+  if (request.method === "GET" && requestId) {
+    const record = await env.DB.prepare(
+      `SELECT r.request_id, r.license_id, r.customer_id, r.status, r.created_at, r.expires_at,
+              r.installation_id, r.product_code, l.serial_number, p.name AS product_name,
+              c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
+              l.seats,
+              (SELECT COUNT(*) FROM license_activations la
+               WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count,
+              datetime(l.last_self_service_transfer_at, '+30 days') AS transfer_available_at,
+              CASE WHEN l.last_self_service_transfer_at IS NOT NULL
+                    AND julianday(l.last_self_service_transfer_at) > julianday('now', '-30 days')
+                   THEN 1 ELSE 0 END AS transfer_cooldown_active
+       FROM license_reactivation_requests r
+       JOIN licenses l ON l.id = r.license_id
+       JOIN products p ON p.id = l.product_id
+       JOIN customers c ON c.id = r.customer_id
+       WHERE r.request_id = ?`
+    ).bind(requestId).first();
+    if (!record) return json({ ok: false, error: "Reactivation request not found" }, 404, origin);
+    const { results: activations } = await env.DB.prepare(
+      `SELECT id, installation_id, activation_identifier, status, last_seen_at, activated_at
+       FROM license_activations
+       WHERE license_id = ? AND status = 'active'
+       ORDER BY last_seen_at DESC`
+    ).bind(record.license_id).all();
+    return json({
+      ok: true,
+      request: { ...record, active_activations: activations || [] },
+    }, 200, origin, { "Cache-Control": "no-store" });
+  }
+
+  if (request.method !== "POST" || !requestId) {
+    return json({ ok: false, error: "Unsupported reactivation request operation" }, 405, origin);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "A valid review decision is required" }, 400, origin);
+  }
+  const decision = body?.decision;
+  const reason = boundedString(body?.reason, 500);
+  const replacedActivationId = body?.replaced_activation_id == null
+    ? null
+    : numericId(body.replaced_activation_id);
+  const phoneConfirmed = body?.phone_confirmed === true;
+  const cooldownOverride = body?.cooldown_override === true;
+  if (!["approve", "reject"].includes(decision) || !reason || reason.length < 10 ||
+      (body?.replaced_activation_id != null && !replacedActivationId)) {
+    return json({ ok: false, error: "A decision and an audit reason of at least 10 characters are required" }, 400, origin);
+  }
+
+  const record = await env.DB.prepare(
+    `SELECT r.request_id, r.license_id, r.customer_id, r.status, r.expires_at,
+            r.activation_identifier, r.installation_id,
+            l.organization_id, l.seats, l.status AS license_status,
+            l.starts_at, l.expires_at AS license_expires_at, l.last_self_service_transfer_at,
+            r.expires_at > datetime('now') AS request_is_live,
+            (date(l.starts_at) <= date('now')
+              AND (l.expires_at IS NULL OR date(l.expires_at) >= date('now'))) AS license_is_live,
+            l.serial_number, p.name AS product_name,
+            c.email AS customer_email, c.phone AS customer_phone, l.registered_email
+     FROM license_reactivation_requests r
+     JOIN licenses l ON l.id = r.license_id
+     JOIN products p ON p.id = l.product_id
+     JOIN customers c ON c.id = r.customer_id
+     WHERE r.request_id = ?`
+  ).bind(requestId).first();
+  if (!record) return json({ ok: false, error: "Reactivation request not found" }, 404, origin);
+  if (record.status !== "pending") {
+    return json({ ok: false, error: "Only pending reactivation requests can be reviewed" }, 409, origin);
+  }
+  if (!record.request_is_live) {
+    await env.DB.prepare(
+      "UPDATE license_reactivation_requests SET status = 'expired' WHERE request_id = ? AND status = 'pending'"
+    ).bind(requestId).run();
+    return json({ ok: false, error: "This reactivation request has expired" }, 410, origin);
+  }
+
+  if (decision === "reject") {
+    const update = await env.DB.prepare(
+      `UPDATE license_reactivation_requests
+       SET status = 'rejected', decision_reason = ?, reviewed_by_person_id = ?,
+           reviewed_at = datetime('now')
+       WHERE request_id = ? AND status = 'pending' AND expires_at > datetime('now')`
+    ).bind(reason, session.person_id, requestId).run();
+    if (Number(update?.meta?.changes || 0) !== 1) {
+      return json({ ok: false, error: "The request is no longer pending" }, 409, origin);
+    }
+    await writeAudit(env, request, session, "ADMIN_LICENSE_REACTIVATION_REJECTED",
+      "license_reactivation_request", requestId, null, { reason });
+    const email = validEmail(record.registered_email || record.customer_email);
+    const delivery = email
+      ? await sendLicenseReactivationNotice(env, email, record, "rejected")
+      : { error: "No registered notification email is available" };
+    const notificationStatus = delivery.error ? "failed" : "sent";
+    await env.DB.prepare(
+      "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ?"
+    ).bind(notificationStatus, requestId).run();
+    return json({
+      ok: true,
+      status: "rejected",
+      notification_status: notificationStatus,
+      ...(delivery.error ? { notification_warning: "The decision was saved, but its email notification could not be delivered." } : {}),
+    }, 200, origin);
+  }
+
+  if (!phoneConfirmed) {
+    return json({ ok: false, error: "Confirm that support called the registered phone before approving" }, 400, origin);
+  }
+  if (!boundedString(record.customer_phone, 40)) {
+    return json({ ok: false, error: "A registered customer phone number is required for phone-confirmed approval" }, 409, origin);
+  }
+  if (record.license_status !== "ACTIVE" || !record.license_is_live) {
+    return json({ ok: false, error: "Only an active, in-date license can be reactivated" }, 409, origin);
+  }
+  const cooldown = await env.DB.prepare(
+    `SELECT datetime(last_self_service_transfer_at, '+30 days') AS transfer_available_at
+     FROM licenses
+     WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
+       AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
+  ).bind(record.license_id).first();
+  if (cooldownOverride && !cooldown) {
+    return json({ ok: false, error: "There is no active device transfer cooldown to override" }, 400, origin);
+  }
+  if (cooldown && !cooldownOverride) {
+    return json({
+      ok: false,
+      error: "A device transfer cooldown is active. Confirm the exception before approving.",
+      transfer_available_at: cooldown.transfer_available_at,
+    }, 409, origin);
+  }
+  const activeCountRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM license_activations WHERE license_id = ? AND status = 'active'"
+  ).bind(record.license_id).first();
+  const activeCount = Number(activeCountRow?.count || 0);
+  const seatLimit = Number(record.seats || 1);
+  if (activeCount >= seatLimit && !replacedActivationId) {
+    return json({ ok: false, error: "Select an active installation to replace before approving" }, 409, origin);
+  }
+  let replacement = null;
+  if (replacedActivationId) {
+    replacement = await env.DB.prepare(
+      `SELECT id, activation_identifier, installation_id
+       FROM license_activations
+       WHERE id = ? AND license_id = ? AND status = 'active'`
+    ).bind(replacedActivationId, record.license_id).first();
+    if (!replacement || replacement.activation_identifier === record.activation_identifier) {
+      return json({ ok: false, error: "Select a different active installation belonging to this license" }, 409, origin);
+    }
+  }
+
+  const updateStatements = [];
+  if (replacement) {
+    updateStatements.push(env.DB.prepare(
+      `UPDATE license_activations
+       SET status = 'revoked', deactivated_at = datetime('now')
+       WHERE id = ? AND license_id = ? AND status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM license_reactivation_requests
+           WHERE request_id = ? AND status = 'pending' AND expires_at > datetime('now')
+         )
+         AND EXISTS (
+           SELECT 1 FROM licenses
+           WHERE id = ? AND status = 'ACTIVE' AND date(starts_at) <= date('now')
+             AND (expires_at IS NULL OR date(expires_at) >= date('now'))
+             AND (? = 1 OR last_self_service_transfer_at IS NULL
+               OR julianday(last_self_service_transfer_at) <= julianday('now', '-30 days'))
+         )`
+    ).bind(replacement.id, record.license_id, requestId, record.license_id, cooldownOverride ? 1 : 0));
+  }
+  updateStatements.push(env.DB.prepare(
+    `UPDATE license_reactivation_requests
+     SET status = 'approved', replaced_activation_id = ?, decision_reason = ?,
+         reviewed_by_person_id = ?, phone_confirmed_at = datetime('now'),
+         cooldown_override = ?, reviewed_at = datetime('now')
+     WHERE request_id = ? AND status = 'pending' AND expires_at > datetime('now')
+       AND EXISTS (
+         SELECT 1 FROM licenses
+         WHERE id = ? AND status = 'ACTIVE' AND date(starts_at) <= date('now')
+           AND (expires_at IS NULL OR date(expires_at) >= date('now'))
+       )
+       AND (? = 1 OR NOT EXISTS (
+         SELECT 1 FROM licenses
+         WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
+           AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')
+       ))
+       AND (? IS NULL OR EXISTS (
+         SELECT 1 FROM license_activations
+         WHERE id = ? AND license_id = ? AND status = 'revoked'
+       ))
+       AND (SELECT COUNT(*) FROM license_activations
+            WHERE license_id = ? AND status = 'active') < ?`
+  ).bind(
+    replacement ? replacement.id : null, reason, session.person_id,
+    cooldownOverride ? 1 : 0, requestId, record.license_id, cooldownOverride ? 1 : 0,
+    record.license_id, replacement ? replacement.id : null,
+    replacement ? replacement.id : null, record.license_id, record.license_id, seatLimit,
+  ));
+  const updateResults = await env.DB.batch(updateStatements);
+  if ((replacement && Number(updateResults?.[0]?.meta?.changes || 0) !== 1) ||
+      Number(updateResults?.[updateStatements.length - 1]?.meta?.changes || 0) !== 1) {
+    return json({ ok: false, error: "The request or seat availability changed; refresh the queue and review again" }, 409, origin);
+  }
+  await writeAudit(env, request, session, "ADMIN_LICENSE_REACTIVATION_APPROVED",
+    "license_reactivation_request", requestId, null, {
+      reason,
+      phone_confirmed: true,
+      replaced_activation_id: replacement?.id || null,
+      cooldown_override: cooldownOverride,
+    });
+  await recordLicenseEvent(
+    env,
+    { id: record.license_id, organization_id: record.organization_id },
+    session,
+    "LICENSE_REACTIVATION_APPROVED",
+    record.license_status,
+    record.license_status,
+    { request_id: requestId, replaced_activation_id: replacement?.id || null, cooldown_override: cooldownOverride },
+  );
+  if (replacement) {
+    await recordLicenseEvent(
+      env, { id: record.license_id, organization_id: record.organization_id }, session,
+      "ACTIVATION_REVOKED", record.license_status, record.license_status,
+      { activation_id: replacement.id, installation_id: replacement.installation_id, source: "admin_reactivation_review" },
+    );
+  }
+  const email = validEmail(record.registered_email || record.customer_email);
+  const delivery = email
+    ? await sendLicenseReactivationNotice(env, email, record, "approved")
+    : { error: "No registered notification email is available" };
+  const notificationStatus = delivery.error ? "failed" : "sent";
+  await env.DB.prepare(
+    "UPDATE license_reactivation_requests SET notification_status = ? WHERE request_id = ? AND status = 'approved'"
+  ).bind(notificationStatus, requestId).run();
+  return json({
+    ok: true,
+    status: "approved",
+    notification_status: notificationStatus,
+    ...(delivery.error ? { notification_warning: "The decision was saved, but its email notification could not be delivered." } : {}),
+  }, 200, origin);
 }
 
 async function handleProducts(request, env, productId = null) {
@@ -7513,6 +8196,16 @@ export async function onRequest(context) {
   try {
     if (path === "license/activate" && request.method === "POST") return await activateLicense(request, env, origin);
     if (path === "license/refresh" && request.method === "POST") return await refreshLicense(request, env, origin);
+    if (path === "license/reactivations" && request.method === "GET") {
+      return await listCustomerLicenseReactivationOptions(request, env, origin);
+    }
+    if (path === "license/reactivations" && request.method === "POST") {
+      return await requestLicenseReactivation(request, env, origin);
+    }
+    const customerReactivationMatch = path.match(/^license\/reactivations\/([0-9a-f-]{36})$/i);
+    if (customerReactivationMatch && request.method === "GET") {
+      return await getCustomerLicenseReactivationRequest(request, env, customerReactivationMatch[1], origin);
+    }
     if (path === "license/email/request" && request.method === "POST") {
       return await requestLicenseEmailCode(request, env, origin);
     }
@@ -7752,6 +8445,13 @@ export async function onRequest(context) {
     }
     if (path === "admin/license-registrations" && request.method === "GET") {
       return await handleAdminControl(request, env, "license-registrations");
+    }
+    if (path === "admin/license-reactivations" && request.method === "GET") {
+      return await handleAdminLicenseReactivationRequests(request, env, origin);
+    }
+    const adminReactivationMatch = path.match(/^admin\/license-reactivations\/([0-9a-f-]{36})$/i);
+    if (adminReactivationMatch && ["GET", "POST"].includes(request.method)) {
+      return await handleAdminLicenseReactivationRequests(request, env, origin, adminReactivationMatch[1]);
     }
     const registrationMatch = path.match(/^admin\/license-registrations\/(\d+)$/);
     if (registrationMatch && request.method === "GET") {

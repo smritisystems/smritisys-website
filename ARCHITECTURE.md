@@ -68,19 +68,22 @@ Only authorized SMRITISYS staff access this area:
 
 ## Identity model
 
-A person is not limited to one relationship. A person belongs to an organization and receives access through relationships and roles.
+A person is not limited to one relationship. Customer and partner memberships use one customer-account sign-in; a person can select among the active organizations and workspaces assigned to that account.
 
 ```text
-Person -> Organization membership -> Relationship -> Role -> Entitlements
+Account -> Organization membership -> Workspace type -> Role -> Entitlements
 ```
 
-The same person can be a customer administrator, a partner contact, and an internal contact in different authorized relationships. APIs must always scope data by organization and relationship.
+Partner category (such as reseller, referral partner, or distributor) describes the business relationship; `partner_admin` and `partner_member` determine access within that relationship. Workspace choices come from server-authorized active memberships, and every API request remains scoped to the selected organization and permissions.
+
+The shared Customer/Partner sign-in does not merge separate legacy customer and staff accounts. Staff/Admin sign-in remains on the restricted Admin entry point until those identities are explicitly linked and stronger authentication is in place. Never merge accounts solely because their email strings match.
 
 ## Routing convention
 
 - `/` public corporate website
-- `/portal.html` customer portal entry point
-- `/partner.html` partner portal entry point
+- `/login.html` common Customer/Partner sign-in and workspace chooser
+- `/portal.html` customer workspace entry point; redirects to common sign-in when needed
+- `/partner.html` partner workspace entry point; redirects to common sign-in when needed
 - `/admin.html` internal control-plane entry point
 - `https://app.smritisys.com` SMRITI Retail OS operational application
 

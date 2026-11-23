@@ -15,6 +15,14 @@ button { cursor:pointer; }
 h2,h3 { font-family:var(--ds-font-display); }
 .login-box h2 { margin:.25rem 0 .5rem; font-size:2rem; }
 .muted { color:var(--muted); }
+.workspace-options { display:grid; gap:.75rem; margin-top:1rem; }
+.workspace-option { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.workspace-option h3 { margin:.15rem 0; font-size:1rem; }
+.workspace-option p { margin:.25rem 0 0; font-size:.82rem; }
+.workspace-option .primary { flex:0 0 auto; width:auto; margin:0; }
+.login-actions { display:flex; flex-wrap:wrap; gap:.6rem; margin-top:1rem; }
+.login-support { margin:1.2rem 0 0; text-align:center; font-size:.85rem; }
+.login-support a { color:var(--accent); font-weight:700; }
 label { display:block; font-size:.82rem; font-weight:700; margin:1.15rem 0 .4rem; }
 input,textarea,select { width:100%; border:1px solid var(--line); background:var(--surface-muted); color:var(--ink); padding:.78rem .85rem; outline:none; border-radius:var(--ds-radius-control); }
 input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-focus); }
@@ -22,6 +30,7 @@ input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow
 .primary { border:0; color:#fff; background:var(--accent); padding:.82rem 1rem; font-weight:700; border-radius:var(--ds-radius-control); }
 .primary:hover { background:var(--accent-hover); }
 .login-box .primary { width:100%; margin-top:1.4rem; }
+.login-link { display:block; margin-top:1.4rem; text-align:center; text-decoration:none; }
 .message { min-height:1.3rem; font-size:.85rem; margin-top:.8rem; }
 .portal { min-height:100vh; display:grid; grid-template-columns:245px 1fr; }
 aside { min-width:0; background:var(--ds-sidebar); color:var(--ds-sidebar-text); padding:1.5rem 1rem; display:flex; flex-direction:column; }
@@ -144,4 +153,4 @@ main { min-width:0; }
 @media (max-width:850px) { .login-shell { grid-template-columns:1fr; } .login-art { min-height:300px; padding:2rem; } .login-art h1 { margin:4rem 0 1rem; font-size:3rem; } .portal { grid-template-columns:minmax(0,1fr); } aside { padding:.8rem; } aside .brand { padding:.5rem .75rem 1rem; } .mobile-nav-toggle { display:inline-flex; } .nav { display:none; } .nav.is-open { display:grid; overflow:visible; } .nav button { white-space:normal; } .logout { margin-top:.7rem; } .stats,.modules,.roadmap-list { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-user { grid-template-columns:1fr 1fr; } }
 @media (max-width:850px) { .support-layout { grid-template-columns:1fr; } }
 @media (max-width:850px) { .admin-license-workspace,.license-detail-grid { grid-template-columns:1fr; } }
-@media (max-width:560px) { .login-art { display:block; min-height:240px; padding:1.5rem; } .login-art h1 { margin:3rem 0 1rem; font-size:2.2rem; } .login-art p { font-size:.95rem; } .saathi-login-visual { width:6rem; margin-top:1rem; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .context-switcher { max-width:9rem; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid,.license-meta,.entitlement-list { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } .license-card-head { display:block; } .license-card-head .status { margin-top:.7rem; } .section-head { align-items:flex-start; flex-wrap:wrap; } }
+@media (max-width:560px) { .login-art { display:block; min-height:240px; padding:1.5rem; } .login-art h1 { margin:3rem 0 1rem; font-size:2.2rem; } .login-art p { font-size:.95rem; } .saathi-login-visual { width:6rem; margin-top:1rem; } .login-panel { padding:1rem; } .login-box { padding:1.5rem; } .workspace-option { align-items:stretch; flex-direction:column; } .workspace-option .primary { width:100%; } .topbar { align-items:flex-start; gap:.6rem; } .user-chip span { display:none; } .context-switcher { max-width:9rem; } .content { padding:1rem; } .welcome { display:block; } .stats,.modules,.form-grid,.license-meta,.entitlement-list { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; } .license-card-head { display:block; } .license-card-head .status { margin-top:.7rem; } .section-head { align-items:flex-start; flex-wrap:wrap; } }

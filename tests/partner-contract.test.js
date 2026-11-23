@@ -8,7 +8,8 @@ const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.
 const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 
 test("partner portal is an authenticated workspace, not a placeholder", () => {
-  assert.match(html, /partnerLoginForm/);
+  assert.match(html, /login\.html\?entry=partner/);
+  assert.doesNotMatch(html, /partnerLoginForm/);
   assert.match(html, /data-partner-view="customers"/);
   assert.match(html, /data-partner-view="deals"/);
   assert.match(html, /id="partnerDealForm"/);
@@ -17,6 +18,7 @@ test("partner portal is an authenticated workspace, not a placeholder", () => {
   assert.match(html, /data-partner-view="releases"/);
   assert.match(script, /partnerApi\('partner\/me'\)/);
   assert.match(script, /partnerApi\('partner\/deals'/);
+  assert.match(script, /initializePartnerPortal\(\)/);
   assert.doesNotMatch(html, /Register customer|View commissions|View licenses/);
 });
 

@@ -46,6 +46,7 @@ function createD1Mock() {
   const m28 = fs.readFileSync(new URL("../migrations/0028_customer_profile_management.sql", import.meta.url), "utf8");
   const m30 = fs.readFileSync(new URL("../migrations/0030_partner_workflow_foundations.sql", import.meta.url), "utf8");
   const m31 = fs.readFileSync(new URL("../migrations/0031_identity_organization_scope.sql", import.meta.url), "utf8");
+  const m32 = fs.readFileSync(new URL("../migrations/0032_license_reactivation_requests.sql", import.meta.url), "utf8");
 
   db.exec(schema);
   db.exec(m2);
@@ -63,6 +64,7 @@ function createD1Mock() {
   db.exec(m28);
   db.exec(m30);
   db.exec(m31.slice(m31.indexOf("UPDATE licenses")));
+  db.exec(m32);
 
   return {
     raw: db,
@@ -149,6 +151,31 @@ async function selectSessionOrganization(env, token, organizationId = null) {
     token,
     body: { organization_id: selectedId },
   });
+}
+
+async function createLicenseSignerBindings(keyId) {
+  const signerPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const publicKey = Buffer.from(await crypto.subtle.exportKey("raw", signerPair.publicKey)).toString("base64url");
+  const refreshPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const refreshPublicKey = Buffer.from(await crypto.subtle.exportKey("raw", refreshPair.publicKey)).toString("base64url");
+  return {
+    refreshPublicKey,
+    bindings: {
+      LICENSE_SIGNER: {
+        async fetch(request) {
+          const body = await request.json();
+          const signature = await crypto.subtle.sign(
+            { name: "Ed25519" },
+            signerPair.privateKey,
+            Buffer.from(body.payload, "base64url"),
+          );
+          return Response.json({ key_id: body.key_id, signature: Buffer.from(signature).toString("base64url") });
+        },
+      },
+      LICENSE_ACTIVE_KEY_ID: keyId,
+      LICENSE_SIGNING_PUBLIC_KEYS: JSON.stringify({ [keyId]: publicKey }),
+    },
+  };
 }
 
 test("admin release drafts follow an audited manual publication lifecycle", async () => {
@@ -413,7 +440,7 @@ test("partner data is limited to assigned customers and canonical membership rol
   ).run();
   d1.raw.prepare(
     `INSERT INTO relationships (organization_id, relationship_type, status)
-     VALUES (104, 'reseller', 'active')`,
+     VALUES (104, 'distributor', 'active'), (104, 'reseller', 'active')`,
   ).run();
   d1.raw.prepare(
     `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
@@ -474,6 +501,7 @@ test("partner data is limited to assigned customers and canonical membership rol
   const partnerProfile = await callApi(d1, "partner/me", { token: partnerAToken });
   assert.equal(partnerProfile.status, 200);
   assert.equal(partnerProfile.data.partner.partner_role, "partner_member");
+  assert.equal(partnerProfile.data.partner.partner_type, "reseller");
   assert.equal(partnerProfile.data.permissions.reveal_activation_keys, false);
   assert.equal((await callApi(d1, "admin/overview", { token: partnerAToken })).status, 403);
 });
@@ -803,6 +831,67 @@ test("organization context requires explicit session selection and is isolated p
   assert.equal(d1.raw.prepare(
     "SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'ORGANIZATION_CONTEXT_SELECTED'",
   ).get().count, 2);
+});
+
+test("organization context derives customer and partner workspaces from active membership", async () => {
+  const d1 = createD1Mock();
+  const token = "organization-workspace-kind-session";
+  d1.raw.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, expires_at) VALUES (?, 'customer', 101, datetime('now', '+1 hour'))",
+  ).run(token);
+  d1.raw.prepare(
+    "INSERT INTO organizations (id, name, legal_name, status) VALUES (104, 'Reseller Org', 'Reseller Org Ltd', 'active')",
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO relationships (organization_id, relationship_type, status)
+     VALUES (104, 'distributor', 'active'), (104, 'reseller', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (104, 'customer', 101, 'partner_admin', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO partner_memberships
+       (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+     VALUES (104, 'customer', 101, 'partner_admin', 'reseller', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    "INSERT INTO organizations (id, name, legal_name, status) VALUES (105, 'Unassigned Partner Role', 'Unassigned Partner Role Ltd', 'active')",
+  ).run();
+  d1.raw.prepare(
+    "INSERT INTO relationships (organization_id, relationship_type, status) VALUES (105, 'referral_partner', 'active')",
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO organization_members (organization_id, account_type, account_id, member_role, status)
+     VALUES (105, 'customer', 101, 'customer', 'active')`,
+  ).run();
+  d1.raw.prepare(
+    `INSERT INTO partner_memberships
+       (partner_organization_id, account_type, account_id, partner_role, partner_type, status)
+     VALUES (105, 'customer', 101, 'partner_admin', 'referral_partner', 'active')`,
+  ).run();
+
+  const response = await callApi(d1, "organization-context", { token });
+  assert.equal(response.status, 200);
+  const customerWorkspace = response.data.organizations.find((item) => item.organization_id === 101);
+  const partnerWorkspace = response.data.organizations.find((item) => item.organization_id === 104);
+  const unassignedWorkspace = response.data.organizations.find((item) => item.organization_id === 105);
+  assert.equal(customerWorkspace.workspace_type, "customer");
+  assert.equal(customerWorkspace.partner_type, null);
+  assert.equal(partnerWorkspace.workspace_type, "partner");
+  assert.equal(partnerWorkspace.partner_type, "reseller");
+  assert.equal(unassignedWorkspace.workspace_type, "customer");
+  assert.equal(unassignedWorkspace.partner_type, null);
+
+  const selected = await callApi(d1, "organization-context", {
+    method: "POST",
+    token,
+    body: { organization_id: 104 },
+  });
+  assert.equal(selected.status, 200);
+  const partnerProfile = await callApi(d1, "partner/me", { token });
+  assert.equal(partnerProfile.status, 200);
+  assert.equal(partnerProfile.data.partner.partner_type, "reseller");
 });
 
 test("D1 capacity monitoring is restricted to super admins and reports platform recovery", async () => {
@@ -3163,6 +3252,192 @@ test("partner allocation history is returned for secure printable notes without 
   assert.equal(inventory.data.codes[0].edition_name, "Coaching Institute Edition");
   assert.equal(JSON.stringify(inventory.data).includes(batch.data.codes[0].activation_key), false);
   assert.equal(JSON.stringify(inventory.data).includes("activation_key_hash"), false);
+});
+
+test("customer reactivation automatically approves an available seat and returns an idempotent signed artifact", async () => {
+  const d1 = createD1Mock();
+  const customerToken = "reactivation-auto-customer";
+  const otherCustomerToken = "reactivation-auto-other-customer";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+1 day'))"
+  ).bind(customerToken).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 102, 102, datetime('now', '+1 day'))"
+  ).bind(otherCustomerToken).run();
+
+  assert.equal((await callApi(d1, "license/reactivations")).status, 401);
+  const options = await callApi(d1, "license/reactivations", { token: customerToken });
+  assert.equal(options.status, 200);
+  assert.ok(options.data.licenses.some((license) => license.license_id === 101));
+
+  const installationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const activationIdentifier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const { refreshPublicKey, bindings } = await createLicenseSignerBindings("reactivation-test-key");
+  const request = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(request.status, 201);
+  assert.equal(request.data.status, "approved");
+
+  const duplicate = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(duplicate.status, 200);
+  assert.equal(duplicate.data.request_id, request.data.request_id);
+  assert.equal((await callApi(d1, `license/reactivations/${request.data.request_id}`, {
+    token: otherCustomerToken,
+  })).status, 404);
+  assert.equal((await callApi(d1, "license/activate", {
+    method: "POST",
+    token: otherCustomerToken,
+    body: { reactivation_request_id: request.data.request_id },
+    bindings,
+  })).status, 404);
+
+  const activation = await callApi(d1, "license/activate", {
+    method: "POST",
+    token: customerToken,
+    body: { reactivation_request_id: request.data.request_id },
+    bindings,
+  });
+  assert.equal(activation.status, 201);
+  assert.ok(activation.data.artifact.signature);
+  assert.equal(d1.raw.prepare(
+    "SELECT status FROM license_reactivation_requests WHERE request_id = ?"
+  ).get(request.data.request_id).status, "completed");
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM license_activations WHERE license_id = 101 AND status = 'active'"
+  ).get().count, 2);
+
+  const retry = await callApi(d1, "license/activate", {
+    method: "POST",
+    token: customerToken,
+    body: { reactivation_request_id: request.data.request_id },
+    bindings,
+  });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.data.artifact.document_id, activation.data.artifact.document_id);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM license_artifacts WHERE license_id = 101"
+  ).get().count, 1);
+
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = datetime('now') WHERE id = 101"
+  ).run();
+  const cooldownRequest = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      activation_identifier: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(cooldownRequest.status, 201);
+  assert.equal(cooldownRequest.data.status, "pending");
+});
+
+test("full-seat reactivation requires phone confirmation and an audited installation replacement", async () => {
+  const d1 = createD1Mock();
+  const customerToken = "reactivation-review-customer";
+  const adminToken = "reactivation-review-admin";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+1 day'))"
+  ).bind(customerToken).run();
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'user', 201, 201, datetime('now', '+1 day'))"
+  ).bind(adminToken).run();
+  d1.raw.prepare("UPDATE licenses SET seats = 1 WHERE id = 101").run();
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = datetime('now') WHERE id = 101"
+  ).run();
+
+  const replacement = d1.raw.prepare(
+    "SELECT id FROM license_activations WHERE license_id = 101 AND status = 'active'"
+  ).get();
+  const installationId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const activationIdentifier = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const { refreshPublicKey, bindings } = await createLicenseSignerBindings("reactivation-review-key");
+  const requested = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: installationId,
+      activation_identifier: activationIdentifier,
+      refresh_public_key: refreshPublicKey,
+    },
+  });
+  assert.equal(requested.status, 201);
+  assert.equal(requested.data.status, "pending");
+  assert.equal(requested.data.notification_status, "failed");
+  assert.equal((await callApi(d1, "admin/license-reactivations", { token: customerToken })).status, 403);
+
+  const queue = await callApi(d1, "admin/license-reactivations", { token: adminToken });
+  assert.equal(queue.status, 200);
+  assert.equal(queue.data.requests.length, 1);
+  const detail = await callApi(d1, `admin/license-reactivations/${requested.data.request_id}`, {
+    token: adminToken,
+  });
+  assert.equal(detail.status, 200);
+  assert.equal(detail.data.request.customer_phone, "+91 9876543210");
+
+  const review = (body) => callApi(d1, `admin/license-reactivations/${requested.data.request_id}`, {
+    method: "POST",
+    token: adminToken,
+    body: { decision: "approve", reason: "Customer verified by support call", ...body },
+  });
+  assert.equal((await review({})).status, 400);
+  assert.equal((await review({ phone_confirmed: true })).status, 409);
+  assert.equal((await review({
+    phone_confirmed: true,
+    replaced_activation_id: replacement.id,
+  })).status, 409);
+  assert.equal((await review({
+    phone_confirmed: true,
+    cooldown_override: true,
+  })).status, 409);
+  const approved = await review({
+    phone_confirmed: true,
+    replaced_activation_id: replacement.id,
+    cooldown_override: true,
+  });
+  assert.equal(approved.status, 200);
+  assert.equal(d1.raw.prepare(
+    "SELECT status FROM license_activations WHERE id = ?"
+  ).get(replacement.id).status, "revoked");
+  const reviewedRequest = d1.raw.prepare(
+    "SELECT status, phone_confirmed_at, cooldown_override FROM license_reactivation_requests WHERE request_id = ?"
+  ).get(requested.data.request_id);
+  assert.equal(reviewedRequest.status, "approved");
+  assert.ok(reviewedRequest.phone_confirmed_at);
+  assert.equal(reviewedRequest.cooldown_override, 1);
+
+  const activation = await callApi(d1, "license/activate", {
+    method: "POST",
+    token: customerToken,
+    body: { reactivation_request_id: requested.data.request_id },
+    bindings,
+  });
+  assert.equal(activation.status, 201);
+  assert.equal(d1.raw.prepare(
+    "SELECT COUNT(*) AS count FROM license_activations WHERE license_id = 101 AND status = 'active'"
+  ).get().count, 1);
 });
 
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {

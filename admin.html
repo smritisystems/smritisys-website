@@ -560,6 +560,15 @@
           <div id="adminLicenseCodesList" class="card hidden"></div>
         </section>
         <section class="admin-product-panel" id="adminProductPanelLicenses" role="tabpanel" aria-labelledby="adminProductTabLicenses" data-product-panel="licenses" hidden>
+          <div class="section-head dashboard-head"><div><span class="eyebrow">Customer account workflow</span><h2>License reactivation review</h2></div><button id="adminReactivationRefresh" class="secondary" type="button">Refresh requests</button></div>
+          <p class="muted">Before approval, call the customer's registered phone. If the license is at capacity, select the active installation being replaced. Device transfer cooldown exceptions must be explicitly confirmed and explained.</p>
+          <div class="admin-support-workspace">
+            <div class="admin-support-list-panel">
+              <div id="adminReactivationState" class="state-panel" aria-live="polite">Loading reactivation requests...</div>
+              <div id="adminReactivationList" class="admin-support-list hidden" role="list"></div>
+            </div>
+            <div id="adminReactivationDetail" class="card state-panel" aria-live="polite">Select a pending request to review.</div>
+          </div>
           <div class="section-head dashboard-head"><div><span class="eyebrow">Lifecycle &amp; audit</span><h2>Registration &amp; activation monitor</h2></div><p class="muted">Customer details are restricted to super admins and audited when inspected.</p></div>
           <div id="adminRegistrationMetrics" class="admin-registration-metrics" aria-live="polite"></div>
           <form id="adminRegistrationFilters" class="card admin-registration-filters">
@@ -673,6 +682,6 @@
   </section>
   <div id="adminPrintRoot" aria-hidden="true"></div>
   <script src="js/organization-context.js" defer></script>
-  <script src="js/admin.js?v=release-management-v1" defer></script>
+  <script src="js/admin.js?v=license-reactivation-v1" defer></script>
 </body>
 </html>

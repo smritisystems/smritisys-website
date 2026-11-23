@@ -4,9 +4,30 @@ import test from "node:test";
 
 const html = fs.readFileSync(new URL("../portal.html", import.meta.url), "utf8");
 const script = fs.readFileSync(new URL("../js/portal.js", import.meta.url), "utf8");
+const partnerHtml = fs.readFileSync(new URL("../partner.html", import.meta.url), "utf8");
+const partnerScript = fs.readFileSync(new URL("../js/partner.js", import.meta.url), "utf8");
+const commonLoginHtml = fs.readFileSync(new URL("../login.html", import.meta.url), "utf8");
+const commonLoginScript = fs.readFileSync(new URL("../js/login.js", import.meta.url), "utf8");
 const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.url), "utf8");
 const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 const requirementsMigration = fs.readFileSync(new URL("../migrations/0006_custom_requirements.sql", import.meta.url), "utf8");
+
+test("customer and partner entry points share sign-in and route by authorized membership", () => {
+  assert.match(commonLoginHtml, /id="commonLoginForm"/);
+  assert.match(commonLoginHtml, /id="workspaceOptions"/);
+  assert.match(commonLoginHtml, /href="\/admin"/);
+  assert.match(commonLoginScript, /type: 'customer'/);
+  assert.match(commonLoginScript, /loginApi\('organization-context'\)/);
+  assert.match(commonLoginScript, /workspace\.workspace_type === 'partner'/);
+  assert.match(commonLoginScript, /return '\/partner'/);
+  assert.match(commonLoginScript, /return '\/portal'/);
+  assert.match(html, /\/login\.html\?entry=customer/);
+  assert.match(partnerHtml, /\/login\.html\?entry=partner/);
+  assert.doesNotMatch(html, /id="loginForm"/);
+  assert.doesNotMatch(partnerHtml, /id="partnerLoginForm"/);
+  assert.match(script, /initializePortal\(\)/);
+  assert.match(partnerScript, /initializePartnerPortal\(\)/);
+});
 
 test("customer navigation exposes only implemented workspace sections", () => {
   for (const section of ["overview", "organization", "products", "licenses", "support", "requirements", "announcements", "profile"]) {
