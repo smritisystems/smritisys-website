@@ -142,6 +142,12 @@ test("license workspace exposes issuance, lifecycle, activation, and edition pol
   assert.match(script, /License-registered email/);
   assert.match(script, /evaluation-policy/);
   assert.match(script, /company\.binding/);
+  assert.match(html, /id="adminReactivationList"/);
+  assert.match(html, /id="adminReactivationDetail"/);
+  assert.match(script, /phone_confirmed/);
+  assert.match(script, /cooldown_override/);
+  assert.match(api, /async function handleAdminLicenseReactivationRequests/);
+  assert.match(api, /Select an active installation to replace before approving/);
 });
 
 test("license inventory reveals one encrypted key only after admin password confirmation", () => {
@@ -150,7 +156,7 @@ test("license inventory reveals one encrypted key only after admin password conf
   assert.match(script, /New keys can be revealed individually later/);
   assert.match(html, /id="licenseCodeRevealDialog"/);
   assert.match(html, /id="licenseCodeRevealPassword" type="password" autocomplete="current-password"/);
-  assert.match(html, /js\/admin\.js\?v=release-management-v1/);
+  assert.match(html, /js\/admin\.js\?v=license-reactivation-v1/);
   assert.match(script, /data-license-code-reveal-serial/);
   assert.match(script, /data-license-code-restore-serial/);
   assert.match(script, /\/restore/);

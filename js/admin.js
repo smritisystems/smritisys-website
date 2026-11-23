@@ -23,6 +23,8 @@ const adminState = {
   licenses: [],
   registrationPage: 1,
   registrationRequestId: 0,
+  reactivationRequestId: 0,
+  selectedReactivationId: null,
   organizations: [],
   organizationDetailRequestId: 0,
   partners: [],
@@ -1528,6 +1530,111 @@ async function loadLicenseRegistrations({ resetPage = false } = {}) {
   }
 }
 
+function renderAdminReactivationRequests(requests) {
+  const state = admin$('#adminReactivationState');
+  const list = admin$('#adminReactivationList');
+  if (!requests.length) {
+    state.className = 'state-panel';
+    state.textContent = 'No pending license reactivation requests.';
+    list.classList.add('hidden');
+    list.innerHTML = '';
+    adminState.selectedReactivationId = null;
+    admin$('#adminReactivationDetail').className = 'card state-panel';
+    admin$('#adminReactivationDetail').textContent = 'New customer requests will appear here.';
+    return;
+  }
+  state.classList.add('hidden');
+  list.classList.remove('hidden');
+  list.innerHTML = requests.map((item) => `
+    <button class="admin-support-ticket${item.request_id === adminState.selectedReactivationId ? ' active' : ''}"
+      type="button" data-admin-reactivation="${adminEscape(item.request_id)}"
+      aria-pressed="${item.request_id === adminState.selectedReactivationId}">
+      <span class="admin-support-ticket-head">
+        <span>${adminEscape(item.product_name)} · ${adminEscape(item.serial_number)}</span>
+        <span class="status">${adminEscape(item.active_activation_count)}/${adminEscape(item.seats)} seats</span>
+      </span>
+      <strong>${adminEscape(item.customer_name || 'Customer')}</strong>
+      <small>${adminEscape(item.customer_email)} · ${adminEscape(item.customer_phone || 'No phone on file')}</small>
+      <small>Received ${adminEscape(item.created_at)}</small>
+    </button>
+  `).join('');
+}
+
+async function loadAdminLicenseReactivationDetail(requestId) {
+  const detail = admin$('#adminReactivationDetail');
+  const requestSequence = ++adminState.reactivationRequestId;
+  adminState.selectedReactivationId = requestId;
+  detail.className = 'card state-panel';
+  detail.textContent = 'Loading request and active installations...';
+  try {
+    const data = await adminApi(`admin/license-reactivations/${encodeURIComponent(requestId)}`);
+    if (requestSequence !== adminState.reactivationRequestId) return;
+    const item = data.request;
+    const active = item.active_activations || [];
+    const requiresReplacement = Number(item.active_activation_count) >= Number(item.seats);
+    const cooldown = Number(item.transfer_cooldown_active) === 1;
+    detail.className = 'card';
+    detail.innerHTML = `
+      <div class="section-head compact"><div><span class="eyebrow">Pending request</span><h3>${adminEscape(item.product_name)} · ${adminEscape(item.serial_number)}</h3></div></div>
+      <dl>
+        <dt>Customer</dt><dd>${adminEscape(item.customer_name || 'Not available')}</dd>
+        <dt>Registered email</dt><dd>${adminEscape(item.customer_email)}</dd>
+        <dt>Registered phone — call this number</dt><dd><strong>${adminEscape(item.customer_phone || 'No phone on file')}</strong></dd>
+        <dt>Requested</dt><dd>${adminEscape(item.created_at)}</dd>
+        <dt>Active seats</dt><dd>${adminEscape(item.active_activation_count)} / ${adminEscape(item.seats)}</dd>
+        <dt>Expires</dt><dd>${adminEscape(item.expires_at)}</dd>
+      </dl>
+      ${item.status !== 'pending' ? `<p class="message">This request is ${adminEscape(item.status)} and can no longer be reviewed.</p>` : ''}
+      <form data-admin-reactivation-review="${adminEscape(item.request_id)}">
+        <div class="form-grid">
+          <div class="full">
+            <label for="adminReactivationReplacement">Active installation to replace${requiresReplacement ? ' (required)' : ' (optional)'}</label>
+            <select id="adminReactivationReplacement" name="replaced_activation_id" ${requiresReplacement ? 'required' : ''}>
+              <option value="">Do not replace an installation</option>
+              ${active.map((activation) => `<option value="${adminEscape(activation.id)}">Installation …${adminEscape(String(activation.installation_id).slice(-8))} · last seen ${adminEscape(activation.last_seen_at || 'unknown')}</option>`).join('')}
+            </select>
+            ${requiresReplacement ? '<small class="muted">The license has no free seat; one active installation must be released.</small>' : ''}
+          </div>
+          ${cooldown ? `<div class="full"><label><input name="cooldown_override" type="checkbox" value="true" /> Override the 30-day transfer cooldown (available ${adminEscape(item.transfer_available_at)})</label><small class="muted">Use only after verifying the customer by phone and documenting the reason.</small></div>` : ''}
+          <div class="full"><label><input name="phone_confirmed" type="checkbox" value="true" /> I called and confirmed with the customer at the registered phone number</label></div>
+          <div class="full"><label for="adminReactivationReason">Decision reason</label><textarea id="adminReactivationReason" name="reason" minlength="10" maxlength="500" rows="3" required></textarea></div>
+        </div>
+        <div class="form-actions">
+          <button class="primary" type="submit" name="decision" value="approve" ${item.status !== 'pending' ? 'disabled' : ''}>Approve</button>
+          <button class="secondary" type="submit" name="decision" value="reject" ${item.status !== 'pending' ? 'disabled' : ''}>Reject</button>
+        </div>
+        <p data-admin-reactivation-feedback class="message" role="status"></p>
+      </form>`;
+  } catch (error) {
+    if (requestSequence !== adminState.reactivationRequestId) return;
+    detail.className = 'card state-panel error-state';
+    detail.textContent = `Reactivation details could not be loaded: ${error.message}`;
+  }
+}
+
+async function loadAdminLicenseReactivations(preferredRequestId = adminState.selectedReactivationId) {
+  const requestSequence = ++adminState.reactivationRequestId;
+  const state = admin$('#adminReactivationState');
+  const list = admin$('#adminReactivationList');
+  state.className = 'state-panel';
+  state.textContent = 'Loading reactivation requests...';
+  list.classList.add('hidden');
+  try {
+    const data = await adminApi('admin/license-reactivations');
+    if (requestSequence !== adminState.reactivationRequestId) return;
+    const requests = data.requests || [];
+    const selected = requests.find((item) => item.request_id === preferredRequestId) || requests[0];
+    adminState.selectedReactivationId = selected?.request_id || null;
+    renderAdminReactivationRequests(requests);
+    if (selected) await loadAdminLicenseReactivationDetail(selected.request_id);
+  } catch (error) {
+    if (requestSequence !== adminState.reactivationRequestId) return;
+    adminStatePanel('adminReactivationState', 'adminReactivationList', `Reactivation queue is unavailable: ${error.message}`, true);
+    admin$('#adminReactivationDetail').className = 'card state-panel';
+    admin$('#adminReactivationDetail').textContent = 'Request details are unavailable.';
+  }
+}
+
 function renderLicenseDetails(licenseId, data, { allowActivationRevoke = true } = {}) {
   const registration = data.registration.registration;
   const registrationGroups = [
@@ -1942,6 +2049,10 @@ function selectAdminProductTab(tabName) {
   admin$$('.admin-product-panel').forEach((panel) => {
     panel.hidden = panel.dataset.productPanel !== tabName;
   });
+  if (tabName === 'licenses') {
+    loadLicenseRegistrations();
+    loadAdminLicenseReactivations();
+  }
 }
 
 const adminMobileNavToggle = admin$('#adminMobileNavToggle');
@@ -2033,6 +2144,54 @@ admin$('#adminOrganizationDetail').addEventListener('click', (event) => {
 admin$('#adminSupportFilters').addEventListener('submit', (event) => {
   event.preventDefault();
   loadAdminSupportTickets(1, null);
+});
+admin$('#adminReactivationRefresh').addEventListener('click', () => loadAdminLicenseReactivations());
+admin$('#adminReactivationList').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-admin-reactivation]');
+  if (!button) return;
+  loadAdminLicenseReactivationDetail(button.dataset.adminReactivation);
+  admin$$('[data-admin-reactivation]').forEach((item) => {
+    const selected = item === button;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-pressed', String(selected));
+  });
+});
+admin$('#adminReactivationDetail').addEventListener('submit', async (event) => {
+  const form = event.target.closest('[data-admin-reactivation-review]');
+  if (!form) return;
+  event.preventDefault();
+  const decision = event.submitter?.value;
+  if (!['approve', 'reject'].includes(decision)) return;
+  const values = new FormData(form);
+  if (decision === 'approve' && values.get('phone_confirmed') !== 'true') {
+    adminMessage(form.querySelector('[data-admin-reactivation-feedback]'),
+      'Confirm the phone call before approving.', false);
+    return;
+  }
+  const buttons = [...form.querySelectorAll('button[type="submit"]')];
+  buttons.forEach((button) => { button.disabled = true; });
+  const feedback = form.querySelector('[data-admin-reactivation-feedback]');
+  try {
+    const replacedActivation = values.get('replaced_activation_id');
+    await adminApi(`admin/license-reactivations/${encodeURIComponent(form.dataset.adminReactivation)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        decision,
+        reason: values.get('reason'),
+        phone_confirmed: values.get('phone_confirmed') === 'true',
+        replaced_activation_id: replacedActivation ? Number(replacedActivation) : null,
+        cooldown_override: values.get('cooldown_override') === 'true',
+      }),
+    });
+    await loadAdminLicenseReactivations(null);
+    const state = admin$('#adminReactivationState');
+    if (!state.classList.contains('hidden')) {
+      state.textContent = `Request ${decision === 'approve' ? 'approved' : 'rejected'}.`;
+    }
+  } catch (error) {
+    adminMessage(feedback, error.message, false);
+    buttons.forEach((button) => { button.disabled = false; });
+  }
 });
 admin$('#adminSupportList').addEventListener('click', (event) => {
   const button = event.target.closest('[data-admin-support-ticket]');

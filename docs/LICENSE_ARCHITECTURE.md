@@ -13,8 +13,8 @@ author: "Jawahar R Mallah"
 organization: "AITDL — AI Technology & Development Lab"
 status: "In Progress"
 tags: ["licensing", "Ed25519", "activation", "entitlements", "security", "D1", "monitoring", "channel-partners"]
-entities: ["License", "Activation", "Entitlement", "LicenseEvent", "LicenseCode", "Organization", "CustomerInvite", "CustomerPasswordReset", "PartnerCustomerLink", "D1StorageSnapshot"]
-api_routes: ["/api/license/activate", "/api/licenses", "/api/licenses/batches", "/api/licenses/batches/:batch_id/codes", "/api/licenses/batches/:batch_id/codes/:serial_number/reveal", "/api/licenses/batches/:batch_id/codes/:serial_number/restore", "/api/licenses/batches/:batch_id/issue", "/api/admin/customers", "/api/admin/customers/:id", "/api/admin/customers/:id/password-reset", "/api/admin/license-registrations", "/api/admin/license-registrations/:id", "/api/password-reset/complete", "/api/partner/customers", "/api/partner/customers/:id/contact", "/api/partner/inventory", "/api/partner/codes/:batch_id/:serial_number/reveal", "/api/products", "/api/admin/d1-operations"]
+entities: ["License", "Activation", "LicenseReactivationRequest", "Entitlement", "LicenseEvent", "LicenseCode", "Organization", "CustomerInvite", "CustomerPasswordReset", "PartnerCustomerLink", "D1StorageSnapshot"]
+api_routes: ["/api/license/activate", "/api/license/reactivations", "/api/license/reactivations/:request_id", "/api/admin/license-reactivations", "/api/admin/license-reactivations/:request_id", "/api/licenses", "/api/licenses/batches", "/api/licenses/batches/:batch_id/codes", "/api/licenses/batches/:batch_id/codes/:serial_number/reveal", "/api/licenses/batches/:batch_id/codes/:serial_number/restore", "/api/licenses/batches/:batch_id/issue", "/api/admin/customers", "/api/admin/customers/:id", "/api/admin/customers/:id/password-reset", "/api/admin/license-registrations", "/api/admin/license-registrations/:id", "/api/password-reset/complete", "/api/partner/customers", "/api/partner/customers/:id/contact", "/api/partner/inventory", "/api/partner/codes/:batch_id/:serial_number/reveal", "/api/products", "/api/admin/d1-operations"]
 related_modules: ["12_RBAC_SECURITY", "13_SYSADMIN_SETTINGS", "16_DATABASE_API"]
 ---
 
@@ -41,6 +41,7 @@ Organizations are not accepted from the browser as ownership proof. License owne
 - `license_editions`: edition assignment for a license.
 - `license_entitlements`: extensible key/value records such as `users`, `branches`, `devices`, `modules`, `industry_pack`, and `support_level`.
 - `license_activations`: installation and activation identifiers, an installation refresh public key, and limited operational metadata.
+- `license_reactivation_requests`: authenticated customer requests, installation identity, administrator phone-confirmation and decision audit fields, cooldown exceptions, notification state, and request expiry.
 - `license_refresh_nonces`: short-lived, single-use refresh nonces used to reject replayed signed requests.
 - `license_events`: append-only license history.
 - `audit_logs`: security/governance audit records, separate from business event history.
@@ -76,6 +77,18 @@ Direct customer license issuance is restricted to super admins. It creates the c
 ## Activation and idempotency
 
 Activation requires an installation ID, activation identifier, and an exact non-empty `company.binding` text entitlement. An unbound or mismatched company is rejected before signing. Entitlement keys must be unique within a license. The pair `(license_id, activation_identifier)` is unique. Repeating an activation updates `last_seen_at` and does not create duplicate activation or history rows.
+
+## Customer account reactivation
+
+The customer signs in to the existing PrathamOne customer account with its email and password; the reactivation endpoints do not issue or reveal passwords and do not use OTPs. The account must already be active and have a working password (activation-only accounts created by direct issuance must first complete the existing customer setup/reset workflow). License ownership is derived from the signed-in customer account, never from a customer ID supplied as proof by the client.
+
+`GET /api/license/reactivations` returns only that customer's active, in-date licenses with a product and non-empty `company.binding`. `POST /api/license/reactivations` binds the request to a server-validated license, company, installation ID, activation ID, and installation-generated Ed25519 refresh public key. If a seat is available and the 30-day transfer cooldown is inactive, the request is approved automatically. Otherwise it remains pending; no active installation is revoked automatically. Pending requests generate an email notice to the registered address, but email is a notification, not an approval factor.
+
+The super-admin queue shows the registered contact details and currently active installations. Approval requires an explicit confirmation that support called the registered phone, an audit reason, and—when all seats are occupied—the active installation to release. The API checks that replacement belongs to the same license, applies the existing 30-day self-service transfer cooldown unless a super admin explicitly records an override, and leaves the license's own status `ACTIVE`. Rejection and approval are audited; email delivery failures are returned and stored rather than silently treated as success. Customer requests expire after 24 hours. An approved request is consumed when the normal signed artifact is issued; retries return the same artifact rather than creating duplicate activations. `GET /api/license/reactivations/:request_id` exposes only the authenticated customer's request status and completed artifact.
+
+The website license server exposes this API and admin queue. The desktop product must call these endpoints after customer sign-in and import the returned installation-bound signed artifact; that client integration is separate from this website repository.
+
+Client sequence: authenticate against the existing `/api/login` endpoint over TLS; call `GET /api/license/reactivations` with the customer session; create a durable installation ID, activation ID, and refresh-key pair inside the product; then submit those values with the selected `license_id` to `POST /api/license/reactivations`. For an automatically approved request, call `POST /api/license/activate` with `{ "reactivation_request_id": "..." }`. For a pending request, poll the customer-owned status endpoint and retry activation after approval. Verify and import the returned artifact using the product's existing Ed25519 verification path. The private refresh key must remain on the installation; neither customer passwords nor private keys belong in these reactivation requests.
 
 Existing licenses without a company binding require an authorized customer-to-product mapping before their next activation; the system does not invent a binding during migration. New batch codes are generated unassigned, linked to one product/edition and commercial term, and have a default one-seat limit. On first claim, the customer supplies the institution name, contact name, email and phone; address and tax ID are optional. The licensing authority reuses the canonical customer only when the contact email and organization match, otherwise it rejects conflicting identity data.
 
@@ -154,6 +167,11 @@ Private signing material and signed artifact payload/signature bytes are not ren
 - `POST /api/licenses/:id/activations/:activationId/revoke`
 - `GET|PUT /api/products/:productId/editions/:editionId/evaluation-policy`
 - `POST /api/license/activate` (signed product activation)
+- `GET /api/license/reactivations` (customer's eligible licenses; sign-in required)
+- `POST /api/license/reactivations` (request reactivation; sign-in required)
+- `GET /api/license/reactivations/:request_id` (customer-owned status and completed artifact)
+- `GET /api/admin/license-reactivations` (super-admin pending queue)
+- `GET|POST /api/admin/license-reactivations/:request_id` (review; approval requires phone confirmation)
 - `POST /api/license/refresh` (installation-key-authenticated snapshot refresh)
 - `POST /api/v1/license/offline-request` (authorized PrathamOne admin; creates the request file)
 - `POST /api/v1/license/offline-import` (authorized PrathamOne admin; verifies and imports a signed response)

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in | SMRITISYS</title>
+  <meta name="description" content="Sign in once to choose your authorized SMRITISYS customer or partner workspace." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/design-system.css?v=shared-theme-v1" />
+  <link rel="stylesheet" href="css/portal.css?v=shared-workspace-login-v1" />
+</head>
+<body data-theme="customer">
+  <main class="login-shell">
+    <section class="login-art">
+      <div class="brand">SMRITISYS / ONE SIGN-IN</div>
+      <h1>One account. The right workspace.</h1>
+      <p>Use your customer account to access every customer and partner organization where you have active membership.</p>
+    </section>
+    <section class="login-panel">
+      <form id="commonLoginForm" class="login-box">
+        <span class="eyebrow">Customer and partner access</span>
+        <h2>Welcome back</h2>
+        <p class="muted">Sign in once. Your access is based on your active organization memberships.</p>
+        <label for="commonEmail">Email address</label>
+        <input id="commonEmail" name="email" type="email" autocomplete="username" required />
+        <label for="commonPassword">Password</label>
+        <input id="commonPassword" name="password" type="password" autocomplete="current-password" required />
+        <button id="commonLoginButton" class="primary" type="submit">Sign in</button>
+        <p id="commonLoginMessage" class="message" role="alert"></p>
+        <p class="login-support"><a href="/admin">Staff and admin sign in</a></p>
+      </form>
+
+      <section id="workspaceView" class="login-box hidden" aria-labelledby="workspaceHeading" aria-live="polite">
+        <span class="eyebrow">Authorized workspaces</span>
+        <h2 id="workspaceHeading">Choose where to work</h2>
+        <p id="workspaceMessage" class="muted">Select an organization. Your access and partner type are assigned by SMRITISYS.</p>
+        <div id="workspaceOptions" class="workspace-options"></div>
+        <p id="workspaceError" class="message" role="alert"></p>
+        <div class="login-actions">
+          <button id="useAnotherAccount" class="secondary" type="button">Use another account</button>
+          <button id="commonLogout" class="secondary hidden" type="button">Sign out</button>
+        </div>
+        <p class="login-support"><a href="/admin">Staff and admin sign in</a></p>
+      </section>
+    </section>
+  </main>
+  <script src="js/login.js" defer></script>
+</body>
+</html>

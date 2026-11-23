@@ -67,12 +67,8 @@ function showPortal() {
   loadPortal();
 }
 
-function showLogin(message = '') {
-  const contextDialog = $('#organizationContextDialog');
-  if (contextDialog?.open) contextDialog.close();
-  $('#portalView').classList.add('hidden');
-  $('#loginView').classList.remove('hidden');
-  setMessage($('#loginMessage'), message, false);
+function showLogin() {
+  window.location.replace('/login.html?entry=customer&notice=session');
 }
 
 function updateIdentity(profile) {
@@ -345,7 +341,17 @@ const organizationContext = window.createOrganizationContextController({
   formId: 'organizationContextForm',
   selectId: 'organizationContextSelect',
   messageId: 'organizationContextMessage',
-  onSelected: loadPortal,
+  onSelected: (workspace) => {
+    if (workspace?.workspace_type === 'partner') {
+      window.location.assign('/partner');
+      return;
+    }
+    if (workspace?.workspace_type === 'staff') {
+      window.location.assign('/admin');
+      return;
+    }
+    return loadPortal();
+  },
   onSignOut: logout,
 });
 
@@ -418,24 +424,6 @@ $$('.nav button[data-view]').forEach((button) => button.addEventListener('click'
 $$('[data-go]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.go)));
 $$('.refresh-view').forEach((button) => button.addEventListener('click', () => loadView(button.closest('.view').dataset.section)));
 $('#refreshDashboard').addEventListener('click', loadCustomerWorkspace);
-
-$('#loginForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const form = new FormData(event.target);
-  const button = event.target.querySelector('button');
-  button.disabled = true;
-  setMessage($('#loginMessage'), 'Signing in...', true);
-  try {
-    const data = await api('login', { method: 'POST', body: JSON.stringify({ email: form.get('email'), password: form.get('password') }) });
-    state.accountType = data.account_type;
-    state.token = null;
-    showPortal();
-  } catch (error) {
-    setMessage($('#loginMessage'), error.message, false);
-  } finally {
-    button.disabled = false;
-  }
-});
 
 $('#newTicketButton').addEventListener('click', () => $('#ticketForm').classList.toggle('hidden'));
 $('#ticketForm').addEventListener('submit', async (event) => {
@@ -544,4 +532,29 @@ document.addEventListener('submit', async (event) => {
   }
 });
 
-if (state.token) showPortal();
+async function initializePortal() {
+  try {
+    const context = await api('organization-context');
+    const selected = (context.organizations || []).find(
+      (workspace) => Number(workspace.organization_id) === Number(context.selected_organization_id),
+    );
+    if (!selected) {
+      window.location.replace('/login.html?entry=customer');
+      return;
+    }
+    if (selected.workspace_type === 'partner') {
+      window.location.replace('/partner');
+      return;
+    }
+    if (selected.workspace_type === 'staff') {
+      window.location.replace('/admin');
+      return;
+    }
+    showPortal();
+  } catch (error) {
+    const notice = error.status === 401 ? 'session' : 'workspace';
+    window.location.replace(`/login.html?entry=customer&notice=${notice}`);
+  }
+}
+
+initializePortal();
