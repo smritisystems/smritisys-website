@@ -17,7 +17,8 @@
     {
       "binding": "DB",
       "database_name": "smritisys-db",
-      "database_id": "19066da9-8183-42cb-92e3-c64d1ee799de"
+      "database_id": "19066da9-8183-42cb-92e3-c64d1ee799de",
+      "migrations_dir": "../migrations"
     }
   ]
 }

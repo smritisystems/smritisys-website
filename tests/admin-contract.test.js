@@ -25,6 +25,10 @@ const api = fs.readFileSync(new URL("../functions/api/[[path]].js", import.meta.
 const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 const d1Worker = fs.readFileSync(new URL("../d1-ops/src/index.js", import.meta.url), "utf8");
 const d1WorkerConfig = fs.readFileSync(new URL("../d1-ops/wrangler.jsonc", import.meta.url), "utf8");
+const d1StagingConfig = fs.readFileSync(new URL("../d1-ops/wrangler.staging.jsonc", import.meta.url), "utf8");
+const d1OperationsWorkflow = fs.readFileSync(new URL("../.github/workflows/deploy-d1-operations.yml", import.meta.url), "utf8");
+const signerConfig = fs.readFileSync(new URL("../license-signer/wrangler.jsonc", import.meta.url), "utf8");
+const signerStagingConfig = fs.readFileSync(new URL("../license-signer/wrangler.staging.jsonc", import.meta.url), "utf8");
 
  test("admin control plane is a separate authenticated workspace", () => {
   assert.match(html, /adminLoginForm/);
@@ -199,7 +203,18 @@ test("D1 monitoring reports Cloudflare recovery without claiming manual backups"
   assert.match(api, /free_per_database_bytes/);
   assert.match(d1WorkerConfig, /"crons": \["0 2 \* \* \*"\]/);
   assert.match(d1WorkerConfig, /19066da9-8183-42cb-92e3-c64d1ee799de/);
+  assert.match(d1WorkerConfig, /"migrations_dir": "\.\.\/migrations"/);
+  assert.match(d1OperationsWorkflow, /d1 migrations apply smritisys-db --remote --config d1-ops\/wrangler\.jsonc/);
   assert.doesNotMatch(d1WorkerConfig, /smritisys-db-recovery|67114a4c-c167-40db-8a58-00a5b9bf15cf|DB_SECONDARY/);
+  assert.match(d1StagingConfig, /"database_name": "smritisys-staging"/);
+  assert.match(d1StagingConfig, /"migrations_dir": "\.\.\/migrations"/);
+  assert.doesNotMatch(d1StagingConfig, /"crons"|smritisys-db|19066da9-8183-42cb-92e3-c64d1ee799de/);
+  assert.match(signerStagingConfig, /"name": "smritisys-license-signer-staging"/);
+  assert.match(signerStagingConfig, /"LICENSE_KEY_ID": "smritisys-ed25519-staging-2026-11"/);
+  assert.match(signerStagingConfig, /"workers_dev": false/);
+  assert.match(signerStagingConfig, /"preview_urls": false/);
+  assert.doesNotMatch(signerStagingConfig, /smritisys-ed25519-2026-11/);
+  assert.match(signerConfig, /"workers_dev": false/);
   assert.match(d1Worker, /scheduled\(controller, env, ctx\)/);
   assert.match(d1Worker, /d1_storage_snapshots/);
   assert.match(d1Worker, /env\.DB/);

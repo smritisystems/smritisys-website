@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "smritisys-d1-operations-staging",
+  "main": "./src/index.js",
+  "compatibility_date": "2026-11-15",
+  "workers_dev": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "DATABASE_ID": "5bbf2a39-06e9-420d-a9fb-d965c3bdac88",
+    "DATABASE_NAME": "smritisys-staging"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "smritisys-staging",
+      "database_id": "5bbf2a39-06e9-420d-a9fb-d965c3bdac88",
+      "migrations_dir": "../migrations"
+    }
+  ]
+}
