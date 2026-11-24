@@ -2654,6 +2654,10 @@ test("pre-generated license codes retain hash and encrypted key, claim once, and
     assert.equal(emailVerification.status, 200);
     const selectedLicense = emailVerification.data.licenses.find((license) => license.serial_number === code.serial_number);
     assert.ok(selectedLicense);
+    assert.ok(Array.isArray(selectedLicense.activation_history));
+    assert.equal(selectedLicense.activation_count, selectedLicense.activation_history.filter(
+      (activation) => activation.status === "active"
+    ).length);
     const emailActivation = await callApi(d1, "license/activate", {
       method: "POST",
       body: {
@@ -3254,6 +3258,29 @@ test("partner allocation history is returned for secure printable notes without 
   assert.equal(JSON.stringify(inventory.data).includes("activation_key_hash"), false);
 });
 
+function insertCustomerReleasedActivation(d1, {
+  licenseId = 101,
+  organizationId = 101,
+  installationId = "PRATHAM-1111-2222-3333-4444",
+  activationIdentifier = "11111111-1111-4111-8111-111111111111",
+} = {}) {
+  const activation = d1.raw.prepare(
+    `INSERT INTO license_activations
+       (license_id, installation_id, activation_identifier, status, activated_at, last_seen_at, deactivated_at)
+     VALUES (?, ?, ?, 'revoked', datetime('now', '-10 days'), datetime('now', '-5 days'), datetime('now', '-2 days'))`
+  ).run(licenseId, installationId, activationIdentifier);
+  const activationId = Number(activation.lastInsertRowid);
+  d1.raw.prepare(
+    `INSERT INTO license_events
+       (license_id, organization_id, event_type, previous_status, new_status, metadata_json)
+     VALUES (?, ?, 'ACTIVATION_REVOKED', 'ACTIVE', 'ACTIVE', ?)`
+  ).run(licenseId, organizationId, JSON.stringify({
+    activation_identifier: activationIdentifier,
+    source: "customer_self_deactivation",
+  }));
+  return activationId;
+}
+
 test("customer reactivation automatically approves an available seat and returns an idempotent signed artifact", async () => {
   const d1 = createD1Mock();
   const customerToken = "reactivation-auto-customer";
@@ -3266,9 +3293,19 @@ test("customer reactivation automatically approves an available seat and returns
   ).bind(otherCustomerToken).run();
 
   assert.equal((await callApi(d1, "license/reactivations")).status, 401);
+  const releasedActivationId = insertCustomerReleasedActivation(d1);
   const options = await callApi(d1, "license/reactivations", { token: customerToken });
   assert.equal(options.status, 200);
-  assert.ok(options.data.licenses.some((license) => license.license_id === 101));
+  const customerLicense = options.data.licenses.find((license) => license.license_id === 101);
+  assert.ok(customerLicense);
+  assert.equal(customerLicense.activation_count, customerLicense.active_activation_count);
+  assert.ok(customerLicense.activation_history.some((activation) =>
+    activation.activation_id === releasedActivationId &&
+    activation.status === "released" &&
+    activation.release_source === "customer" &&
+    activation.device_label.endsWith("4444") &&
+    !Object.prototype.hasOwnProperty.call(activation, "installation_id")
+  ));
 
   const installationId = "PRATHAM-789F-CEBC-0916-6315";
   const activationIdentifier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -3325,7 +3362,7 @@ test("customer reactivation automatically approves an available seat and returns
   assert.equal(invalidPublicKey.status, 400);
   assert.equal(invalidPublicKey.data.error, "A valid 32-byte Ed25519 refresh_public_key is required");
 
-  const surrenderRequest = await callApi(d1, "license/reactivations", {
+  const unboundSurrenderClaim = await callApi(d1, "license/reactivations", {
     method: "POST",
     token: customerToken,
     body: {
@@ -3337,8 +3374,46 @@ test("customer reactivation automatically approves an available seat and returns
       surrender_reason: "Previous device surrendered to support",
     },
   });
+  assert.equal(unboundSurrenderClaim.status, 400);
+  const unverifiedSurrenderClaim = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      activation_identifier: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      refresh_public_key: refreshPublicKey,
+      surrender_confirmed: true,
+      surrender_reason: "Previous device surrendered to support",
+      surrendered_activation_id: 999999,
+    },
+  });
+  assert.equal(unverifiedSurrenderClaim.status, 409);
+
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = datetime('now') WHERE id = 101"
+  ).run();
+  const surrenderRequest = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      activation_identifier: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      refresh_public_key: refreshPublicKey,
+      surrender_confirmed: true,
+      surrender_reason: "Previous device surrendered to support",
+      surrendered_activation_id: releasedActivationId,
+    },
+  });
   assert.equal(surrenderRequest.status, 201);
-  assert.equal(surrenderRequest.data.status, "approved");
+  assert.equal(surrenderRequest.data.status, "pending");
+  assert.equal(d1.raw.prepare(
+    "SELECT surrendered_activation_id FROM license_reactivation_requests WHERE request_id = ?"
+  ).get(surrenderRequest.data.request_id).surrendered_activation_id, releasedActivationId);
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = NULL WHERE id = 101"
+  ).run();
 
   const request = await callApi(d1, "license/reactivations", {
     method: "POST",
@@ -3439,6 +3514,10 @@ test("full-seat reactivation requires phone confirmation and an audited installa
   const replacement = d1.raw.prepare(
     "SELECT id FROM license_activations WHERE license_id = 101 AND status = 'active'"
   ).get();
+  const surrenderedActivationId = insertCustomerReleasedActivation(d1, {
+    installationId: "PRATHAM-5555-6666-7777-8888",
+    activationIdentifier: "22222222-2222-4222-8222-222222222222",
+  });
   const installationId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const activationIdentifier = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
   const { refreshPublicKey, bindings } = await createLicenseSignerBindings("reactivation-review-key");
@@ -3450,6 +3529,9 @@ test("full-seat reactivation requires phone confirmation and an audited installa
       installation_id: installationId,
       activation_identifier: activationIdentifier,
       refresh_public_key: refreshPublicKey,
+      surrender_confirmed: true,
+      surrender_reason: "Previous device was released",
+      surrendered_activation_id: surrenderedActivationId,
     },
   });
   assert.equal(requested.status, 201);
@@ -3465,6 +3547,8 @@ test("full-seat reactivation requires phone confirmation and an audited installa
   });
   assert.equal(detail.status, 200);
   assert.equal(detail.data.request.customer_phone, "+91 9876543210");
+  assert.equal(detail.data.request.surrendered_activation_id, surrenderedActivationId);
+  assert.equal(detail.data.request.surrendered_activation.id, surrenderedActivationId);
 
   const review = (body) => callApi(d1, `admin/license-reactivations/${requested.data.request_id}`, {
     method: "POST",
