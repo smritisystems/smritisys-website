@@ -107,6 +107,10 @@ DRAFT license keys are not returned to customer list responses, and the authorit
 - Configure a concrete signer backed by the selected protected KMS/HSM before enabling real issuance. No vendor or key has been selected, and no signing infrastructure is provisioned by this source change.
 - Offline activation uses a PrathamOne-generated request file containing the serial number, registration details, installation IDs and public refresh key, but no activation key or private key. The customer uploads the request and enters the activation key on `/offline-activation.html`, downloads the signed response, and imports it into the same installation. The authority still performs the claim online; only the product installation can import the resulting artifact because it is signed and bound to that installation.
 
+## Production entitlement enforcement
+
+PrathamOne production artifacts are issued with `rollout_stage: enforced`; the authority rejects new `shadow` policy updates and migration `0036` converts existing PrathamOne edition policies to `enforced`. The product evaluates entitlements regardless of the artifact rollout metadata, so a legacy signed `shadow` value is not an enforcement bypass on updated product builds. Deploy the product enforcement change and apply the authority migration before issuing new production artifacts. Previously installed binaries must be upgraded; the authority cannot remotely change code already running on a customer-controlled host.
+
 ## Channel partner sales governance
 
 SMRITISYS remains the licensing and customer-identity authority. Partner organizations are the existing `organizations` records with an authorized partner type; customer organizations and customer accounts continue to use their existing canonical records. Partner operations add attribution and access, not duplicate customer or license masters.

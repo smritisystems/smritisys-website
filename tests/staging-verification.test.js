@@ -3591,6 +3591,44 @@ test("full-seat reactivation requires phone confirmation and an audited installa
   assert.equal(d1.raw.prepare(
     "SELECT COUNT(*) AS count FROM license_activations WHERE license_id = 101 AND status = 'active'"
   ).get().count, 1);
+
+  // Verify root POST admin/license-reactivations contract without request_id in path
+  const rootReviewMissingId = await callApi(d1, "admin/license-reactivations", {
+    method: "POST",
+    token: adminToken,
+    body: { decision: "reject", reason: "Customer requested cancellation of request" },
+  });
+  assert.equal(rootReviewMissingId.status, 400);
+
+  // Test rejection via root endpoint on a separate pending request
+  const rejectReq = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      activation_identifier: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      refresh_public_key: refreshPublicKey,
+      surrender_confirmed: true,
+      surrender_reason: "Previous device was replaced",
+      surrendered_activation_id: surrenderedActivationId,
+    },
+  });
+  assert.equal(rejectReq.status, 201);
+  const rejectReqId = rejectReq.data.request_id;
+
+  const rootReject = await callApi(d1, "admin/license-reactivations", {
+    method: "POST",
+    token: adminToken,
+    body: { request_id: rejectReqId, decision: "reject", reason: "Customer requested cancellation of request" },
+  });
+  assert.equal(rootReject.status, 200);
+  assert.equal(rootReject.data.status, "rejected");
+  const rejectedRecord = d1.raw.prepare(
+    "SELECT status, decision_reason FROM license_reactivation_requests WHERE request_id = ?"
+  ).get(rejectReqId);
+  assert.equal(rejectedRecord.status, "rejected");
+  assert.equal(rejectedRecord.decision_reason, "Customer requested cancellation of request");
 });
 
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
