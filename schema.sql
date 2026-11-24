@@ -557,6 +557,7 @@ CREATE TABLE IF NOT EXISTS license_reactivation_requests (
   cooldown_override INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_override IN (0, 1)),
   surrender_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (surrender_confirmed IN (0, 1)),
   surrender_reason TEXT,
+  surrendered_activation_id INTEGER,
   notification_status TEXT NOT NULL DEFAULT 'pending'
     CHECK (notification_status IN ('pending', 'sent', 'failed')),
   notification_attempts INTEGER NOT NULL DEFAULT 0,
@@ -571,12 +572,15 @@ CREATE TABLE IF NOT EXISTS license_reactivation_requests (
   FOREIGN KEY (organization_id) REFERENCES organizations(id),
   FOREIGN KEY (requester_person_id) REFERENCES people(id),
   FOREIGN KEY (replaced_activation_id) REFERENCES license_activations(id),
+  FOREIGN KEY (surrendered_activation_id) REFERENCES license_activations(id),
   FOREIGN KEY (reviewed_by_person_id) REFERENCES people(id)
 );
 CREATE INDEX IF NOT EXISTS idx_license_reactivation_requests_status
   ON license_reactivation_requests(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_license_reactivation_requests_customer
   ON license_reactivation_requests(customer_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_license_reactivation_surrendered_activation
+  ON license_reactivation_requests(surrendered_activation_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_license_reactivation_requests_active_target
   ON license_reactivation_requests(license_id, activation_identifier)
   WHERE status IN ('pending', 'approved');
