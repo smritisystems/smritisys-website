@@ -600,8 +600,19 @@ async function verifyLicenseEmail(request, env, origin) {
   ).bind(challengeId).run();
   const { results } = await env.DB.prepare(
     `SELECT l.id AS license_id, l.serial_number, l.seats,
+            l.expires_at, p.name AS product_name, p.slug AS product_code,
             (SELECT COUNT(*) FROM license_activations la
-             WHERE la.license_id = l.id AND la.status = 'active') AS activation_count
+             WHERE la.license_id = l.id AND la.status = 'active') AS activation_count,
+            (SELECT pe.name FROM license_editions le
+             JOIN product_editions pe ON pe.id = le.edition_id
+             WHERE le.license_id = l.id LIMIT 1) AS edition,
+            (SELECT e.value_text FROM license_entitlements e
+             WHERE e.license_id = l.id AND e.entitlement_key = 'license.model') AS license_model,
+            l.status,
+            datetime(l.last_self_service_transfer_at, '+30 days') AS transfer_available_at,
+            CASE WHEN l.last_self_service_transfer_at IS NOT NULL
+                   AND julianday(l.last_self_service_transfer_at) > julianday('now', '-30 days')
+                 THEN 1 ELSE 0 END AS transfer_cooldown_active
      FROM licenses l
      JOIN products p ON p.id = l.product_id AND p.slug = ?
      JOIN license_entitlements e ON e.license_id = l.id
@@ -609,10 +620,14 @@ async function verifyLicenseEmail(request, env, origin) {
      WHERE lower(l.registered_email) = ? AND l.status = 'ACTIVE'
      ORDER BY l.id DESC`
   ).bind(challenge.product_code, challenge.company_binding, challenge.email).all();
+  const activationHistory = await getCustomerActivationHistory(env, results || []);
   return json({
     ok: true,
     stage: "complete",
-    licenses: results,
+    licenses: (results || []).map((license) => ({
+      ...license,
+      activation_history: activationHistory.get(Number(license.license_id)) || [],
+    })),
   }, 200, origin);
 }
 
@@ -1456,6 +1471,61 @@ async function claimLicenseCode(env, { serialNumber, activationKey, productCode,
   return { license_id: licenseId.license_id };
 }
 
+async function getCustomerActivationHistory(env, licenses) {
+  const licenseIds = [...new Set((licenses || [])
+    .map((license) => Number(license.license_id))
+    .filter((id) => Number.isInteger(id) && id > 0))];
+  const historyByLicense = new Map(licenseIds.map((id) => [id, []]));
+
+  for (let offset = 0; offset < licenseIds.length; offset += 80) {
+    const chunk = licenseIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      `SELECT la.id, la.license_id, la.installation_id, la.status,
+              la.activated_at, la.last_seen_at, la.deactivated_at,
+              e.id AS release_event_id, e.actor_person_id AS release_actor_person_id,
+              json_extract(e.metadata_json, '$.source') AS release_event_source
+       FROM license_activations la
+       LEFT JOIN license_events e ON e.id = (
+         SELECT ev.id
+         FROM license_events ev
+         WHERE ev.license_id = la.license_id
+           AND ev.event_type = 'ACTIVATION_REVOKED'
+           AND (
+             json_extract(ev.metadata_json, '$.activation_id') = la.id
+             OR json_extract(ev.metadata_json, '$.activation_identifier') = la.activation_identifier
+           )
+         ORDER BY ev.id DESC LIMIT 1
+       )
+       WHERE la.license_id IN (${placeholders})
+       ORDER BY la.license_id, la.activated_at DESC, la.id DESC`
+    ).bind(...chunk).all();
+
+    for (const row of results || []) {
+      const source = row.release_event_source === "customer_self_deactivation"
+        ? "customer"
+        : row.release_event_source === "admin_reactivation_review" || row.release_actor_person_id != null
+          ? "support"
+          : null;
+      const normalizedInstallationId = String(row.installation_id || "")
+        .replace(/[^a-z0-9]/gi, "")
+        .toUpperCase();
+      const deviceSuffix = normalizedInstallationId.slice(-4);
+      historyByLicense.get(Number(row.license_id)).push({
+        activation_id: Number(row.id),
+        device_label: deviceSuffix ? `Device ····${deviceSuffix}` : "Previous device",
+        status: row.status === "active" ? "active" : source ? "released" : "deactivated",
+        activated_at: row.activated_at || null,
+        last_seen_at: row.last_seen_at || null,
+        deactivated_at: row.deactivated_at || null,
+        release_source: source,
+      });
+    }
+  }
+
+  return historyByLicense;
+}
+
 async function listCustomerLicenseReactivationOptions(request, env, origin) {
   const session = await getCustomerAccountSession(request, env);
   if (!session) return json({ ok: false, error: "Customer sign-in required" }, 401, origin);
@@ -1463,10 +1533,17 @@ async function listCustomerLicenseReactivationOptions(request, env, origin) {
   const { results } = await env.DB.prepare(
     `SELECT l.id AS license_id, l.serial_number, l.seats, l.expires_at,
             p.slug AS product_code, p.name AS product_name,
+            (SELECT pe.name FROM license_editions le
+             JOIN product_editions pe ON pe.id = le.edition_id
+             WHERE le.license_id = l.id LIMIT 1) AS edition,
             (SELECT e.value_text FROM license_entitlements e
-             WHERE e.license_id = l.id AND e.entitlement_key = 'company.binding') AS company_binding,
+             WHERE e.license_id = l.id AND e.entitlement_key = 'license.model') AS license_model,
             (SELECT COUNT(*) FROM license_activations la
-             WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count
+             WHERE la.license_id = l.id AND la.status = 'active') AS active_activation_count,
+            datetime(l.last_self_service_transfer_at, '+30 days') AS transfer_available_at,
+            CASE WHEN l.last_self_service_transfer_at IS NOT NULL
+                   AND julianday(l.last_self_service_transfer_at) > julianday('now', '-30 days')
+                 THEN 1 ELSE 0 END AS transfer_cooldown_active
      FROM licenses l
      JOIN products p ON p.id = l.product_id AND p.status = 'active'
      JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
@@ -1480,7 +1557,16 @@ async function listCustomerLicenseReactivationOptions(request, env, origin) {
        )
      ORDER BY p.name COLLATE NOCASE, l.id`
   ).bind(session.account_id).all();
-  return json({ ok: true, licenses: results || [] }, 200, origin, { "Cache-Control": "no-store" });
+  const licenses = results || [];
+  const activationHistory = await getCustomerActivationHistory(env, licenses);
+  return json({
+    ok: true,
+    licenses: licenses.map((license) => ({
+      ...license,
+      activation_count: Number(license.active_activation_count || 0),
+      activation_history: activationHistory.get(Number(license.license_id)) || [],
+    })),
+  }, 200, origin, { "Cache-Control": "no-store" });
 }
 
 async function requestLicenseReactivation(request, env, origin) {
@@ -1503,8 +1589,16 @@ async function requestLicenseReactivation(request, env, origin) {
   const refreshPublicKey = boundedString(body?.refresh_public_key, 100);
   const surrenderConfirmed = body?.surrender_confirmed === true;
   const surrenderReason = surrenderConfirmed ? boundedString(body?.surrender_reason, 300) : null;
-  if (surrenderConfirmed && (!surrenderReason || surrenderReason.length < 10)) {
-    return json({ ok: false, error: "A surrender reason of at least 10 characters is required" }, 400, origin);
+  const surrenderedActivationId = body?.surrendered_activation_id == null
+    ? null
+    : numericId(body.surrendered_activation_id);
+  if ((body?.surrendered_activation_id != null && !surrenderedActivationId) ||
+      (surrenderConfirmed && (!surrenderedActivationId || !surrenderReason || surrenderReason.length < 10)) ||
+      (!surrenderConfirmed && surrenderedActivationId)) {
+    return json({
+      ok: false,
+      error: "A surrender claim must identify a previously released device and include a reason of at least 10 characters",
+    }, 400, origin);
   }
   const refreshPublicKeyBytes = decodeBase64Url(refreshPublicKey);
   if (!licenseId) {
@@ -1542,6 +1636,28 @@ async function requestLicenseReactivation(request, env, origin) {
   ).bind(licenseId, session.account_id).first();
   if (!license) {
     return json({ ok: false, error: "An eligible license was not found for this customer account" }, 404, origin);
+  }
+
+  if (surrenderConfirmed) {
+    const releasedActivation = await env.DB.prepare(
+      `SELECT la.id
+       FROM license_activations la
+       WHERE la.id = ? AND la.license_id = ? AND la.status = 'revoked'
+         AND EXISTS (
+           SELECT 1 FROM license_events e
+           WHERE e.license_id = la.license_id AND e.event_type = 'ACTIVATION_REVOKED'
+             AND (
+               json_extract(e.metadata_json, '$.activation_id') = la.id
+               OR json_extract(e.metadata_json, '$.activation_identifier') = la.activation_identifier
+             )
+         )`
+    ).bind(surrenderedActivationId, license.id).first();
+    if (!releasedActivation) {
+      return json({
+        ok: false,
+        error: "The selected device has no verified release record for this license. Refresh the license list or submit without a surrender claim.",
+      }, 409, origin);
+    }
   }
 
   const existingRequest = await env.DB.prepare(
@@ -1596,9 +1712,7 @@ async function requestLicenseReactivation(request, env, origin) {
      WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
        AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
   ).bind(license.id).first();
-  const status = surrenderConfirmed
-    ? "approved"
-    : Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown
+  const status = Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown
     ? "approved"
     : "pending";
   const requestId = crypto.randomUUID();
@@ -1606,12 +1720,13 @@ async function requestLicenseReactivation(request, env, origin) {
     `INSERT OR IGNORE INTO license_reactivation_requests
        (request_id, license_id, customer_id, organization_id, requester_person_id,
         product_code, company_binding, installation_id, activation_identifier,
-      refresh_public_key, status, surrender_confirmed, surrender_reason, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
+       refresh_public_key, status, surrender_confirmed, surrender_reason,
+       surrendered_activation_id, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
   ).bind(
     requestId, license.id, session.account_id, license.organization_id, session.person_id,
     license.product_code, license.company_binding, installationId, activationIdentifier,
-    refreshPublicKey, status, surrenderConfirmed ? 1 : 0, surrenderReason,
+    refreshPublicKey, status, surrenderConfirmed ? 1 : 0, surrenderReason, surrenderedActivationId,
   ).run();
   if (Number(inserted?.meta?.changes || 0) !== 1) {
     return json({ ok: false, error: "The reactivation request could not be created" }, 409, origin);
@@ -1623,13 +1738,24 @@ async function requestLicenseReactivation(request, env, origin) {
   await writeAudit(
     env, request, session, "CUSTOMER_LICENSE_REACTIVATION_REQUESTED",
     "license_reactivation_request", requestId, null,
-    { license_id: license.id, status, installation_id: installationId },
+    {
+      license_id: license.id,
+      status,
+      installation_id: installationId,
+      surrender_confirmed: surrenderConfirmed,
+      surrendered_activation_id: surrenderedActivationId,
+    },
   );
   if (license.organization_id) {
     await recordLicenseEvent(
       env, license, session, "LICENSE_REACTIVATION_REQUESTED",
       license.status, license.status,
-      { request_id: requestId, status, installation_id: installationId },
+      {
+        request_id: requestId,
+        status,
+        installation_id: installationId,
+        surrendered_activation_id: surrenderedActivationId,
+      },
     );
   }
 
@@ -2402,6 +2528,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     const { results } = await env.DB.prepare(
       `SELECT r.request_id, r.license_id, r.status, r.created_at, r.expires_at,
               r.installation_id, r.product_code, l.serial_number, p.name AS product_name,
+              r.surrender_confirmed, r.surrendered_activation_id,
               c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
               l.seats,
               (SELECT COUNT(*) FROM license_activations la
@@ -2420,7 +2547,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     const record = await env.DB.prepare(
       `SELECT r.request_id, r.license_id, r.customer_id, r.status, r.created_at, r.expires_at,
               r.installation_id, r.product_code, l.serial_number, p.name AS product_name,
-              r.surrender_confirmed, r.surrender_reason,
+              r.surrender_confirmed, r.surrender_reason, r.surrendered_activation_id,
               c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
               l.seats,
               (SELECT COUNT(*) FROM license_activations la
@@ -2442,9 +2569,20 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
        WHERE license_id = ? AND status = 'active'
        ORDER BY last_seen_at DESC`
     ).bind(record.license_id).all();
+    const surrenderedActivation = record.surrendered_activation_id
+      ? await env.DB.prepare(
+        `SELECT id, installation_id, activation_identifier, status, activated_at, deactivated_at
+         FROM license_activations
+         WHERE id = ? AND license_id = ?`
+      ).bind(record.surrendered_activation_id, record.license_id).first()
+      : null;
     return json({
       ok: true,
-      request: { ...record, active_activations: activations || [] },
+      request: {
+        ...record,
+        surrendered_activation: surrenderedActivation,
+        active_activations: activations || [],
+      },
     }, 200, origin, { "Cache-Control": "no-store" });
   }
 
@@ -2488,8 +2626,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
      WHERE r.request_id = ?`
   ).bind(requestId).first();
   if (!record) return json({ ok: false, error: "Reactivation request not found" }, 404, origin);
-  const effectiveCooldownOverride =
-    cooldownOverride === true || Number(record.surrender_confirmed || 0) === 1;
+  const effectiveCooldownOverride = cooldownOverride === true;
   if (record.status !== "pending") {
     return json({ ok: false, error: "Only pending reactivation requests can be reviewed" }, 409, origin);
   }
@@ -2549,7 +2686,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
      WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
        AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
   ).bind(record.license_id).first();
-  if (effectiveCooldownOverride && !cooldown && !record.surrender_confirmed) {
+  if (effectiveCooldownOverride && !cooldown) {
     return json({ ok: false, error: "There is no active device transfer cooldown to override" }, 400, origin);
   }
   if (cooldown && !effectiveCooldownOverride) {
