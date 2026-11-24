@@ -500,7 +500,7 @@ CREATE TABLE IF NOT EXISTS license_editions (
 CREATE TABLE IF NOT EXISTS product_edition_license_policies (
   edition_id INTEGER PRIMARY KEY,
   subscription_grace_days INTEGER NOT NULL DEFAULT 7 CHECK (subscription_grace_days BETWEEN 0 AND 30),
-  rollout_stage TEXT NOT NULL DEFAULT 'shadow' CHECK (rollout_stage IN ('shadow', 'enforced')),
+  rollout_stage TEXT NOT NULL DEFAULT 'enforced' CHECK (rollout_stage IN ('shadow', 'enforced')),
   evaluation_policy_json TEXT NOT NULL DEFAULT '{"allow_dashboard":true,"allow_read_only_records":true,"allow_reports":true,"allow_backups":true,"allow_exports":true,"locked_modules":["billing","inventory_transactions","accounting","payroll"]}',
   updated_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -1181,7 +1181,7 @@ WHERE slug = 'prathamone-eduos';
 
 INSERT OR IGNORE INTO product_edition_license_policies
   (edition_id, subscription_grace_days, rollout_stage, evaluation_policy_json)
-SELECT id, 7, 'shadow',
+SELECT id, 7, 'enforced',
        '{"allow_dashboard":true,"allow_read_only_records":true,"allow_reports":true,"allow_backups":true,"allow_exports":true,"locked_modules":["payroll","premium_analytics"]}'
 FROM product_editions
 WHERE product_id = (SELECT id FROM products WHERE slug = 'prathamone-eduos')

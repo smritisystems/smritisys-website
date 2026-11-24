@@ -1168,7 +1168,7 @@ async function buildSignedLicenseArtifact(env, license, installationId, activati
     expires_at: license.expires_at,
     offline_validity_days: Number(license.offline_validity_days || 14),
     subscription_grace_days: Math.min(30, Math.max(0, Number(editionPolicy?.subscription_grace_days ?? 7))),
-    rollout_stage: editionPolicy?.rollout_stage || "shadow",
+    rollout_stage: "enforced",
     evaluation_policy: evaluationPolicy,
     entitlements: Object.fromEntries(Object.entries(entitlements).map(([key, item]) => [key, item.value])),
     issued_at: issuedAt,
@@ -2586,7 +2586,7 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     }, 200, origin, { "Cache-Control": "no-store" });
   }
 
-  if (request.method !== "POST" || !requestId) {
+  if (request.method !== "POST") {
     return json({ ok: false, error: "Unsupported reactivation request operation" }, 405, origin);
   }
 
@@ -2595,6 +2595,12 @@ async function handleAdminLicenseReactivationRequests(request, env, origin, requ
     body = await request.json();
   } catch {
     return json({ ok: false, error: "A valid review decision is required" }, 400, origin);
+  }
+  if (!requestId && body?.request_id && String(body.request_id).match(/^[0-9a-f-]{36}$/i)) {
+    requestId = String(body.request_id);
+  }
+  if (!requestId) {
+    return json({ ok: false, error: "A valid request_id is required" }, 400, origin);
   }
   const decision = body?.decision;
   const reason = boundedString(body?.reason, 500);
@@ -2942,7 +2948,7 @@ async function handleEditionLicensePolicy(request, env, productId, editionId) {
       ok: true,
       policy: {
         subscription_grace_days: Number(policy?.subscription_grace_days ?? 7),
-        rollout_stage: policy?.rollout_stage || "shadow",
+        rollout_stage: policy?.rollout_stage || "enforced",
         evaluation_policy: evaluationPolicy,
         updated_at: policy?.updated_at || null,
       },
@@ -2962,12 +2968,12 @@ async function handleEditionLicensePolicy(request, env, productId, editionId) {
   const policyBooleanKeys = ["allow_dashboard", "allow_read_only_records", "allow_reports", "allow_backups", "allow_exports"];
   const lockedModules = evaluationPolicy?.locked_modules;
   if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 30 ||
-      !["shadow", "enforced"].includes(rolloutStage) ||
+      rolloutStage !== "enforced" ||
       !evaluationPolicy || typeof evaluationPolicy !== "object" || Array.isArray(evaluationPolicy) ||
       policyBooleanKeys.some((key) => typeof evaluationPolicy[key] !== "boolean") ||
       !Array.isArray(lockedModules) || lockedModules.length > 50 ||
       lockedModules.some((module) => typeof module !== "string" || !/^[a-z][a-z0-9_.-]{0,63}$/.test(module))) {
-    return json({ ok: false, error: "The evaluation policy contains invalid values" }, 400);
+    return json({ ok: false, error: "Production license policies must use enforced rollout" }, 400);
   }
   const savedPolicy = {
     allow_dashboard: evaluationPolicy.allow_dashboard,
@@ -8639,7 +8645,7 @@ export async function onRequest(context) {
     if (path === "admin/license-registrations" && request.method === "GET") {
       return await handleAdminControl(request, env, "license-registrations");
     }
-    if (path === "admin/license-reactivations" && request.method === "GET") {
+    if (path === "admin/license-reactivations" && ["GET", "POST"].includes(request.method)) {
       return await handleAdminLicenseReactivationRequests(request, env, origin);
     }
     const adminReactivationMatch = path.match(/^admin\/license-reactivations\/([0-9a-f-]{36})$/i);

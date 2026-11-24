@@ -10,6 +10,7 @@ const artifactMigration = fs.readFileSync(new URL("../migrations/0014_signed_lic
 const productMigration = fs.readFileSync(new URL("../migrations/0015_prathamone_product_registration.sql", import.meta.url), "utf8");
 const refreshKeyMigration = fs.readFileSync(new URL("../migrations/0016_license_activation_refresh_keys.sql", import.meta.url), "utf8");
 const refreshReplayMigration = fs.readFileSync(new URL("../migrations/0017_license_refresh_replay_protection.sql", import.meta.url), "utf8");
+const enforcementMigration = fs.readFileSync(new URL("../migrations/0036_enforce_prathamone_license_rollout.sql", import.meta.url), "utf8");
 const docs = fs.readFileSync(new URL("../docs/LICENSE_ARCHITECTURE.md", import.meta.url), "utf8");
 
 test("license domain tables and extensible entitlements exist", () => {
@@ -103,6 +104,15 @@ test("PrathamOne uses its canonical product and Coaching Institute edition recor
   assert.match(productMigration, /'coaching-institute'/);
   assert.match(productMigration, /'Coaching Institute Edition'/);
   assert.match(productMigration, /subscription_grace_days, rollout_stage/);
+});
+
+test("PrathamOne production license artifacts cannot be issued in shadow mode", () => {
+  assert.match(schema, /rollout_stage TEXT NOT NULL DEFAULT 'enforced'/);
+  assert.match(schema, /SELECT id, 7, 'enforced'/);
+  assert.match(api, /rollout_stage: "enforced"/);
+  assert.match(api, /rolloutStage !== "enforced"/);
+  assert.match(enforcementMigration, /SET rollout_stage = 'enforced'/);
+  assert.match(enforcementMigration, /product\.slug = 'prathamone-eduos'/);
 });
 
 test("installation refresh is signed, replay-protected, and reuses the activation identity", () => {
