@@ -343,10 +343,17 @@ async function sendLicenseVerificationEmail(env, email, code, purpose) {
   return sendLicenseEmail(env, email, subject, text, "License verification email");
 }
 
+const AUTO_REPLACE_LIMIT_365D = 2;
+const AUTO_EMERGENCY_REPLACE_REASON_PREFIX = "Auto-approved: emergency device replacement";
+const AUTO_SAME_HARDWARE_REASON = "Auto-approved: same installation_id hardware reinstall";
+const AUTO_SELF_DEACTIVATION_REASON = "Auto-approved: self-service device deactivation";
+
 async function sendLicenseReactivationNotice(env, email, request, status) {
   const serialSuffix = request.serial_number ? String(request.serial_number).slice(-4) : "unknown";
   const subject = status === "pending"
     ? "PrathamOne license reactivation request received"
+    : status === "auto_approved"
+      ? "PrathamOne license reactivation automatically approved"
     : status === "approved"
       ? "PrathamOne license reactivation approved"
     : status === "rejected"
@@ -354,6 +361,8 @@ async function sendLicenseReactivationNotice(env, email, request, status) {
       : "PrathamOne license activation notice";
   const text = status === "pending"
     ? `A reactivation request for ${request.product_name} (license ending ${serialSuffix}) is pending review. SMRITISYS support will contact the registered phone number. If you did not request this, contact support.`
+    : status === "auto_approved"
+      ? `A reactivation request for ${request.product_name} (license ending ${serialSuffix}) was automatically approved for your verified account. If you did not request this, contact SMRITISYS support immediately.`
     : status === "approved"
       ? `The reactivation request for ${request.product_name} (license ending ${serialSuffix}) was approved after support confirmed your registered phone. Open PrathamOne and sign in to complete activation. If you did not request this, contact SMRITISYS support immediately.`
     : status === "rejected"
@@ -1543,7 +1552,12 @@ async function listCustomerLicenseReactivationOptions(request, env, origin) {
             datetime(l.last_self_service_transfer_at, '+30 days') AS transfer_available_at,
             CASE WHEN l.last_self_service_transfer_at IS NOT NULL
                    AND julianday(l.last_self_service_transfer_at) > julianday('now', '-30 days')
-                 THEN 1 ELSE 0 END AS transfer_cooldown_active
+                 THEN 1 ELSE 0 END AS transfer_cooldown_active,
+            (SELECT COUNT(*) FROM license_reactivation_requests r
+             WHERE r.license_id = l.id AND r.reviewed_by_person_id IS NULL
+               AND r.decision_reason LIKE 'Auto-approved: emergency device replacement%'
+               AND r.status IN ('approved', 'completed')
+               AND r.created_at > datetime('now', '-365 days')) AS auto_replace_used_365d
      FROM licenses l
      JOIN products p ON p.id = l.product_id AND p.status = 'active'
      JOIN organizations o ON o.id = l.organization_id AND o.status = 'active'
@@ -1561,11 +1575,16 @@ async function listCustomerLicenseReactivationOptions(request, env, origin) {
   const activationHistory = await getCustomerActivationHistory(env, licenses);
   return json({
     ok: true,
-    licenses: licenses.map((license) => ({
-      ...license,
-      activation_count: Number(license.active_activation_count || 0),
-      activation_history: activationHistory.get(Number(license.license_id)) || [],
-    })),
+    licenses: licenses.map((license) => {
+      const autoReplaceUsed = Number(license.auto_replace_used_365d || 0);
+      return {
+        ...license,
+        activation_count: Number(license.active_activation_count || 0),
+        auto_replace_limit: AUTO_REPLACE_LIMIT_365D,
+        auto_replace_remaining: Math.max(0, AUTO_REPLACE_LIMIT_365D - autoReplaceUsed),
+        activation_history: activationHistory.get(Number(license.license_id)) || [],
+      };
+    }),
   }, 200, origin, { "Cache-Control": "no-store" });
 }
 
@@ -1592,6 +1611,12 @@ async function requestLicenseReactivation(request, env, origin) {
   const surrenderedActivationId = body?.surrendered_activation_id == null
     ? null
     : numericId(body.surrendered_activation_id);
+  const requestedReplacementId = body?.replaced_activation_id == null
+    ? null
+    : numericId(body.replaced_activation_id);
+  if (body?.replaced_activation_id != null && !requestedReplacementId) {
+    return json({ ok: false, error: "A valid replaced_activation_id is required" }, 400, origin);
+  }
   if ((body?.surrendered_activation_id != null && !surrenderedActivationId) ||
       (surrenderConfirmed && (!surrenderedActivationId || !surrenderReason || surrenderReason.length < 10)) ||
       (!surrenderConfirmed && surrenderedActivationId)) {
@@ -1617,6 +1642,7 @@ async function requestLicenseReactivation(request, env, origin) {
   const license = await env.DB.prepare(
     `SELECT l.id, l.customer_id, l.organization_id, l.serial_number, l.seats,
             l.status, l.starts_at, l.expires_at, l.last_self_service_transfer_at,
+            l.last_self_service_transfer_id,
             COALESCE(NULLIF(trim(l.registered_email), ''), c.email) AS notification_email,
             p.slug AS product_code, p.name AS product_name,
             (SELECT e.value_text FROM license_entitlements e
@@ -1638,9 +1664,19 @@ async function requestLicenseReactivation(request, env, origin) {
     return json({ ok: false, error: "An eligible license was not found for this customer account" }, 404, origin);
   }
 
+  let releasedActivation = null;
   if (surrenderConfirmed) {
-    const releasedActivation = await env.DB.prepare(
-      `SELECT la.id
+    releasedActivation = await env.DB.prepare(
+      `SELECT la.id, la.deactivated_at,
+              EXISTS (
+                SELECT 1 FROM license_events e
+                WHERE e.license_id = la.license_id AND e.event_type = 'ACTIVATION_REVOKED'
+                  AND json_extract(e.metadata_json, '$.source') = 'customer_self_deactivation'
+                  AND (
+                    json_extract(e.metadata_json, '$.activation_id') = la.id
+                    OR json_extract(e.metadata_json, '$.activation_identifier') = la.activation_identifier
+                  )
+              ) AS has_self_deactivation
        FROM license_activations la
        WHERE la.id = ? AND la.license_id = ? AND la.status = 'revoked'
          AND EXISTS (
@@ -1712,24 +1748,199 @@ async function requestLicenseReactivation(request, env, origin) {
      WHERE id = ? AND last_self_service_transfer_at IS NOT NULL
        AND julianday(last_self_service_transfer_at) > julianday('now', '-30 days')`
   ).bind(license.id).first();
-  const status = Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown
-    ? "approved"
-    : "pending";
+  const sameHardwareActivation = await env.DB.prepare(
+    `SELECT id, installation_id, activation_identifier
+     FROM license_activations
+     WHERE license_id = ? AND installation_id = ? AND status = 'active'
+     ORDER BY last_seen_at DESC, id DESC LIMIT 1`
+  ).bind(license.id, installationId).first();
+
+  let status = "pending";
+  let autoApprovalMode = null;
+  let autoReplacedActivation = null;
+  let autoDecisionReason = null;
+
+  if (sameHardwareActivation && sameHardwareActivation.activation_identifier !== activationIdentifier) {
+    status = "approved";
+    autoApprovalMode = "same_hardware_reinstall";
+    autoReplacedActivation = sameHardwareActivation;
+    autoDecisionReason = AUTO_SAME_HARDWARE_REASON;
+  } else if (Number(activeCount?.count || 0) < Number(license.seats || 1) && !transferCooldown) {
+    status = "approved";
+    autoApprovalMode = "available_seat";
+  } else if (
+    Number(activeCount?.count || 0) < Number(license.seats || 1) &&
+    transferCooldown &&
+    license.last_self_service_transfer_id &&
+    surrenderConfirmed &&
+    Number(releasedActivation?.has_self_deactivation || 0) === 1
+  ) {
+    const priorAutoTransfer = await env.DB.prepare(
+      `SELECT 1 FROM license_reactivation_requests
+       WHERE license_id = ? AND surrendered_activation_id = ?
+         AND status IN ('approved', 'completed')`
+    ).bind(license.id, surrenderedActivationId).first();
+    if (!priorAutoTransfer) {
+      status = "approved";
+      autoApprovalMode = "clean_self_deactivation";
+      autoDecisionReason = AUTO_SELF_DEACTIVATION_REASON;
+    }
+  } else if (
+    !transferCooldown &&
+    Number(activeCount?.count || 0) >= Number(license.seats || 1) &&
+    requestedReplacementId
+  ) {
+    const candidateReplacement = await env.DB.prepare(
+      `SELECT id, installation_id, activation_identifier
+       FROM license_activations
+       WHERE id = ? AND license_id = ? AND status = 'active'`
+    ).bind(requestedReplacementId, license.id).first();
+    if (!candidateReplacement || candidateReplacement.activation_identifier === activationIdentifier) {
+      return json({ ok: false, error: "Select a different active installation belonging to this license" }, 409, origin);
+    }
+    const autoReplaceUsedRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM license_reactivation_requests
+       WHERE license_id = ?
+         AND reviewed_by_person_id IS NULL
+         AND decision_reason LIKE 'Auto-approved: emergency device replacement%'
+         AND status IN ('approved', 'completed')
+         AND created_at > datetime('now', '-365 days')`
+    ).bind(license.id).first();
+    if (Number(autoReplaceUsedRow?.count || 0) < AUTO_REPLACE_LIMIT_365D) {
+      status = "approved";
+      autoApprovalMode = "emergency_replacement";
+      autoReplacedActivation = candidateReplacement;
+      autoDecisionReason = `${AUTO_EMERGENCY_REPLACE_REASON_PREFIX} (${candidateReplacement.installation_id})`;
+    }
+  }
+
   const requestId = crypto.randomUUID();
-  const inserted = await env.DB.prepare(
-    `INSERT OR IGNORE INTO license_reactivation_requests
-       (request_id, license_id, customer_id, organization_id, requester_person_id,
-        product_code, company_binding, installation_id, activation_identifier,
-       refresh_public_key, status, surrender_confirmed, surrender_reason,
-       surrendered_activation_id, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
-  ).bind(
-    requestId, license.id, session.account_id, license.organization_id, session.person_id,
-    license.product_code, license.company_binding, installationId, activationIdentifier,
-    refreshPublicKey, status, surrenderConfirmed ? 1 : 0, surrenderReason, surrenderedActivationId,
-  ).run();
-  if (Number(inserted?.meta?.changes || 0) !== 1) {
-    return json({ ok: false, error: "The reactivation request could not be created" }, 409, origin);
+  if (autoApprovalMode === "same_hardware_reinstall") {
+    const batchResults = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE license_activations
+         SET status = 'revoked', deactivated_at = datetime('now')
+         WHERE id = ? AND license_id = ? AND installation_id = ? AND status = 'active'`
+      ).bind(autoReplacedActivation.id, license.id, installationId),
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO license_reactivation_requests
+           (request_id, license_id, customer_id, organization_id, requester_person_id,
+            product_code, company_binding, installation_id, activation_identifier,
+            refresh_public_key, status, replaced_activation_id, decision_reason, reviewed_at,
+            surrender_confirmed, surrender_reason, surrendered_activation_id, expires_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, datetime('now'), ?, ?, ?, datetime('now', '+1 day')
+         WHERE EXISTS (
+           SELECT 1 FROM license_activations
+           WHERE id = ? AND license_id = ? AND status = 'revoked'
+         )`
+      ).bind(
+        requestId, license.id, session.account_id, license.organization_id, session.person_id,
+        license.product_code, license.company_binding, installationId, activationIdentifier,
+        refreshPublicKey, autoReplacedActivation.id, autoDecisionReason,
+        surrenderConfirmed ? 1 : 0, surrenderReason, surrenderedActivationId,
+        autoReplacedActivation.id, license.id,
+      ),
+    ]);
+    if (Number(batchResults?.[0]?.meta?.changes || 0) !== 1 ||
+        Number(batchResults?.[1]?.meta?.changes || 0) !== 1) {
+      return json({ ok: false, error: "The reactivation request could not be completed automatically; refresh and try again" }, 409, origin);
+    }
+  } else if (autoApprovalMode === "emergency_replacement") {
+    const emergencyTransferId = crypto.randomUUID();
+    const batchResults = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE licenses
+         SET last_self_service_transfer_at = datetime('now'),
+             last_self_service_transfer_id = ?
+         WHERE id = ? AND status = 'ACTIVE'
+           AND (last_self_service_transfer_at IS NULL
+                OR julianday(last_self_service_transfer_at) <= julianday('now', '-30 days'))`
+      ).bind(emergencyTransferId, license.id),
+      env.DB.prepare(
+        `UPDATE license_activations
+         SET status = 'revoked', deactivated_at = datetime('now')
+         WHERE id = ? AND license_id = ? AND status = 'active'
+           AND EXISTS (
+             SELECT 1 FROM licenses
+             WHERE id = ? AND last_self_service_transfer_id = ?
+           )`
+      ).bind(autoReplacedActivation.id, license.id, license.id, emergencyTransferId),
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO license_reactivation_requests
+           (request_id, license_id, customer_id, organization_id, requester_person_id,
+            product_code, company_binding, installation_id, activation_identifier,
+            refresh_public_key, status, replaced_activation_id, decision_reason, reviewed_at,
+            surrender_confirmed, surrender_reason, surrendered_activation_id, expires_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, datetime('now'), ?, ?, ?, datetime('now', '+1 day')
+         WHERE EXISTS (
+           SELECT 1 FROM license_activations
+           WHERE id = ? AND license_id = ? AND status = 'revoked'
+         )
+         AND (SELECT COUNT(*) FROM license_activations
+              WHERE license_id = ? AND status = 'active') < ?
+         AND (SELECT COUNT(*) FROM license_reactivation_requests
+              WHERE license_id = ? AND reviewed_by_person_id IS NULL
+                AND decision_reason LIKE 'Auto-approved: emergency device replacement%'
+                AND status IN ('approved', 'completed')
+                AND created_at > datetime('now', '-365 days')) < ?`
+      ).bind(
+        requestId, license.id, session.account_id, license.organization_id, session.person_id,
+        license.product_code, license.company_binding, installationId, activationIdentifier,
+        refreshPublicKey, autoReplacedActivation.id, autoDecisionReason,
+        surrenderConfirmed ? 1 : 0, surrenderReason, surrenderedActivationId,
+        autoReplacedActivation.id, license.id, license.id, Number(license.seats || 1),
+        license.id, AUTO_REPLACE_LIMIT_365D,
+      ),
+    ]);
+    if (Number(batchResults?.[0]?.meta?.changes || 0) !== 1 ||
+        Number(batchResults?.[1]?.meta?.changes || 0) !== 1 ||
+        Number(batchResults?.[2]?.meta?.changes || 0) !== 1) {
+      return json({ ok: false, error: "The reactivation request or seat availability changed; refresh and try again" }, 409, origin);
+    }
+  } else if (autoApprovalMode === "clean_self_deactivation") {
+    const batchResults = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE licenses
+         SET last_self_service_transfer_id = NULL
+         WHERE id = ? AND last_self_service_transfer_id = ?`
+      ).bind(license.id, license.last_self_service_transfer_id),
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO license_reactivation_requests
+           (request_id, license_id, customer_id, organization_id, requester_person_id,
+            product_code, company_binding, installation_id, activation_identifier,
+            refresh_public_key, status, decision_reason, reviewed_at,
+            surrender_confirmed, surrender_reason, surrendered_activation_id, expires_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, datetime('now'), 1, ?, ?, datetime('now', '+1 day')
+         WHERE (SELECT COUNT(*) FROM license_activations
+                WHERE license_id = ? AND status = 'active') < ?`
+      ).bind(
+        requestId, license.id, session.account_id, license.organization_id, session.person_id,
+        license.product_code, license.company_binding, installationId, activationIdentifier,
+        refreshPublicKey, autoDecisionReason, surrenderReason, surrenderedActivationId,
+        license.id, Number(license.seats || 1),
+      ),
+    ]);
+    if (Number(batchResults?.[0]?.meta?.changes || 0) !== 1 ||
+        Number(batchResults?.[1]?.meta?.changes || 0) !== 1) {
+      return json({ ok: false, error: "The self-service transfer token was already used; refresh and try again" }, 409, origin);
+    }
+  } else {
+    const inserted = await env.DB.prepare(
+      `INSERT OR IGNORE INTO license_reactivation_requests
+         (request_id, license_id, customer_id, organization_id, requester_person_id,
+          product_code, company_binding, installation_id, activation_identifier,
+         refresh_public_key, status, surrender_confirmed, surrender_reason,
+         surrendered_activation_id, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`
+    ).bind(
+      requestId, license.id, session.account_id, license.organization_id, session.person_id,
+      license.product_code, license.company_binding, installationId, activationIdentifier,
+      refreshPublicKey, status, surrenderConfirmed ? 1 : 0, surrenderReason, surrenderedActivationId,
+    ).run();
+    if (Number(inserted?.meta?.changes || 0) !== 1) {
+      return json({ ok: false, error: "The reactivation request could not be created" }, 409, origin);
+    }
   }
   const savedRequest = await env.DB.prepare(
     "SELECT expires_at FROM license_reactivation_requests WHERE request_id = ?"
@@ -1744,6 +1955,8 @@ async function requestLicenseReactivation(request, env, origin) {
       installation_id: installationId,
       surrender_confirmed: surrenderConfirmed,
       surrendered_activation_id: surrenderedActivationId,
+      replaced_activation_id: autoReplacedActivation?.id || null,
+      auto_approval_mode: autoApprovalMode,
     },
   );
   if (license.organization_id) {
@@ -1755,15 +1968,51 @@ async function requestLicenseReactivation(request, env, origin) {
         status,
         installation_id: installationId,
         surrendered_activation_id: surrenderedActivationId,
+        replaced_activation_id: autoReplacedActivation?.id || null,
+      },
+    );
+    if (autoReplacedActivation) {
+      await recordLicenseEvent(
+        env, license, session, "ACTIVATION_REVOKED",
+        license.status, license.status,
+        {
+          activation_id: autoReplacedActivation.id,
+          installation_id: autoReplacedActivation.installation_id,
+          source: `auto_${autoApprovalMode}`,
+        },
+      );
+    }
+    if (autoApprovalMode && autoApprovalMode !== "available_seat") {
+      await recordLicenseEvent(
+        env, license, session, "LICENSE_REACTIVATION_AUTO_APPROVED",
+        license.status, license.status,
+        {
+          request_id: requestId,
+          mode: autoApprovalMode,
+          replaced_activation_id: autoReplacedActivation?.id || null,
+        },
+      );
+    }
+  }
+  if (autoApprovalMode && autoApprovalMode !== "available_seat") {
+    await writeAudit(
+      env, request, session, "AUTO_LICENSE_REACTIVATION_APPROVED",
+      "license_reactivation_request", requestId, null,
+      {
+        license_id: license.id,
+        mode: autoApprovalMode,
+        replaced_activation_id: autoReplacedActivation?.id || null,
       },
     );
   }
 
   let notificationStatus = "pending";
-  if (status === "pending") {
+  const shouldNotify = status === "pending" || (autoApprovalMode && autoApprovalMode !== "available_seat");
+  if (shouldNotify) {
     const email = validEmail(license.notification_email);
+    const noticeType = status === "pending" ? "pending" : "auto_approved";
     const delivery = email
-      ? await sendLicenseReactivationNotice(env, email, license, "pending")
+      ? await sendLicenseReactivationNotice(env, email, license, noticeType)
       : { error: "No registered notification email is available" };
     notificationStatus = delivery.error ? "failed" : "sent";
     await env.DB.prepare(
@@ -1787,6 +2036,9 @@ async function requestLicenseReactivation(request, env, origin) {
     id: requestId,
     request_id: requestId,
     status,
+    auto_approved: status === "approved",
+    ...(autoApprovalMode ? { auto_approval_mode: autoApprovalMode } : {}),
+    ...(autoReplacedActivation ? { replaced_activation_id: autoReplacedActivation.id } : {}),
     expires_at: savedRequest?.expires_at || null,
     notification_status: notificationStatus,
     ...(notificationStatus === "failed"

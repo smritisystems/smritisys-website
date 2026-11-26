@@ -3631,6 +3631,201 @@ test("full-seat reactivation requires phone confirmation and an audited installa
   assert.equal(rejectedRecord.decision_reason, "Customer requested cancellation of request");
 });
 
+test("tiered auto-approval handles same-hardware reinstall, clean self-deactivation, and bounded emergency replacements", async () => {
+  const d1 = createD1Mock();
+  const customerToken = "reactivation-tiered-customer";
+  d1.prepare(
+    "INSERT INTO sessions (token, account_type, account_id, organization_id, expires_at) VALUES (?, 'customer', 101, 101, datetime('now', '+1 day'))"
+  ).bind(customerToken).run();
+
+  const licenseRow = d1.raw.prepare(
+    `SELECT l.id, l.organization_id, p.slug AS product_code,
+            (SELECT e.value_text FROM license_entitlements e
+             WHERE e.license_id = l.id AND e.entitlement_key = 'company.binding') AS company_binding
+     FROM licenses l
+     JOIN products p ON p.id = l.product_id
+     WHERE l.id = 101`
+  ).get();
+  d1.raw.prepare("UPDATE licenses SET seats = 1 WHERE id = 101").run();
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = datetime('now') WHERE id = 101"
+  ).run();
+
+  const initialActive = d1.raw.prepare(
+    "SELECT id, installation_id, activation_identifier FROM license_activations WHERE license_id = 101 AND status = 'active'"
+  ).get();
+  assert.ok(initialActive);
+  const sameHardwareId = "PRATHAM-AAAA-BBBB-CCCC-DDDD";
+  d1.raw.prepare("UPDATE license_activations SET installation_id = ? WHERE id = ?").run(sameHardwareId, initialActive.id);
+
+  // Rule 1: Same-hardware reinstall auto-approves even on full 1/1 seat + active 30-day cooldown
+  const { refreshPublicKey: key1, bindings: bindings1 } = await createLicenseSignerBindings("tiered-auto-1");
+  const reinstallReq = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: sameHardwareId,
+      activation_identifier: "91111111-1111-4111-8111-111111111111",
+      refresh_public_key: key1,
+    },
+  });
+  assert.equal(reinstallReq.status, 201);
+  assert.equal(reinstallReq.data.status, "approved");
+  assert.equal(reinstallReq.data.auto_approved, true);
+  assert.equal(reinstallReq.data.auto_approval_mode, "same_hardware_reinstall");
+  assert.equal(reinstallReq.data.replaced_activation_id, initialActive.id);
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM license_activations WHERE id = ?").get(initialActive.id).status,
+    "revoked",
+  );
+  const reinstallAct = await callApi(d1, "license/activate", {
+    method: "POST",
+    token: customerToken,
+    body: { reactivation_request_id: reinstallReq.data.request_id },
+    bindings: bindings1,
+  });
+  assert.equal(reinstallAct.status, 201);
+
+  // Rule 3: Clean self-deactivation followed immediately by surrender_confirmed reactivation auto-approves
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = NULL, last_self_service_transfer_id = NULL WHERE id = 101"
+  ).run();
+  const { publicKeyBytes: mgmtPubBytes, privateKey: mgmtPrivKey } = await (async () => {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const rawPub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    return { publicKeyBytes: rawPub, privateKey: pair.privateKey };
+  })();
+  const mgmtPubB64 = Buffer.from(mgmtPubBytes).toString("base64url");
+  const act2Id = "92222222-2222-4222-8222-222222222222";
+  const inst2 = "PRATHAM-2222-3333-4444-5555";
+  const activeBeforeDeact = d1.raw.prepare(
+    "SELECT id FROM license_activations WHERE license_id = 101 AND status = 'active'"
+  ).get();
+  d1.raw.prepare("UPDATE license_activations SET status = 'revoked' WHERE id = ?").run(activeBeforeDeact.id);
+  const insertedToDeact = d1.raw.prepare(
+    `INSERT INTO license_activations (license_id, installation_id, activation_identifier, refresh_public_key, status)
+     VALUES (101, ?, ?, ?, 'active')`
+  ).run(inst2, act2Id, mgmtPubB64);
+  const deactivatedActivationRowId = Number(insertedToDeact.lastInsertRowid);
+
+  const mgmtTs = Date.now();
+  const mgmtNonce = "93333333-3333-4333-8333-333333333333";
+  const mgmtMsg = new TextEncoder().encode([
+    "license-management-v1", "deactivate", licenseRow.product_code, licenseRow.company_binding,
+    inst2, act2Id, mgmtTs, mgmtNonce,
+  ].join("\n"));
+  const mgmtSig = Buffer.from(await crypto.subtle.sign({ name: "Ed25519" }, mgmtPrivKey, mgmtMsg)).toString("base64url");
+  const deactRes = await callApi(d1, "license/manage", {
+    method: "POST",
+    body: {
+      action: "deactivate",
+      product_code: licenseRow.product_code,
+      company_binding: licenseRow.company_binding,
+      installation_id: inst2,
+      activation_identifier: act2Id,
+      timestamp: mgmtTs,
+      nonce: mgmtNonce,
+      signature: mgmtSig,
+    },
+  });
+  assert.equal(deactRes.status, 200);
+
+  const { refreshPublicKey: key3, bindings: bindings3 } = await createLicenseSignerBindings("tiered-auto-3");
+  const inst3 = "PRATHAM-3333-4444-5555-6666";
+  const act3Id = "94444444-4444-4444-8444-444444444444";
+  const cleanTransferReq = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: inst3,
+      activation_identifier: act3Id,
+      refresh_public_key: key3,
+      surrender_confirmed: true,
+      surrender_reason: "Deactivated previous workstation cleanly",
+      surrendered_activation_id: deactivatedActivationRowId,
+    },
+  });
+  assert.equal(cleanTransferReq.status, 201);
+  assert.equal(cleanTransferReq.data.status, "approved");
+  assert.equal(cleanTransferReq.data.auto_approval_mode, "clean_self_deactivation");
+  assert.equal((await callApi(d1, "license/activate", {
+    method: "POST",
+    token: customerToken,
+    body: { reactivation_request_id: cleanTransferReq.data.request_id },
+    bindings: bindings3,
+  })).status, 201);
+
+  // Rule 4: Bounded annual emergency replacement (up to 2 per 365d when no cooldown is active)
+  for (let move = 1; move <= 2; move++) {
+    d1.raw.prepare(
+      "UPDATE licenses SET last_self_service_transfer_at = NULL, last_self_service_transfer_id = NULL WHERE id = 101"
+    ).run();
+    const currentActive = d1.raw.prepare(
+      "SELECT id FROM license_activations WHERE license_id = 101 AND status = 'active'"
+    ).get();
+    const { refreshPublicKey: moveKey, bindings: moveBindings } = await createLicenseSignerBindings(`tiered-move-${move}`);
+    const moveReq = await callApi(d1, "license/reactivations", {
+      method: "POST",
+      token: customerToken,
+      body: {
+        license_id: 101,
+        installation_id: `PRATHAM-444${move}-5555-6666-7777`,
+        activation_identifier: `9555555${move}-5555-4555-8555-555555555555`,
+        refresh_public_key: moveKey,
+        replaced_activation_id: currentActive.id,
+      },
+    });
+    assert.equal(moveReq.status, 201);
+    assert.equal(moveReq.data.status, "approved");
+    assert.equal(moveReq.data.auto_approval_mode, "emergency_replacement");
+    assert.equal(moveReq.data.replaced_activation_id, currentActive.id);
+    assert.equal(
+      d1.raw.prepare("SELECT status FROM license_activations WHERE id = ?").get(currentActive.id).status,
+      "revoked",
+    );
+    assert.equal((await callApi(d1, "license/activate", {
+      method: "POST",
+      token: customerToken,
+      body: { reactivation_request_id: moveReq.data.request_id },
+      bindings: moveBindings,
+    })).status, 201);
+  }
+
+  const optionsAfterTwo = await callApi(d1, "license/reactivations", { token: customerToken });
+  const licAfterTwo = optionsAfterTwo.data.licenses.find((l) => l.license_id === 101);
+  assert.equal(licAfterTwo.auto_replace_limit, 2);
+  assert.equal(licAfterTwo.auto_replace_remaining, 0);
+
+  // 3rd emergency replacement inside 365 days falls back to manual pending review
+  d1.raw.prepare(
+    "UPDATE licenses SET last_self_service_transfer_at = NULL, last_self_service_transfer_id = NULL WHERE id = 101"
+  ).run();
+  const activeBeforeThird = d1.raw.prepare(
+    "SELECT id FROM license_activations WHERE license_id = 101 AND status = 'active'"
+  ).get();
+  const { refreshPublicKey: key3rd } = await createLicenseSignerBindings("tiered-move-3");
+  const thirdMoveReq = await callApi(d1, "license/reactivations", {
+    method: "POST",
+    token: customerToken,
+    body: {
+      license_id: 101,
+      installation_id: "PRATHAM-4449-5555-6666-7777",
+      activation_identifier: "96666666-6666-4666-8666-666666666666",
+      refresh_public_key: key3rd,
+      replaced_activation_id: activeBeforeThird.id,
+    },
+  });
+  assert.equal(thirdMoveReq.status, 201);
+  assert.equal(thirdMoveReq.data.status, "pending");
+  assert.equal(thirdMoveReq.data.auto_approved, false);
+  assert.equal(
+    d1.raw.prepare("SELECT status FROM license_activations WHERE id = ?").get(activeBeforeThird.id).status,
+    "active",
+  );
+});
+
 test("Phase 4 through 10 staging verification on seeded dataset", async (t) => {
   const d1 = createD1Mock();
 
