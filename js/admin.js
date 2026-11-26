@@ -1599,10 +1599,11 @@ async function loadAdminLicenseReactivationDetail(requestId) {
             ${requiresReplacement ? '<small class="muted">The license has no free seat; one active installation must be released.</small>' : ''}
           </div>
           ${Number(item.surrender_confirmed || 0) === 1
-            ? '<div class="full"><div class="message"><strong>Surrender confirmed.</strong> This request is eligible for immediate reactivation without a 30-day transfer cooldown.</div></div>'
-            : cooldown
-              ? `<div class="full"><label><input name="cooldown_override" type="checkbox" value="true" /> Override the 30-day transfer cooldown (available ${adminEscape(item.transfer_available_at)})</label><small class="muted">Use only after verifying the customer by phone and documenting the reason.</small></div>`
-              : ''}
+            ? '<div class="full"><div class="message"><strong>Surrender confirmed.</strong> Customer confirmed releasing the prior installation.</div></div>'
+            : ''}
+          ${cooldown
+            ? `<div class="full"><label><input name="cooldown_override" type="checkbox" value="true" /> Override the 30-day transfer cooldown (available ${adminEscape(item.transfer_available_at)})</label><small class="muted">Use only after verifying the customer by phone and documenting the reason.</small></div>`
+            : ''}
           <div class="full"><label><input name="phone_confirmed" type="checkbox" value="true" /> I called and confirmed with the customer at the registered phone number</label></div>
           <div class="full"><label for="adminReactivationReason">Decision reason</label><textarea id="adminReactivationReason" name="reason" minlength="10" maxlength="500" rows="3" required></textarea></div>
         </div>
@@ -2179,8 +2180,12 @@ admin$('#adminReactivationDetail').addEventListener('submit', async (event) => {
   buttons.forEach((button) => { button.disabled = true; });
   const feedback = form.querySelector('[data-admin-reactivation-feedback]');
   try {
+    const requestId = form.dataset.adminReactivationReview;
+    if (!requestId) {
+      throw new Error('Reactivation request ID is missing. Refresh the queue and try again.');
+    }
     const replacedActivation = values.get('replaced_activation_id');
-    await adminApi(`admin/license-reactivations/${encodeURIComponent(form.dataset.adminReactivation)}`, {
+    await adminApi(`admin/license-reactivations/${encodeURIComponent(requestId)}`, {
       method: 'POST',
       body: JSON.stringify({
         decision,
