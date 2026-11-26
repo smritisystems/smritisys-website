@@ -144,6 +144,9 @@ test("license workspace exposes issuance, lifecycle, activation, and edition pol
   assert.match(script, /company\.binding/);
   assert.match(html, /id="adminReactivationList"/);
   assert.match(html, /id="adminReactivationDetail"/);
+  assert.match(script, /<form data-admin-reactivation-review=/);
+  assert.match(script, /form\.dataset\.adminReactivationReview/);
+  assert.doesNotMatch(script, /form\.dataset\.adminReactivation(?!Review)/);
   assert.match(script, /phone_confirmed/);
   assert.match(script, /cooldown_override/);
   assert.match(api, /async function handleAdminLicenseReactivationRequests/);
